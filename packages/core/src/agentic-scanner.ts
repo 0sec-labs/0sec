@@ -3877,6 +3877,7 @@ async function runNativeAttack(
         "run_command",
         "spawn_agent",
         "spawn_agents",
+        "spawn_persistent_agent",
         "save_finding",
         "done",
       ]
@@ -3889,6 +3890,7 @@ async function runNativeAttack(
         ...(features.jitSkills ? ["list_skills", "load_skill"] : []),
         "spawn_agent",
         "spawn_agents",
+        "spawn_persistent_agent",
         "save_finding",
         "done",
       ];

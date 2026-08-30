@@ -85,6 +85,7 @@ const TOOL_REGISTRY_ORDER = [
   "browser",
   "spawn_agent",
   "spawn_agents",
+  "spawn_persistent_agent",
   "web_search",
   "intel_search_advisories",
   "intel_lookup_cve",

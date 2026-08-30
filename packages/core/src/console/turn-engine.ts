@@ -721,6 +721,7 @@ const NETWORK_CAPABLE_TOOLS: Record<string, true> = {
   python_exec: true,
   spawn_agent: true,
   spawn_agents: true,
+  spawn_persistent_agent: true,
   run_sqlmap: true,
   run_nmap: true,
   run_ffuf: true,

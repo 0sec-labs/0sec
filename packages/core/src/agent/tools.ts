@@ -162,7 +162,8 @@ import {
   sendMessage,
   type HubMessage,
 } from "../hub/mailbox.js";
-import { PRIMARY_AGENT_NAME, assignAgentName } from "../hub/name-generator.js";
+import { PRIMARY_AGENT_NAME, assignAgentName, uniquifyAgentName } from "../hub/name-generator.js";
+import { DetachedAgentSupervisor, runPersistentAgent } from "../hub/supervisor.js";
 import {
   MAX_DRAINS_PER_TURN,
   clampOutboundBody,
@@ -2358,6 +2359,48 @@ function renderSubagentMessagingPrompt(rt: MessagingRuntime | undefined): string
   return `\n\n${lines.join("\n")}`;
 }
 
+/* --------------------------------------------------- persistent (long-lived) agent */
+
+/** How often a parked persistent agent checks its mailbox, in ms. */
+const PERSIST_POLL_MS = 1_000;
+/** End a parked persistent agent after this long with no message (ms). */
+const PERSIST_IDLE_TTL_MS = 300_000;
+/** Hard cap on how many times a persistent agent may be revived. */
+const PERSIST_MAX_REVIVES = 25;
+
+/**
+ * `spawn_persistent_agent` argument schema — validate-then-reject before any side
+ * effect, mirroring the `kernel_run` discipline (see agent/CLAUDE.md). `.strip()`
+ * drops unknown keys a model might emit.
+ */
+const spawnPersistentAgentArgsSchema = z
+  .object({
+    task: z
+      .string({ required_error: "task is required", invalid_type_error: "task must be a string" })
+      .min(1, "task must not be empty"),
+    name: z.string().min(1).max(48).optional(),
+    max_turns: z.number({ invalid_type_error: "max_turns must be a number" }).int().positive().optional(),
+  })
+  .strip();
+
+export function validateSpawnPersistentAgentArgs(
+  raw: unknown,
+):
+  | { ok: true; args: { task: string; name?: string; maxTurns: number } }
+  | { ok: false; error: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { ok: false, error: "arguments must be an object" };
+  }
+  const parsed = spawnPersistentAgentArgsSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "invalid arguments" };
+  }
+  const { task, name, max_turns } = parsed.data;
+  // Clamp the turn budget to the same [1,25] band spawn_agent uses.
+  const maxTurns = Math.min(25, Math.max(1, max_turns ?? 15));
+  return { ok: true, args: { task, ...(name ? { name } : {}), maxTurns } };
+}
+
 /**
  * Result of running one subagent. Discriminated so a child failing is data,
  * not a thrown exception — `spawn_agents` needs one child's failure to leave
@@ -2638,6 +2681,12 @@ export class ToolExecutor {
   private _ptyManager: PtySessionManager | null = null;
   private _pyKernel: PythonKernelManager | null = null;
   /**
+   * Owns this session's detached persistent agents (spawn_persistent_agent), so
+   * they are tracked and aborted together on cleanup. Lazily created; session-
+   * scoped like the executor. See `hub/supervisor.ts`.
+   */
+  private _detachedSupervisor: DetachedAgentSupervisor | null = null;
+  /**
    * Set of proposed flag strings that the `done` tool rejected once as
    * likely decoys. A second `done` call with the same flag passes through
    * — the anti-honeypot heuristic is a speed bump, not a hard wall.
@@ -2900,6 +2949,12 @@ export class ToolExecutor {
       if (this._pyKernel) {
         this._pyKernel.cleanup();
         this._pyKernel = null;
+      }
+      if (this._detachedSupervisor) {
+        // Abort every parked/running persistent agent and await them settling so
+        // no detached loop outlives the session.
+        await this._detachedSupervisor.abortAll();
+        this._detachedSupervisor = null;
       }
     } catch {
       // Best-effort cleanup
@@ -5662,6 +5717,150 @@ export class ToolExecutor {
       });
       return { ok: false, agent_id: base.agent_id, error: truncated };
     }
+  }
+
+  /** Session-scoped supervisor for detached persistent agents (lazy). */
+  private detachedSupervisor(): DetachedAgentSupervisor {
+    if (!this._detachedSupervisor) this._detachedSupervisor = new DetachedAgentSupervisor();
+    return this._detachedSupervisor;
+  }
+
+  /**
+   * Run ONE task/revive of a persistent agent through the native loop — the
+   * `runLoop` injected into `runPersistentAgent`. Mirrors `runOneSubagent`'s loop
+   * call (same child tool set, scope/auth/cost inheritance, per-turn progress +
+   * transcript events) but WITHOUT the lifecycle emits — `runPersistentAgent`
+   * owns running/parked/completed/failed. A revive folds the delivered messages
+   * into the prompt through `renderInboundBatch`, the same sanitize+fence+
+   * attribute chokepoint `check_messages` uses, so a peer message can't inject.
+   * Findings merge straight into the shared context (single-threaded pushes).
+   */
+  private async runPersistentLoopOnce(
+    base: SubagentLifecycleBase,
+    maxTurns: number,
+    childMessaging: MessagingRuntime | undefined,
+    task?: string,
+    messages?: readonly HubMessage[],
+  ): Promise<void> {
+    const { runNativeAgentLoop, LlmApiRuntime } = await this.loadSubagentDeps();
+    const rt = new LlmApiRuntime({ type: "api" as any, timeout: 60_000 });
+    if (!(await rt.isAvailable())) throw new Error("No API key available for persistent agent");
+
+    const subTools: ToolDefinition[] = ["bash", "save_finding", "done"]
+      .map((n) => TOOL_DEFINITIONS[n])
+      .filter((t): t is ToolDefinition => t !== undefined)
+      .concat(REPORT_STATUS_TOOL, buildSendMessageTool(childMessaging), CHECK_MESSAGES_TOOL);
+
+    const preamble =
+      messages && messages.length > 0
+        ? `You are ${base.name}, a persistent agent, REVIVED by new messages:\n\n${renderInboundBatch(messages)
+            .rendered.map((r) => r.text)
+            .join("\n\n")}\n\nAct on them, reply with send_message, and call done when finished — you will PARK again afterwards.`
+        : `You are ${base.name}, a persistent agent. Your task:\n\n${task ?? base.task}\n\nUse bash to run curl, python3, or any command. Save findings with save_finding. Call done when finished — you will then PARK and can be revived by a message.`;
+
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: `${preamble}${renderSubagentMessagingPrompt(childMessaging)}`,
+        tools: subTools,
+        maxTurns,
+        target: this.ctx.target,
+        scanId: `${this.ctx.scanId}-persist`,
+        scope: this.ctx.scope,
+        authConfig: this.ctx.authConfig,
+        costLedger: this.ctx.costLedger,
+        costCeilingUsd: this.ctx.costCeilingUsd,
+        costModel: this.ctx.costModel,
+        ...(childMessaging ? { agentMessaging: childMessaging } : {}),
+      } as Parameters<typeof runNativeAgentLoop>[0]["config"],
+      runtime: rt,
+      db: null,
+      onTurn: (turn, toolCalls, toolResults, assistantText) => {
+        eventBus.emit("subagent_progress", buildSubagentProgress(base, turn, maxTurns, toolCalls));
+        eventBus.emit(
+          "subagent_message",
+          buildSubagentMessage(base, turn, assistantText, toolCalls, toolResults, Date.now()),
+        );
+      },
+    });
+
+    if (state.findings?.length) this.ctx.findings.push(...state.findings);
+  }
+
+  /**
+   * `spawn_persistent_agent` — spawn a DETACHED long-lived agent that runs its
+   * task, PARKS, and is REVIVED by messages (see `hub/supervisor.ts`). Returns
+   * immediately with the agent's id + name; the run is tracked by the session
+   * supervisor and aborted on cleanup. Deliberately separate from the synchronous
+   * `spawn_agents` fan-out — the parent does not block on it. Subagents never get
+   * this tool (the child tool set in `runOneSubagent` excludes it), so it cannot
+   * recurse.
+   */
+  private async spawnPersistentAgent(args: Record<string, unknown>): Promise<ToolResult> {
+    const parsed = validateSpawnPersistentAgentArgs(args);
+    if (!parsed.ok) {
+      this.recordToolHealth({
+        tool: "spawn_persistent_agent",
+        category: "error",
+        message: parsed.error,
+      });
+      return { success: false, output: null, error: parsed.error };
+    }
+    const { task, name, maxTurns } = parsed.args;
+
+    const base = this.buildSubagentLifecycleBase(task, maxTurns);
+    let displayName = base.name;
+    if (name) {
+      displayName = uniquifyAgentName(name, this._assignedAgentNames);
+      this._assignedAgentNames.add(displayName);
+    }
+    const persistentBase: SubagentLifecycleBase = { ...base, name: displayName };
+
+    const parentMessaging = messagingRuntimeOf(this.ctx);
+    const childMessaging: MessagingRuntime | undefined = parentMessaging
+      ? {
+          selfId: base.agent_id,
+          selfRole: "child",
+          parentId: parentMessaging.selfId,
+          operatorId: parentMessaging.operatorId,
+          siblingPrefix: `${this.ctx.scanId}-sub-`,
+          siblingChannelEnabled: parentMessaging.siblingChannelEnabled,
+          operatorChannelEnabled: parentMessaging.operatorChannelEnabled,
+          projectPath: parentMessaging.projectPath,
+          homeDir: parentMessaging.homeDir,
+        }
+      : undefined;
+
+    const supervisor = this.detachedSupervisor();
+    let aborted = false;
+
+    const run = runPersistentAgent(task, {
+      now: () => Date.now(),
+      sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      aborted: () => aborted,
+      park: { pollMs: PERSIST_POLL_MS, idleTtlMs: PERSIST_IDLE_TTL_MS, maxRevives: PERSIST_MAX_REVIVES },
+      drain: () =>
+        childMessaging ? drainInbox(childMessaging.projectPath, base.agent_id, childMessaging.homeDir) : [],
+      emit: (status) => {
+        eventBus.emit("subagent_lifecycle", { ...persistentBase, status });
+      },
+      runLoop: ({ task: t, messages }) =>
+        this.runPersistentLoopOnce(persistentBase, maxTurns, childMessaging, t, messages),
+    });
+    supervisor.register(base.agent_id, displayName, run, () => {
+      aborted = true;
+    });
+
+    return {
+      success: true,
+      output: {
+        spawned: true,
+        agent_id: base.agent_id,
+        name: displayName,
+        task,
+        note: `Persistent agent "${displayName}" is running; it will PARK when its task is done. Message it with send_message to revive it for follow-up work.`,
+      },
+    };
   }
 
   private async spawnAgent(args: Record<string, unknown>): Promise<ToolResult> {

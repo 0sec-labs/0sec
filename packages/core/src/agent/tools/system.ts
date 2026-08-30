@@ -178,6 +178,18 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
     required: ["tasks"],
   },
 
+  spawn_persistent_agent: {
+    name: "spawn_persistent_agent",
+    description:
+      "Spawn a LONG-LIVED teammate agent that runs a task, then PARKS (stays alive and addressable) instead of finishing. Message it with send_message to REVIVE it for follow-up work — it keeps its place in the roster between messages. Use for an ongoing collaborator you coordinate with over time; for a one-shot task use spawn_agent. Returns the agent's id and name immediately and runs in the background.",
+    parameters: {
+      task: { type: "string", description: "The initial task for the persistent agent. Be specific: target, goal, and what to report back." },
+      name: { type: "string", description: "Optional display name (else an auto AdjectiveNoun name is assigned)." },
+      max_turns: { type: "number", description: "Turn budget per task/revive (default 15, max 25)." },
+    },
+    required: ["task"],
+  },
+
   self_extend: {
     name: "self_extend",
     description:
@@ -236,6 +248,7 @@ export const systemDispatch: Record<string, string> = {
   bash: "shellExec",
   spawn_agent: "spawnAgent",
   spawn_agents: "spawnAgents",
+  spawn_persistent_agent: "spawnPersistentAgent",
   pty_session: "ptySession",
   plan: "planTool",
   self_extend: "selfExtend",
