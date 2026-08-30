@@ -22,7 +22,7 @@ import type { NativeRuntimeResult } from "../../runtime/types.js";
 import { HuntMemory } from "../hunt-flywheel.js";
 import type { FinderLens } from "../hunt-scan.js";
 import { captureLensCandidates } from "./miss-capture.js";
-import { registerArchetype } from "./register.js";
+import { inspectLensRegistry, registerArchetype, retireArchetype } from "./register.js";
 import { clusterCandidates } from "./synthesize.js";
 import { runLensSynthesisLoop } from "./loop.js";
 import type {
@@ -281,6 +281,38 @@ describe("registerArchetype idempotency", () => {
     expect(second.written).toBe(false);
     expect(second.reason).toContain("idempotent");
     expect(readRegistry().archetypes).toHaveLength(2); // seed + one, not three
+  });
+  it("writes a ledger-bound user overlay and retires it without touching the bundled registry", () => {
+    const overlayPath = join(tmpDir, "durable-overlay.json");
+    const promoted = registerArchetype(archetype, {
+      registryPath: overlayPath,
+      validatedAt: "2026-08-30T00:00:00.000Z",
+    });
+    expect(promoted.written).toBe(true);
+    expect(promoted.promotionDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(inspectLensRegistry(overlayPath)).toMatchObject({
+      exists: true,
+      valid: true,
+      activeLensCount: 1,
+      ledgerEntries: 1,
+      unboundArchetypes: 0,
+    });
+
+    const retired = retireArchetype("ssrf-url-fetch", {
+      registryPath: overlayPath,
+      retiredAt: "2026-08-30T00:01:00.000Z",
+    });
+    expect(retired.retired).toBe(true);
+    expect(retired.retirementDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(inspectLensRegistry(overlayPath)).toMatchObject({
+      valid: true,
+      activeLensCount: 0,
+      ledgerEntries: 2,
+      unboundArchetypes: 0,
+    });
+    const overlay = JSON.parse(readFileSync(overlayPath, "utf8")) as { archetypes: unknown[]; ledger: Array<{ type: string }> };
+    expect(overlay.archetypes).toEqual([]);
+    expect(overlay.ledger.map((entry) => entry.type)).toEqual(["promoted", "retired"]);
   });
 });
 

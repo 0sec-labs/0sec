@@ -19,8 +19,17 @@ export {
 export type { LensSynthesisModel, LensCandidateCluster, SynthesizeOptions } from "./synthesize.js";
 export { validateCandidateLens, makeFinderLensProbe } from "./validate.js";
 export type { FinderLensProbeOptions, ValidateOptions } from "./validate.js";
-export { registerArchetype, buildRegistryEntry } from "./register.js";
-export type { RegisterOutcome } from "./register.js";
+export {
+  registerArchetype,
+  buildRegistryEntry,
+  inspectLensRegistry,
+  retireArchetype,
+} from "./register.js";
+export type {
+  LensRegistryStatus,
+  RegisterOutcome,
+  RetireOutcome,
+} from "./register.js";
 export { runLensSynthesisLoop } from "./loop.js";
 export type {
   LensCandidate,

@@ -201,7 +201,10 @@ export interface LensSynthesisDeps {
   model?: import("./synthesize.js").LensSynthesisModel;
   /** REQUIRED validation probe. Use {@link makeFinderLensProbe} for a real run. */
   probe: LensProbe;
-  /** Registry file to append to. Defaults to the bundled appsec registry path. */
+  /**
+   * Durable overlay file to append to. Defaults to the operator-owned
+   * `~/.0sec/lenses/appsec-archetypes.json`, never the bundled seed registry.
+   */
   registryPath?: string;
   /** Hard cap on how many lenses ONE run may register. Default 1. */
   maxRegistrations?: number;

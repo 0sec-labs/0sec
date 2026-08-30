@@ -26,22 +26,22 @@
  * paths — is left byte-for-byte untouched. This registry generates FINDER
  * LENSES, not grep candidates; it never shells out and never confirms anything.
  *
- * This is the substrate for autonomous lens synthesis: adding coverage is a
- * data-file edit (append an archetype), not a code change, and the same JSON
- * shape a future generator would emit is the one this loader consumes today.
+ * This is the substrate for the self-evolving lens loop: a validated
+ * candidate is written to an operator-owned overlay, not this bundled source
+ * file. The overlay is read when a new finder snapshot is requested, so a
+ * long-lived CLI process picks up a completed promotion for its next review
+ * without ever changing an active engagement's lens set.
  *
- * RUNTIME injection: {@link loadAppsecFinderLenses} can additionally union in
- * lenses supplied at scan time via the `0SEC_RUNTIME_LENSES` env var (a JSON
- * array of the SAME snake_case archetype objects the baked file holds). This
- * lets the cloud's self-improving lens loop apply freshly synthesized lenses
- * WITHOUT an engine rebuild. It is gated behind `0SEC_RUNTIME_LENSES_ENABLED`
- * (default OFF — unset behaves byte-identically to today) and is fail-closed:
- * malformed JSON or a bad entry is warned-and-skipped, never thrown. Baked
- * (authored/validated) lenses always win an id collision — a runtime blob can
- * only ADD coverage, never shadow or override an authored lens.
+ * The legacy `0SEC_RUNTIME_LENSES` blob remains a deliberately opt-in,
+ * ephemeral overlay. Durable promotions use the user registry plus its
+ * hash-linked ledger; malformed, unsafe, or unbound registries fail closed.
+ * Every overlay is additive: baked lenses always win an id collision.
  */
 
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import embeddedAppsecArchetypes from "./data/appsec-archetypes.json" with { type: "json" };
 import type { FinderLens } from "./hunt-scan.js";
@@ -120,6 +120,26 @@ export interface RawAppsecArchetype {
   miss_refs?: string[];
 }
 
+/** A ledger event binding a durable self-evolving registry transition. */
+export interface AppsecLensLedgerEntry {
+  schemaVersion: 1;
+  sequence: number;
+  occurredAt: string;
+  type: "promoted" | "retired";
+  lensId: string;
+  archetypeDigest: string;
+  previousDigest: string | null;
+  entryDigest: string;
+}
+
+/** On-disk shape for the mutable, user-owned additive lens overlay. */
+export interface AppsecLensRegistry {
+  schemaVersion: 1;
+  provenance: string;
+  archetypes: RawAppsecArchetype[];
+  ledger: AppsecLensLedgerEntry[];
+}
+
 function mapRawAppsecArchetypes(raw: RawAppsecArchetype[]): AppsecArchetype[] {
   return raw.map((a) => ({
     uid: a.uid,
@@ -146,6 +166,46 @@ let _cache: AppsecArchetype[] | null = null;
 /** Absolute path to the bundled appsec-archetype data file (src and dist both carry it). */
 export function appsecArchetypesPath(): string {
   return fileURLToPath(new URL("./data/appsec-archetypes.json", import.meta.url));
+}
+
+/**
+ * Default user-owned overlay. It is intentionally outside the installed
+ * package, so a successful promotion never edits checked-in or bundled source.
+ */
+export function appsecUserArchetypesPath(homeDir: string = homedir()): string {
+  return join(homeDir, ".0sec", "lenses", "appsec-archetypes.json");
+}
+
+/** A deliberate process override for isolated workers and tests. */
+export function activeAppsecLensRegistryPath(): string {
+  const configured = process.env["0SEC_APPSEC_LENS_REGISTRY"]?.trim();
+  return configured ? resolve(configured) : appsecUserArchetypesPath();
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function digest(value: unknown): string {
+  return `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
+}
+
+/** Stable content binding used by durable-registry promotion and retirement events. */
+export function appsecArchetypeDigest(archetype: RawAppsecArchetype): string {
+  return digest(archetype);
+}
+
+/** Stable content binding for a ledger row before its self digest is attached. */
+export function appsecLensLedgerEntryDigest(
+  entry: Omit<AppsecLensLedgerEntry, "entryDigest">,
+): string {
+  return digest(entry);
 }
 
 function readAppsecArchetypes(): { archetypes: RawAppsecArchetype[] } {
@@ -177,56 +237,175 @@ export function appsecArchetypeToFinderLens(a: AppsecArchetype): FinderLens {
   return { id: a.id, challengeHint: a.challengeHint };
 }
 
-// ── Runtime lens injection (flag-gated, fail-closed) ─────────────────────────
+// ── Durable + ephemeral overlays (fail-closed) ──────────────────────────────
 
-/** Env flag gating runtime lens injection. Unset / empty / 0 / false / no → OFF. */
+/** Env flag gating legacy ephemeral runtime injection. */
 const RUNTIME_LENSES_FLAG = "0SEC_RUNTIME_LENSES_ENABLED";
-/** Env var carrying the runtime lens JSON blob (array of RawAppsecArchetype). */
+/** Env var carrying the legacy ephemeral runtime JSON blob. */
 const RUNTIME_LENSES_ENV = "0SEC_RUNTIME_LENSES";
+const SHA256_DIGEST = /^sha256:[a-f0-9]{64}$/;
+const LENS_ID = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
-/** True only when the operator has explicitly enabled runtime lens injection. */
+/** True only when the operator has explicitly enabled legacy runtime injection. */
 function runtimeLensesEnabled(): boolean {
   return !["", "0", "false", "no"].includes((process.env[RUNTIME_LENSES_FLAG] ?? "").toLowerCase());
 }
 
-function isStringArray(x: unknown): x is string[] {
-  return Array.isArray(x) && x.every((v) => typeof v === "string");
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
 /**
- * Structural guard: is `x` a well-formed on-disk {@link RawAppsecArchetype}?
- * This IS the runtime validation — it mirrors the shape the baked loader casts,
- * so only entries that would map cleanly through {@link mapRawAppsecArchetypes}
- * pass. `id` and `challenge_hint` (the two load-bearing FinderLens fields) must
- * be non-empty; the optional provenance fields are not required.
+ * Structural guard shared by the baked-compatible ephemeral and durable
+ * overlays. Durable data receives stricter provenance and ledger checks below.
  */
-function isRawAppsecArchetype(x: unknown): x is RawAppsecArchetype {
-  if (typeof x !== "object" || x === null) return false;
-  const a = x as Record<string, unknown>;
-  const nonEmptyStr = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+function isRawAppsecArchetype(value: unknown): value is RawAppsecArchetype {
+  if (typeof value !== "object" || value === null) return false;
+  const archetype = value as Record<string, unknown>;
+  const isNonEmptyString = (field: unknown): field is string =>
+    typeof field === "string" && field.trim().length > 0;
   return (
-    nonEmptyStr(a.id) &&
-    nonEmptyStr(a.challenge_hint) &&
-    typeof a.uid === "string" &&
-    typeof a.domain === "string" &&
-    typeof a.name === "string" &&
-    typeof a.cwe === "string" &&
-    typeof a.subsystem === "string" &&
-    typeof a.pattern === "string" &&
-    typeof a.detection_signature === "string" &&
-    typeof a.confirmable === "string" &&
-    typeof a.route === "string" &&
-    (a.engine_lens === null || typeof a.engine_lens === "string") &&
-    isStringArray(a.grounding)
+    isNonEmptyString(archetype.id) &&
+    isNonEmptyString(archetype.challenge_hint) &&
+    typeof archetype.uid === "string" &&
+    typeof archetype.domain === "string" &&
+    typeof archetype.name === "string" &&
+    typeof archetype.cwe === "string" &&
+    typeof archetype.subsystem === "string" &&
+    typeof archetype.pattern === "string" &&
+    typeof archetype.detection_signature === "string" &&
+    typeof archetype.confirmable === "string" &&
+    typeof archetype.route === "string" &&
+    (archetype.engine_lens === null || typeof archetype.engine_lens === "string") &&
+    isStringArray(archetype.grounding)
+  );
+}
+
+function isDurablyValidatedArchetype(value: unknown): value is RawAppsecArchetype {
+  if (!isRawAppsecArchetype(value)) return false;
+  return (
+    LENS_ID.test(value.id) &&
+    value.uid === `appsec/${value.id}` &&
+    value.domain === "appsec" &&
+    value.engine_lens === null &&
+    value.route === "appsec-source-static" &&
+    value.source === "synthesized" &&
+    typeof value.validated_at === "string" &&
+    Number.isFinite(Date.parse(value.validated_at)) &&
+    value.grounding.length > 0 &&
+    value.grounding.every((entry) => entry.trim().length > 0) &&
+    Array.isArray(value.miss_refs) &&
+    value.miss_refs.length > 0 &&
+    value.miss_refs.every((entry) => typeof entry === "string" && entry.trim().length > 0)
+  );
+}
+
+function isAppsecLensLedgerEntry(value: unknown): value is AppsecLensLedgerEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    entry.schemaVersion === 1 &&
+    Number.isInteger(entry.sequence) &&
+    (entry.sequence as number) > 0 &&
+    typeof entry.occurredAt === "string" &&
+    Number.isFinite(Date.parse(entry.occurredAt)) &&
+    (entry.type === "promoted" || entry.type === "retired") &&
+    typeof entry.lensId === "string" &&
+    LENS_ID.test(entry.lensId) &&
+    typeof entry.archetypeDigest === "string" &&
+    SHA256_DIGEST.test(entry.archetypeDigest) &&
+    (entry.previousDigest === null || (typeof entry.previousDigest === "string" && SHA256_DIGEST.test(entry.previousDigest))) &&
+    typeof entry.entryDigest === "string" &&
+    SHA256_DIGEST.test(entry.entryDigest)
   );
 }
 
 /**
- * Read the flag-gated `0SEC_RUNTIME_LENSES` blob and map it to
- * {@link FinderLens}[] using the SAME validation + mapping the baked loader
- * uses. Fail-closed at every step: flag OFF, missing env, non-array JSON, or a
- * parse error each yield `[]`; a single malformed entry is warned-and-skipped
- * rather than aborting the batch. Never throws — the scan proceeds baked-only.
+ * Read the operator-owned overlay afresh. A scan calls this only while
+ * constructing its lens snapshot; an in-flight scan therefore stays pinned.
+ */
+function loadDurableAppsecArchetypes(): RawAppsecArchetype[] {
+  const registryPath = activeAppsecLensRegistryPath();
+  if (!existsSync(registryPath)) return [];
+
+  try {
+    const metadata = lstatSync(registryPath);
+    if (!metadata.isFile()) throw new Error("registry must be a regular file");
+    if ((metadata.mode & 0o022) !== 0) {
+      throw new Error("registry must not be group- or world-writable");
+    }
+
+    const parsed = JSON.parse(readFileSync(registryPath, "utf8")) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("registry must be a JSON object");
+    }
+    const registry = parsed as Partial<AppsecLensRegistry>;
+    if (
+      registry.schemaVersion !== 1 ||
+      typeof registry.provenance !== "string" ||
+      registry.provenance.trim().length === 0 ||
+      !Array.isArray(registry.archetypes) ||
+      !Array.isArray(registry.ledger)
+    ) {
+      throw new Error("registry must carry schemaVersion 1, provenance, archetypes, and ledger");
+    }
+
+    const active = new Map<string, string>();
+    let previousDigest: string | null = null;
+    for (const [index, rawEntry] of registry.ledger.entries()) {
+      if (!isAppsecLensLedgerEntry(rawEntry)) throw new Error(`ledger entry ${index} is malformed`);
+      const entry = rawEntry;
+      if (entry.sequence !== index + 1 || entry.previousDigest !== previousDigest) {
+        throw new Error(`ledger entry ${index} breaks sequence or hash linkage`);
+      }
+      const expectedDigest = appsecLensLedgerEntryDigest({
+        schemaVersion: entry.schemaVersion,
+        sequence: entry.sequence,
+        occurredAt: entry.occurredAt,
+        type: entry.type,
+        lensId: entry.lensId,
+        archetypeDigest: entry.archetypeDigest,
+        previousDigest: entry.previousDigest,
+      });
+      if (entry.entryDigest !== expectedDigest) throw new Error(`ledger entry ${index} digest does not match`);
+      if (entry.type === "promoted") {
+        if (active.has(entry.lensId)) throw new Error(`ledger promotes active lens '${entry.lensId}' twice`);
+        active.set(entry.lensId, entry.archetypeDigest);
+      } else {
+        if (active.get(entry.lensId) !== entry.archetypeDigest) {
+          throw new Error(`ledger retires unknown or mismatched lens '${entry.lensId}'`);
+        }
+        active.delete(entry.lensId);
+      }
+      previousDigest = entry.entryDigest;
+    }
+
+    const archetypes: RawAppsecArchetype[] = [];
+    for (const rawArchetype of registry.archetypes) {
+      if (!isDurablyValidatedArchetype(rawArchetype)) {
+        throw new Error("registry contains an unvalidated synthesized lens");
+      }
+      if (active.get(rawArchetype.id) !== appsecArchetypeDigest(rawArchetype)) {
+        throw new Error(`registry lens '${rawArchetype.id}' is not bound by its ledger`);
+      }
+      archetypes.push(rawArchetype);
+    }
+    if (active.size !== archetypes.length) {
+      throw new Error("registry ledger and active archetype set disagree");
+    }
+    return archetypes;
+  } catch (error) {
+    console.warn(
+      `[appsec-lens-registry] ignoring ${registryPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return [];
+  }
+}
+
+/**
+ * Read the flag-gated `0SEC_RUNTIME_LENSES` blob. This is intentionally kept
+ * separate from the durable registry: it is an explicit, process-local
+ * experiment surface and never survives a restart.
  */
 function loadRuntimeAppsecLenses(): FinderLens[] {
   if (!runtimeLensesEnabled()) return [];
@@ -237,42 +416,36 @@ function loadRuntimeAppsecLenses(): FinderLens[] {
   try {
     parsed = JSON.parse(blob);
   } catch {
-    console.warn(`[appsec-runtime-lenses] ${RUNTIME_LENSES_ENV} is not valid JSON — falling back to baked lenses`);
+    console.warn(`[appsec-runtime-lenses] ${RUNTIME_LENSES_ENV} is not valid JSON — falling back to durable lenses`);
     return [];
   }
   if (!Array.isArray(parsed)) {
-    console.warn(`[appsec-runtime-lenses] ${RUNTIME_LENSES_ENV} must be a JSON array — falling back to baked lenses`);
+    console.warn(`[appsec-runtime-lenses] ${RUNTIME_LENSES_ENV} must be a JSON array — falling back to durable lenses`);
     return [];
   }
 
   const valid: RawAppsecArchetype[] = [];
   for (const entry of parsed) {
     if (isRawAppsecArchetype(entry)) valid.push(entry);
-    else console.warn(`[appsec-runtime-lenses] skipping malformed runtime lens entry`);
+    else console.warn("[appsec-runtime-lenses] skipping malformed runtime lens entry");
   }
   return mapRawAppsecArchetypes(valid).map(appsecArchetypeToFinderLens);
 }
 
 /**
- * Load the appsec archetype registry as a ready-to-use {@link FinderLens}[] —
- * the entry point the finder surfaces (`defaultFinderLenses`) consume to add
- * cross-language appsec coverage alongside the generic lenses.
- *
- * Baked lenses ({@link loadAppsecArchetypes}, pure + cached) load first, then —
- * only when `0SEC_RUNTIME_LENSES_ENABLED` is on — runtime lenses union in,
- * deduped by lens id with BAKED WINNING every collision (a runtime blob can add
- * new ids but never shadow an authored/validated lens). With the flag off this
- * is byte-identical to `loadAppsecArchetypes().map(appsecArchetypeToFinderLens)`.
+ * Return an immutable-at-call-time finder snapshot. Baked lenses load first,
+ * followed by the durable user registry and the opt-in ephemeral blob. Later
+ * overlays can add ids but never override an earlier lens.
  */
 export function loadAppsecFinderLenses(): FinderLens[] {
   const baked = loadAppsecArchetypes().map(appsecArchetypeToFinderLens);
+  const durable = mapRawAppsecArchetypes(loadDurableAppsecArchetypes()).map(appsecArchetypeToFinderLens);
   const runtime = loadRuntimeAppsecLenses();
-  if (runtime.length === 0) return baked;
-
-  const seen = new Set(baked.map((l) => l.id));
+  const seen = new Set(baked.map((lens) => lens.id));
   const merged = [...baked];
-  for (const lens of runtime) {
-    if (seen.has(lens.id)) continue; // baked (or an earlier runtime entry) wins
+
+  for (const lens of [...durable, ...runtime]) {
+    if (seen.has(lens.id)) continue;
     seen.add(lens.id);
     merged.push(lens);
   }
