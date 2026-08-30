@@ -24,11 +24,14 @@ counts. `--runtime` selects the LLM backend.
 The default `api` runtime makes direct HTTP calls to a provider. Set one of:
 
 ```bash
-export 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..." # ChatGPT/Codex subscription auth
+# API-key providers can be exported normally.
 export OPENROUTER_API_KEY="sk-or-..."   # Recommended
 export ANTHROPIC_API_KEY="sk-ant-..."
 export AZURE_OPENAI_API_KEY="..."
 export OPENAI_API_KEY="sk-..."
+
+# `0SEC_*` names begin with a digit; pass a Codex token with env.
+env 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..." 0sec doctor
 ```
 
 See [API Keys](/api-keys/) for the full priority order and provider details.
@@ -38,9 +41,10 @@ can read them from an Azure-backed `~/.codex/config.toml`. For the Responses API
 the base URL must include `/openai/v1`. 0sec fails fast on incomplete Azure config
 rather than guessing defaults.
 
-For ChatGPT Codex, run `codex login`, then export the refresh token from
-`~/.codex/auth.json` as `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`. When set, it takes
-priority over API-key providers.
+For ChatGPT Codex, run `codex login`, then either rely on
+`~/.codex/auth.json` or use
+`env 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN=... 0sec <command>`. An explicit token
+takes priority over API-key providers.
 
 ### CLI runtimes (claude, codex, gemini)
 
@@ -69,8 +73,8 @@ The Codex CLI isn't used as a live-target wrapper. For live scans on a Codex
 subscription, configure the direct provider instead:
 
 ```bash
-export 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..."
-0sec scan --target https://example.com --runtime codex
+env 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..." \
+  0sec scan --target https://example.com --runtime codex
 ```
 
 ### Codex runtime parity matrix
@@ -187,7 +191,7 @@ the pending network action while retaining the local file.
 `0SEC_FEEDBACK_URL` overrides the cloud receiver for a self-hosted HTTPS relay:
 
 ```bash
-export 0SEC_FEEDBACK_URL="https://feedback.example.org/v1/feedback"
+env 0SEC_FEEDBACK_URL="https://feedback.example.org/v1/feedback" 0sec console
 ```
 
 Do **not** place an incoming Slack webhook URL directly in the CLI environment:
@@ -302,7 +306,7 @@ static leads. Set `0SEC_STATIC=semgrep` to route them through Semgrep instead;
 audit`, OSV, OCI inventory) run separately for package targets regardless.
 
 ```bash
-0SEC_STATIC=semgrep 0sec review ./repo --depth quick
+env 0SEC_STATIC=semgrep 0sec review ./repo --depth quick
 ```
 
 ### Docker executor overrides
@@ -341,8 +345,8 @@ in the machine-readable result line. The `--cost-ceiling` flag overrides the env
 var.
 
 ```bash
-export 0SEC_COST_CEILING_USD=5
-0sec scan --target https://example.com --mode web
+env 0SEC_COST_CEILING_USD=5 \
+  0sec scan --target https://example.com --mode web
 
 0sec audit lodash --cost-ceiling 2
 0sec review ./my-repo --cost-ceiling 10
@@ -369,9 +373,11 @@ provider stops a scan loudly in seconds instead of degrading to a false clean.
 Stream findings and the final report to an orchestration layer:
 
 ```bash
-export 0SEC_CLOUD_SINK=https://api.example.com
-export 0SEC_CLOUD_SCAN_ID=scan_123
-export 0SEC_CLOUD_TOKEN=secret-token
+env \
+  0SEC_CLOUD_SINK=https://api.example.com \
+  0SEC_CLOUD_SCAN_ID=scan_123 \
+  0SEC_CLOUD_TOKEN=secret-token \
+  0sec scan --target https://example.com --mode web
 ```
 
 0sec then POSTs each finding as `{ "finding": ... }` and the final report as
@@ -390,30 +396,28 @@ cost/token usage. Useful for wrappers, CI parsers, and the cloud path.
 Every false-positive reduction feature on, for a client-ready scan:
 
 ```bash
-export 0SEC_FEATURE_CONSENSUS_VERIFY=1
-export 0SEC_FEATURE_REACHABILITY_GATE=1
-export 0SEC_FEATURE_POV_GATE=1
-export 0SEC_FEATURE_TRIAGE_MEMORIES=1
-export 0SEC_FEATURE_MULTIMODAL=1
-
-0sec scan --target https://example.com --mode web --depth deep
+env \
+  0SEC_FEATURE_CONSENSUS_VERIFY=1 \
+  0SEC_FEATURE_REACHABILITY_GATE=1 \
+  0SEC_FEATURE_POV_GATE=1 \
+  0SEC_FEATURE_TRIAGE_MEMORIES=1 \
+  0SEC_FEATURE_MULTIMODAL=1 \
+  0sec scan --target https://example.com --mode web --depth deep
 ```
 
 ### Example: Kali toolchain + web search
 
 ```bash
-export 0SEC_FEATURE_DOCKER_EXECUTOR=1
-export 0SEC_FEATURE_WEB_SEARCH=1
-
-0sec scan --target https://example.com --mode web
+env 0SEC_FEATURE_DOCKER_EXECUTOR=1 0SEC_FEATURE_WEB_SEARCH=1 \
+  0sec scan --target https://example.com --mode web
 ```
 
 ### Example: raw Kali fallback
 
 ```bash
-export 0SEC_FEATURE_DOCKER_EXECUTOR=1
-export 0SEC_DOCKER_IMAGE=kalilinux/kali-rolling
-export 0SEC_DOCKER_BOOTSTRAP_TOOLS=1
-
-0sec scan --target https://example.com --mode web
+env \
+  0SEC_FEATURE_DOCKER_EXECUTOR=1 \
+  0SEC_DOCKER_IMAGE=kalilinux/kali-rolling \
+  0SEC_DOCKER_BOOTSTRAP_TOOLS=1 \
+  0sec scan --target https://example.com --mode web
 ```

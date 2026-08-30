@@ -195,21 +195,19 @@ describe("saveCredentials / loadCredentials", () => {
 });
 
 describe("credentialEnvPatch", () => {
-  it("maps a stored provider onto its most-preferred env var", () => {
-    // chatgpt-codex is the one provider with two accepted variables, and the
-    // runtime reads the access token first.
-    expect(credentialEnvPatch({ "chatgpt-codex": "oauth-secret" }, {})).toEqual({
-      "0SEC_CHATGPT_ACCESS_TOKEN": "oauth-secret",
-    });
+  it("refuses to map an OAuth subscription through the generic API-key store", () => {
+    expect(credentialEnvPatch({ "chatgpt-codex": "oauth-secret" }, {})).toEqual({});
   });
 
-  it("covers every provider in the table", () => {
+  it("covers every API-key provider in the table", () => {
     const creds: StoredCredentials = Object.fromEntries(
       PROVIDERS.map((info) => [info.id, `secret-for-${info.id}`]),
     );
     const patch = credentialEnvPatch(creds, {});
 
-    expect(Object.keys(patch).sort()).toEqual(PROVIDERS.map((info) => info.envVars[0]).sort());
+    expect(Object.keys(patch).sort()).toEqual(
+      PROVIDERS.filter((info) => info.auth === "api-key").map((info) => info.envVars[0]).sort(),
+    );
   });
 
   it("never overrides an env var that already carries a credential", () => {

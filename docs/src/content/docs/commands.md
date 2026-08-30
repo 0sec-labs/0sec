@@ -412,23 +412,28 @@ Set `0SEC_KERNEL_QEMU=1` to enable VM-backed execution. The runner expects a boo
 For the maintained Docker build recipe, exact guest contract, and troubleshooting
 steps, see [Kernel VM Verification](/kernel-vm/).
 
-Required environment variables:
+Required environment variables are passed with `env` because `0SEC_*` names
+cannot be exported by POSIX shells:
 
 ```bash
-export 0SEC_KERNEL_QEMU=1
-export 0SEC_KERNEL_QEMU_KERNEL=/path/to/bzImage
-export 0SEC_KERNEL_QEMU_DISK=/path/to/rootfs.img
+env \
+  0SEC_KERNEL_QEMU=1 \
+  0SEC_KERNEL_QEMU_KERNEL=/path/to/bzImage \
+  0SEC_KERNEL_QEMU_DISK=/path/to/rootfs.img \
+  0sec ingest --verify ./crashes
 ```
 
-Useful optional variables:
+Useful optional variables follow the same pattern:
 
 ```bash
-export 0SEC_KERNEL_QEMU_APPEND='console=ttyS0 root=/dev/vda rw nokaslr panic=-1 init=/sbin/0sec-init'
-export 0SEC_KERNEL_QEMU_BOOT_TIMEOUT_SEC=120
-export 0SEC_KERNEL_QEMU_TIMEOUT_SEC=60
-export 0SEC_KERNEL_QEMU_ACCEL=kvm
-export 0SEC_KERNEL_QEMU_SHARE_TAG=osecshare
-export 0SEC_KERNEL_QEMU_ARTIFACT_DIR=/tmp/0sec-kvm-runs
+env \
+  0SEC_KERNEL_QEMU_APPEND='console=ttyS0 root=/dev/vda rw nokaslr panic=-1 init=/sbin/0sec-init' \
+  0SEC_KERNEL_QEMU_BOOT_TIMEOUT_SEC=120 \
+  0SEC_KERNEL_QEMU_TIMEOUT_SEC=60 \
+  0SEC_KERNEL_QEMU_ACCEL=kvm \
+  0SEC_KERNEL_QEMU_SHARE_TAG=osecshare \
+  0SEC_KERNEL_QEMU_ARTIFACT_DIR=/tmp/0sec-kvm-runs \
+  0sec ingest --verify ./crashes
 ```
 
 If the VM is not configured, 0sec does **not** claim a reproduced crash; it reports static-only verification with capped confidence.
@@ -754,10 +759,9 @@ privileged roles, conditional access, app registrations, service principals,
 federation, and token analysis. Every Graph request is hard-coded `GET`.
 
 ```bash
-# Access token comes from the environment, never a command-line argument
-export 0SEC_ENTRA_ACCESS_TOKEN=...
-0sec identity --tenant <tenant-guid>
-0sec identity --tenant <tenant-guid> --json
+# Access token comes from the environment, never a command-line argument.
+env 0SEC_ENTRA_ACCESS_TOKEN=... 0sec identity --tenant <tenant-guid>
+env 0SEC_ENTRA_ACCESS_TOKEN=... 0sec identity --tenant <tenant-guid> --json
 ```
 
 ## adgraph

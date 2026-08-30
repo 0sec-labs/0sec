@@ -33,9 +33,8 @@ crawls.
 without running the `wpscan` CLI or sending generic scanner traffic.
 
 ```bash
-export 0SEC_FEATURE_DYNAMIC_PLAYBOOKS=1
-
-0sec scan \
+env 0SEC_FEATURE_DYNAMIC_PLAYBOOKS=1 \
+  0sec scan \
   --target https://blog.example.com \
   --mode web \
   --depth deep \
@@ -48,7 +47,8 @@ When the program explicitly allows scanner traffic, add the Docker executor and
 scoped HackerOne/Bugcrowd targets unless the policy permits generic scanners.
 
 ```bash
-0SEC_FEATURE_DOCKER_EXECUTOR=1 0sec scan \
+env 0SEC_FEATURE_DOCKER_EXECUTOR=1 \
+  0sec scan \
   --target https://blog.example.com \
   --mode web \
   --depth deep \
@@ -135,14 +135,14 @@ Every false-positive reduction feature on, plus EGATS tree search. Slower, but
 produces client-ready findings.
 
 ```bash
-export 0SEC_FEATURE_CONSENSUS_VERIFY=1
-export 0SEC_FEATURE_REACHABILITY_GATE=1
-export 0SEC_FEATURE_POV_GATE=1
-export 0SEC_FEATURE_TRIAGE_MEMORIES=1
-export 0SEC_FEATURE_MULTIMODAL=1
-export 0SEC_FEATURE_DOCKER_EXECUTOR=1
-
-0sec scan \
+env \
+  0SEC_FEATURE_CONSENSUS_VERIFY=1 \
+  0SEC_FEATURE_REACHABILITY_GATE=1 \
+  0SEC_FEATURE_POV_GATE=1 \
+  0SEC_FEATURE_TRIAGE_MEMORIES=1 \
+  0SEC_FEATURE_MULTIMODAL=1 \
+  0SEC_FEATURE_DOCKER_EXECUTOR=1 \
+  0sec scan \
   --target https://example.com \
   --mode web \
   --depth deep \

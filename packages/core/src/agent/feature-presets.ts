@@ -47,16 +47,16 @@
  * ## Precedence: an explicit env var always wins
  *
  * {@link applyFeaturePreset} never overwrites a variable that is already set.
- * An operator running `0SEC_FEATURE_POV_GATE=0` with the moat preset gets
- * the moat minus the PoV gate — which is exactly the single-layer ablation you
- * need to attribute an effect to one layer. Silently overriding the operator
+ * An operator running `env 0SEC_FEATURE_POV_GATE=0 0sec …` with the moat preset
+ * gets the moat minus the PoV gate — which is exactly the single-layer ablation
+ * you need to attribute an effect to one layer. Silently overriding the operator
  * would make per-layer ablation impossible, so the precedence is deliberate.
  *
  * Usage:
- *   0SEC_FEATURE_PRESET=fp-moat 0sec scan …
+ *   env 0SEC_FEATURE_PRESET=fp-moat 0sec scan …
  *   0sec scan --features fp-moat …
- */
 
+ */
 /** Names of the presets this module knows how to apply. */
 export type FeaturePresetName = "fp-moat";
 

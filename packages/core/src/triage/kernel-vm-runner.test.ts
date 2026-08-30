@@ -912,7 +912,7 @@ describe("weaponize-initramfs lane", () => {
     expect(buildInitramfsKernelAppend(true)).toContain(" kaslr ");
   });
 
-  it("renderInitramfsInitScript insmods modules, exports race env, runs /exploit, harvests markers", () => {
+  it("renderInitramfsInitScript insmods modules and passes race env through busybox env", () => {
     const init = renderInitramfsInitScript(
       ["snd-mtpav.ko"],
       { "0SEC_RACE_SECONDS": "35", "0SEC_RACE_FLOOD_THREADS": "4" },
@@ -922,9 +922,10 @@ describe("weaponize-initramfs lane", () => {
     expect(init).toContain("mount -t proc none /proc");
     // the module the snd-seq-midi UAF needs (the midisynth port) is insmod'd
     expect(init).toContain("insmod /lib/modules/snd-mtpav.ko");
-    // the 0SEC_RACE_* knobs the emitted exploit reads via getenv are exported
-    expect(init).toContain("export 0SEC_RACE_SECONDS='35'");
-    expect(init).toContain("export 0SEC_RACE_FLOOD_THREADS='4'");
+    // Shell identifiers cannot start with a digit, so these must be argv
+    // assignments to busybox env rather than broken `export 0SEC_...` lines.
+    expect(init).toContain("/bin/busybox env 0SEC_RACE_SECONDS='35' 0SEC_RACE_FLOOD_THREADS='4'");
+    expect(init).not.toContain("export 0SEC_RACE_");
     // the host-compiled static exploit is run under busybox `timeout` (positional
     // SECS arg — NOT GNU `-t SECS`, which busybox rejects). Caps a hung flood.
     // Its high-volume marker output goes to a tmpfs file during the race (so the
@@ -936,6 +937,16 @@ describe("weaponize-initramfs lane", () => {
     // poweroff so the host's QEMU-exit wait returns
     expect(init).toContain("poweroff -f");
     expect(init).toContain("0SEC-INITRAMFS done");
+  });
+
+  it("forwards only validated race environment keys into the guest command", () => {
+    const init = renderInitramfsInitScript(
+      [],
+      { "0SEC_RACE_SECONDS": "35", "bad; poweroff": "now" },
+      30,
+    );
+    expect(init).toContain("0SEC_RACE_SECONDS='35'");
+    expect(init).not.toContain("bad; poweroff");
   });
 
   it("buildInitramfsQemuCommand uses -initrd with NO -drive/-virtfs (9p)", () => {

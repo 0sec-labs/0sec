@@ -1,5 +1,6 @@
-import { defineConfig } from "astro/config";
+import { unified } from "@astrojs/markdown-remark";
 import starlight from "@astrojs/starlight";
+import { defineConfig } from "astro/config";
 import rehypeMermaid from "rehype-mermaid";
 
 export default defineConfig({
@@ -9,11 +10,13 @@ export default defineConfig({
   // Allow previewing the dev server over Tailscale (dev-only; ignored by the static build).
   vite: { server: { allowedHosts: [".ts.net"] } },
   markdown: {
-    // Render ```mermaid code blocks as SVG at build time
+    // Render ```mermaid code blocks as SVG at build time.
     syntaxHighlight: { type: "shiki", excludeLangs: ["mermaid"] },
-    rehypePlugins: [
-      [rehypeMermaid, { strategy: "img-svg", dark: true }],
-    ],
+    processor: unified({
+      rehypePlugins: [
+        [rehypeMermaid, { strategy: "img-svg", dark: true }],
+      ],
+    }),
   },
   integrations: [
     starlight({

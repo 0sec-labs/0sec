@@ -159,7 +159,7 @@ restarting.
 restarting long agentic workflows is expensive. This is what makes 0sec feel like
 infrastructure.
 
-**Deliverables:** `0sec-cli resume <scan-id>`; stage-level checkpointing;
+**Deliverables:** `0sec resume <scan-id>`; stage-level checkpointing;
 partial-result recovery after crash/timeout; resume-safe report generation.
 
 ### 4. Finding inbox + triage workflow

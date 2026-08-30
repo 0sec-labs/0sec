@@ -129,8 +129,8 @@ foxguard on the same code and cross-checks each finding against its SARIF:
 - **foxguard didn't scan the file** → no signal.
 
 ```bash
-export 0SEC_FEATURE_MULTIMODAL=1
-0sec scan --target https://example.com --repo ./source
+env 0SEC_FEATURE_MULTIMODAL=1 \
+  0sec scan --target https://example.com --repo ./source
 ```
 
 ## 6. PoV generation gate
@@ -177,14 +177,14 @@ today; an embedding ranker can replace `scoreMemory` without API changes.
 
 ```bash
 # Mark a finding FP and remember why
-0sec-cli triage mark-fp <finding-id> --reason "test fixture, not prod"
+0sec triage mark-fp <finding-id> --reason "test fixture, not prod"
 
 # Add a standalone memory
-0sec-cli triage memory add --finding <id> --reason "sink is harmless helper" \
+0sec triage memory add --finding <id> --reason "sink is harmless helper" \
   --scope package --scope-value my-pkg
 
 # List memories
-0sec-cli triage memory list --scope target
+0sec triage memory list --scope target
 ```
 
 ## 10. Adversarial debate
@@ -242,7 +242,7 @@ Every gate is off by default. `fp-moat` names the set:
 ```bash
 0sec scan --features fp-moat --target https://example.com
 # or, for templated CI:
-0SEC_FEATURE_PRESET=fp-moat 0sec scan --target https://example.com
+env 0SEC_FEATURE_PRESET=fp-moat 0sec scan --target https://example.com
 ```
 
 It expands to `REACHABILITY_GATE`, `MULTIMODAL`, `PUBLISHABILITY_GATE`,
@@ -252,7 +252,7 @@ It expands to `REACHABILITY_GATE`, `MULTIMODAL`, `PUBLISHABILITY_GATE`,
 A flag you set yourself always wins, so you can ablate one layer:
 
 ```bash
-0SEC_FEATURE_POV_GATE=0 0sec scan --features fp-moat …
+env 0SEC_FEATURE_POV_GATE=0 0sec scan --features fp-moat …
 ```
 
 The preset deliberately omits `LEARNED_ROUTER` and `DYNAMIC_TRIAGE` — those

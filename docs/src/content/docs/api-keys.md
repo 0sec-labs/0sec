@@ -27,7 +27,8 @@ OpenRouter instead.
 
 ## Model routing
 
-Set `--model <id>` or `0SEC_MODEL=<id>` when more than one credential is present.
+Set `--model <id>` or run a command through `env 0SEC_MODEL=<id> 0sec <command>`
+when more than one credential is present.
 0sec routes recognized families to the configured provider:
 
 - `glm-*` / `z-ai/*` → Z.ai
@@ -36,7 +37,8 @@ Set `--model <id>` or `0SEC_MODEL=<id>` when more than one credential is present
 - `claude*` / `anthropic/*` → Anthropic, then OpenRouter when direct Anthropic
   credentials are absent
 - `gpt-*` / `o*` → ChatGPT Codex subscription when configured, otherwise
-  OpenAI
+  OpenAI. `0SEC_SELECTED_PROVIDER` explicitly pins either provider for the
+  current chat or run.
 
 Without an explicit model, 0sec picks an available fallback. Pin a model rather
 than relying on ambient credential order.
@@ -56,9 +58,11 @@ export QWEN_API_KEY="..."
 # Or use OpenRouter.
 export OPENROUTER_API_KEY="sk-or-v1-..."
 
-# ChatGPT Codex subscription auth (either token works).
-export 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..."
-# export 0SEC_CHATGPT_ACCESS_TOKEN="..."   # read first when both are set
+# ChatGPT Codex subscription auth. `0SEC_*` names begin with a digit, so
+# pass the token with `env` rather than a shell `export`.
+env 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..." \
+  0sec review ./authorized-repo --runtime api
+# Or use 0SEC_CHATGPT_ACCESS_TOKEN; it is read first when both are present.
 ```
 
 ### GitHub Actions
@@ -80,32 +84,39 @@ CLI through the container image:
 
 ChatGPT Codex is the only provider that can authenticate from a file instead of an
 env var. When neither `0SEC_CHATGPT_ACCESS_TOKEN` nor
-`0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` is exported, the runtime reads the tokens from
-`~/.codex/auth.json` (the file `codex login` writes). Override the path with
+`0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` is supplied for a run, the runtime reads the
+tokens from `~/.codex/auth.json` (the file `codex login` writes). Override the path with
 `0SEC_CHATGPT_AUTH_FILE`; an account id comes from `0SEC_CHATGPT_ACCOUNT_ID` or the
 same file. (`0SEC_CODEX_AUTH_JSON_PATH` is a deprecated spelling — prefer
 `0SEC_CHATGPT_AUTH_FILE`.)
 
+In OpenTUI chat, run `/providers` (or `/connect`) and choose **ChatGPT
+Codex**. 0sec runs the official `codex login --device-auth` lifecycle, streams
+the device instructions in the pane, and reloads `~/.codex/auth.json` only
+after success. It never asks for an OpenAI API key or a pasted OAuth token.
+Choose **OpenAI** separately when you want `OPENAI_API_KEY` direct API access.
+
 Every `0sec` run loads that file into the environment before any subcommand
 runs, so a codex-login file is picked up everywhere — the console `/providers`
-view, `0sec doctor`, and scans/reviews/audits. An explicit export always wins, and
-a missing or malformed file is ignored quietly. One caveat: the `/providers` table
+view, `0sec doctor`, and scans/reviews/audits. An explicit environment value always wins,
+and a missing or malformed file is ignored quietly. One caveat: the `/providers` table
 never checks the filesystem, so anything that reads it *without* the CLI's startup
 load (for example, if you embed it in your own tool) shows "not configured" — a
 display quirk, not a broken setup.
 
 ## Console credential store
 
-The console can hold provider keys so you don't re-export them each shell. Run
-`/providers` to see which providers hold credentials, then select one to paste its
-key. Each line shows `configured via <VAR>` or `not configured`, reflecting the
-real environment.
+The console credential store is for API-key providers only. Run `/providers`
+to open the chat-owned OpenTUI connection pane, then select a provider to paste
+its API key. ChatGPT Codex never uses this generic key path: it uses device
+OAuth and the Codex auth file instead. Each API-key row shows `configured via
+<VAR>` or `not configured`, reflecting the real environment.
 
 Keys are written to `credentials.json` in the [state
 directory](/configuration/#state-directory) (`~/.0sec/` by default), re-tightened
 to owner-only (`0600` file, `0700` dir) on every save.
 
-**An exported shell variable always wins over the stored value** — the store only
+**An explicit environment value always wins over the stored value** — the store only
 fills a variable the environment doesn't already carry. This keeps "which key did
 that run use?" answerable when a request 401s or a metered key overspends.
 

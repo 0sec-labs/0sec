@@ -79,6 +79,20 @@ describe("maybeLoadCodexAuth", () => {
     expect(e["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]).toBeUndefined();
   });
 
+  it("replaces stale process tokens after an explicit OAuth reconnect", () => {
+    const e = env({
+      "0SEC_CHATGPT_ACCESS_TOKEN": "stale-access",
+      "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN": "stale-refresh",
+      "0SEC_CHATGPT_AUTH_FILE": writeAuth("fresh.json", {
+        access_token: "fresh-access",
+        refresh_token: "fresh-refresh",
+      }),
+    });
+    maybeLoadCodexAuth({ env: e, home: dir, force: true });
+    expect(e["0SEC_CHATGPT_ACCESS_TOKEN"]).toBe("fresh-access");
+    expect(e["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]).toBe("fresh-refresh");
+  });
+
   it("does not overwrite a refresh token that is already exported", () => {
     const e = env({
       "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN": "ref-from-shell",

@@ -24,11 +24,10 @@
  *    appears after a save because the store now holds the value, not because
  *    the screen assumed the save worked.
  *
- * The subscription / OAuth path is honest about the absence of an in-tool
- * network dance: for a subscription provider the detail pane names the real
- * sign-in (e.g. `codex login`) and the sub-step accepts the token the operator
- * pastes back, storing it the same way an API key is stored. It never fakes a
- * completed OAuth handshake.
+ * The ChatGPT Codex path runs the official `codex login --device-auth` flow
+ * under this OpenTUI pane. It never asks for an API key or pasted OAuth token:
+ * Codex owns the browser/device protocol and writes its auth file; completion
+ * reloads that file into this process only after a successful device login.
  */
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -44,6 +43,11 @@ import {
   type StoredCredentials,
 } from "./credential-store.js";
 import type { ConnectionRecovery } from "./connection-recovery.js";
+import {
+  startCodexDeviceAuth,
+  type CodexDeviceAuthSession,
+  type CodexDeviceAuthUpdate,
+} from "./codex-device-auth.js";
 import {
   authHintLabel,
   buildConnectRows,
@@ -131,22 +135,69 @@ function toneColor(theme: Theme, tone: ConnectDetailTone): string | undefined {
   }
 }
 
-/** A pane that states its own height; renders nothing when the layout gave it none. */
-function Pane({
+/**
+ * Local equivalent of the shell's RailBar. It is a painted one-cell spine, not
+ * a text glyph, so it remains a continuous rule across the section's height.
+ */
+function RailBar({ tone }: { tone: string }) {
+  return <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={tone} />;
+}
+
+/**
+ * The connect flow uses the same sparse rail treatment as chat: one primary
+ * selection rail, then a flat selected-provider context. `connect-layout`
+ * already reserves four cells of wide-screen pane chrome; this spends them as
+ * rail + breathing room instead of drawing a second all-sided console box.
+ */
+function RailPane({
   pane,
-  bordered,
+  railTone,
   title,
   children,
 }: {
   pane: ConnectPane;
-  bordered: boolean;
+  /** Omit for the quieter selected-provider context pane. */
+  railTone?: string;
   /** The header row node, already fitted to the pane's inner width. */
   title: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const theme = useTheme();
-  if (pane.width <= 0 || pane.height <= 0) return null;
+  if (pane.width <= 0 || pane.height <= 0 || pane.innerWidth <= 0) return null;
   const titleRow = pane.hasTitle ? title : null;
+  const hasWideChrome = pane.width > pane.innerWidth;
+  const body = (
+    <>
+      {titleRow}
+      {children}
+    </>
+  );
+
+  if (railTone && hasWideChrome) {
+    return (
+      <box
+        flexDirection="row"
+        width={pane.width}
+        height={pane.height}
+        flexShrink={0}
+        flexGrow={0}
+        minWidth={0}
+      >
+        <RailBar tone={railTone} />
+        <box
+          flexDirection="column"
+          width={pane.innerWidth}
+          height={pane.height}
+          flexShrink={0}
+          flexGrow={0}
+          minWidth={0}
+          marginLeft={1}
+        >
+          {body}
+        </box>
+      </box>
+    );
+  }
+
   return (
     <box
       flexDirection="column"
@@ -155,13 +206,41 @@ function Pane({
       flexShrink={0}
       flexGrow={0}
       minWidth={0}
-      border={bordered || undefined}
-      borderColor={bordered ? theme.BORDER : undefined}
-      backgroundColor={bordered ? theme.PANEL : undefined}
-      paddingX={bordered ? 1 : undefined}
     >
-      {titleRow}
-      {children}
+      <box
+        flexDirection="column"
+        width={pane.innerWidth}
+        height={pane.height}
+        flexShrink={0}
+        flexGrow={0}
+        minWidth={0}
+        marginLeft={hasWideChrome ? 2 : undefined}
+      >
+        {body}
+      </box>
+    </box>
+  );
+}
+
+/** A compact rail treatment for an OAuth or connection-recovery message. */
+function DetailRail({
+  showRail,
+  tone,
+  children,
+}: {
+  showRail: boolean;
+  tone: string;
+  children: React.ReactNode;
+}) {
+  if (!showRail) {
+    return <box flexDirection="column" width="100%" minWidth={0}>{children}</box>;
+  }
+  return (
+    <box flexDirection="row" width="100%" minWidth={0}>
+      <RailBar tone={tone} />
+      <box flexDirection="column" flexGrow={1} minWidth={0} paddingLeft={1}>
+        {children}
+      </box>
     </box>
   );
 }
@@ -204,6 +283,61 @@ function TitleRow({
   );
 }
 
+function oauthStateTone(theme: Theme, phase: CodexDeviceAuthUpdate["phase"]): string {
+  switch (phase) {
+    case "failed":
+      return theme.ERROR;
+    case "connected":
+      return theme.SUCCESS;
+    case "running":
+      return theme.ACCENT;
+    default:
+      return theme.MUTED;
+  }
+}
+
+function oauthStateTitle(
+  phase: CodexDeviceAuthUpdate["phase"],
+  standalone: boolean,
+): string {
+  switch (phase) {
+    case "connected":
+      return standalone ? "ChatGPT Codex connected" : "connected";
+    case "failed":
+      return standalone ? "ChatGPT Codex sign-in failed" : "sign-in failed";
+    case "cancelled":
+      return standalone ? "ChatGPT Codex sign-in cancelled" : "sign-in cancelled";
+    default:
+      return standalone ? "ChatGPT Codex device sign-in" : "device sign-in";
+  }
+}
+
+function oauthStateMeta(phase: CodexDeviceAuthUpdate["phase"]): string {
+  switch (phase) {
+    case "running":
+      return "sign-in";
+    case "connected":
+      return "connected";
+    case "failed":
+      return "failed";
+    default:
+      return "cancelled";
+  }
+}
+
+function oauthRecoveryHint(phase: CodexDeviceAuthUpdate["phase"]): string {
+  switch (phase) {
+    case "running":
+      return "Complete the sign-in in your browser. Keep this pane open; Esc cancels.";
+    case "failed":
+      return "Review the Codex output, then press Enter to try again or use ↑/↓ to choose another provider.";
+    case "connected":
+      return "The subscription credential is loaded for this session.";
+    default:
+      return "Press Enter to try again or use ↑/↓ to choose another provider.";
+  }
+}
+
 export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, env, homeDir }: ConnectScreenProps) {
   const theme = useTheme();
   const { width, height } = useTerminalDimensions();
@@ -217,15 +351,20 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
   // screen assumed the write succeeded.
   const [stored, setStored] = useState<StoredCredentials>(() => loadCredentials(homeDir));
 
-  // Input sub-step state. `inputProviderId` doubles as the "are we in the input
-  // sub-step" flag; the raw secret lives here and nowhere else, and is dropped
-  // the moment the step ends.
+  // API-key input state. The raw secret lives here and nowhere else, and is
+  // dropped the moment the sub-step ends.
   const [inputProviderId, setInputProviderId] = useState<string | undefined>(undefined);
   const [inputValue, setInputValue] = useState("");
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  const oauthSessionRef = useRef<CodexDeviceAuthSession | undefined>(undefined);
+  const [oauth, setOauth] = useState<
+    (CodexDeviceAuthUpdate & { providerId: string }) | undefined
+  >(undefined);
+  const [authEpoch, setAuthEpoch] = useState(0);
 
-  // Credentials are process-level; re-read env only when the injected env changes.
-  const states = useMemo(() => providerStates(env ?? process.env), [env]);
+  // OAuth completion updates process env, so authEpoch is the explicit redraw
+  // boundary for providerStates rather than a hidden file-read side effect.
+  const states = useMemo(() => providerStates(env ?? process.env), [env, authEpoch]);
   const storedIds = useMemo(() => new Set(Object.keys(stored)), [stored]);
 
   const rows = useMemo(
@@ -262,14 +401,16 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
   const window = computeConnectWindow({ rows, selected: cursor, visible: layout.visibleRows, anchor });
 
   const inInput = inputProviderId !== undefined;
-  const mode: ConnectMode = inInput ? "input" : filtering ? "filter" : "browse";
+  const oauthVisible = oauth?.providerId === activeProvider?.id;
+  const inOAuth = oauthVisible && oauth?.phase === "running";
+  const mode: ConnectMode = inInput ? "input" : inOAuth ? "oauth" : filtering ? "filter" : "browse";
 
   // Keep the stored anchor in step with the window the list is actually
   // showing, so the list scrolls rather than jumps — but leave it frozen while
-  // the input sub-step is up, since the cursor cannot move there.
+  // an authentication sub-step is active.
   useEffect(() => {
-    if (!inInput && window.start !== anchor) setAnchor(window.start);
-  }, [inInput, window.start, anchor]);
+    if (!inInput && !inOAuth && window.start !== anchor) setAnchor(window.start);
+  }, [inInput, inOAuth, window.start, anchor]);
   useEffect(() => {
     if (cursor >= 0 && cursor !== selected) setSelected(cursor);
   }, [cursor, selected]);
@@ -286,6 +427,9 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
     }
   }, [recovery?.providerId, rows]);
 
+  useEffect(() => () => {
+    oauthSessionRef.current?.cancel();
+  }, []);
 
   const move = (delta: number) => {
     const next = moveSelection(rows, cursor, delta);
@@ -301,7 +445,39 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
     setAnchor(0);
   };
 
+  const beginOauth = (provider: ConnectProvider) => {
+    oauthSessionRef.current?.cancel();
+    setInputProviderId(undefined);
+    setInputValue("");
+    setNotice(undefined);
+    setOauth({
+      providerId: provider.id,
+      phase: "running",
+      lines: [],
+      message: "Starting ChatGPT Codex device sign-in…",
+    });
+    oauthSessionRef.current = startCodexDeviceAuth({
+      homeDir,
+      onUpdate: (update) => {
+        setOauth({ ...update, providerId: provider.id });
+        if (update.phase === "failed") setNotice(update.message);
+      },
+      onConnected: () => {
+        oauthSessionRef.current = undefined;
+        setAuthEpoch((current) => current + 1);
+        setStored(loadCredentials(homeDir));
+        setNotice(`connected ${provider.label} through device OAuth`);
+        onConnected?.(provider.id);
+      },
+    });
+  };
+
   const beginConnect = (provider: ConnectProvider) => {
+    if (provider.auth === "oauth") {
+      beginOauth(provider);
+      return;
+    }
+    setOauth(undefined);
     setInputProviderId(provider.id);
     setInputValue("");
     setNotice(undefined);
@@ -310,6 +486,10 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
   const cancelInput = () => {
     setInputProviderId(undefined);
     setInputValue("");
+  };
+
+  const cancelOauth = () => {
+    oauthSessionRef.current?.cancel();
   };
 
   const commitInput = () => {
@@ -328,10 +508,9 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
       setNotice("could not write credentials (is HOME writable?)");
       return;
     }
-    // Re-read so the row reflects exactly what the store normalised and kept.
     const reloaded = loadCredentials(homeDir);
     setStored(reloaded);
-    const label = states.find((s) => s.id === id)?.label ?? id;
+    const label = states.find((state) => state.id === id)?.label ?? id;
     setNotice(reloaded[id] ? `connected ${label}` : `${label} not stored`);
     onConnected?.(id);
   };
@@ -341,6 +520,11 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
 
     if (key.ctrl && key.name === "c") {
       onExit();
+      return;
+    }
+
+    if (inOAuth) {
+      if (key.name === "escape") cancelOauth();
       return;
     }
 
@@ -497,8 +681,26 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
     );
   });
 
+  const rawDetailLines = connectDetailLines(
+    { row: detailRow, compact: layout.detailCompact },
+    layout.detail.innerWidth,
+  );
+  // A wide detail pane gets the selected provider in its title row. Remove that
+  // repeated lead label (and its spacer) before spending the body-row budget;
+  // stacked/narrow panes retain the original self-contained detail lines.
+  let detailBodyStart = 0;
+  if (layout.detail.hasTitle) {
+    while (detailBodyStart < rawDetailLines.length) {
+      const tone = rawDetailLines[detailBodyStart]?.tone;
+      if (tone !== "title" && tone !== "blank") break;
+      detailBodyStart += 1;
+    }
+  }
+  const detailLines = detailBodyStart === 0
+    ? rawDetailLines
+    : rawDetailLines.slice(detailBodyStart);
   const detailBody = clipConnectDetailLines(
-    connectDetailLines({ row: detailRow, compact: layout.detailCompact }, layout.detail.innerWidth),
+    detailLines,
     layout.detail.bodyRows,
     layout.detail.innerWidth,
   ).map((line, index) => (
@@ -506,7 +708,8 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
       {line.text}
     </Cells>
   ));
-  const detailContent = recovery ? (
+  const oauthTone = oauthVisible && oauth ? oauthStateTone(theme, oauth.phase) : theme.MUTED;
+  const oauthContent = oauthVisible && oauth ? (
     <scrollbox
       width={layout.detail.innerWidth}
       height={Math.max(1, layout.detail.bodyRows)}
@@ -514,31 +717,85 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
       minWidth={0}
       minHeight={0}
     >
-      <box flexDirection="column" width="100%" minWidth={0}>
-        <text fg={theme.ERROR} attributes={TextAttributes.BOLD} wrapMode="word">{recovery.title}</text>
-        <text fg={theme.MUTED} wrapMode="word">{recovery.detail}</text>
-        <text fg={theme.ACCENT} marginTop={1} wrapMode="word">
-          Press Enter to connect {activeProvider?.label ?? "the selected provider"}, or use ↑/↓ to choose another provider. Esc returns to the full error transcript.
+      <DetailRail showRail={layout.bordered} tone={oauthTone}>
+        <text fg={oauthTone} attributes={TextAttributes.BOLD} wrapMode="word">
+          {oauthStateTitle(oauth.phase, !layout.detail.hasTitle)}
         </text>
-        <box flexDirection="column" marginTop={1} minWidth={0}>{detailBody}</box>
-      </box>
+        <text
+          fg={oauth.phase === "failed" ? theme.TEXT : theme.MUTED}
+          marginTop={1}
+          wrapMode="word"
+        >
+          {oauth.message}
+        </text>
+        {oauth.lines.length > 0 ? (
+          <box flexDirection="column" marginTop={1} minWidth={0}>
+            <text fg={theme.MUTED}>CODEX</text>
+            {oauth.lines.map((line, index) => (
+              <text key={`oauth-${index}`} fg={theme.TEXT} wrapMode="word">{line}</text>
+            ))}
+          </box>
+        ) : null}
+        <text fg={theme.MUTED} marginTop={1} wrapMode="word">
+          {oauthRecoveryHint(oauth.phase)}
+        </text>
+      </DetailRail>
     </scrollbox>
-  ) : detailBody;
+  ) : null;
+  const codexRecovery = recovery?.providerId === "chatgpt-codex";
+  const recoveryTitle = codexRecovery
+    ? "ChatGPT Codex needs device sign-in"
+    : recovery?.title;
+  const recoveryDetail = codexRecovery
+    ? "The previous ChatGPT Codex subscription credential is no longer valid. Start device OAuth to refresh it; do not enter an OpenAI API key here."
+    : recovery?.detail;
+  const detailContent = oauthContent ?? (recovery ? (
+    <scrollbox
+      width={layout.detail.innerWidth}
+      height={Math.max(1, layout.detail.bodyRows)}
+      flexShrink={0}
+      minWidth={0}
+      minHeight={0}
+    >
+      <DetailRail showRail={layout.bordered} tone={theme.ERROR}>
+        <text fg={theme.ERROR} attributes={TextAttributes.BOLD} wrapMode="word">{recoveryTitle}</text>
+        <text fg={theme.TEXT} marginTop={1} wrapMode="word">{recoveryDetail}</text>
+        <text fg={theme.ACCENT} marginTop={1} wrapMode="word">
+          Press Enter to start {codexRecovery ? "ChatGPT Codex device OAuth" : `reconnect ${activeProvider?.label ?? "the selected provider"}`}. Esc returns to chat.
+        </text>
+        {detailBody.length > 0 ? (
+          <box flexDirection="column" marginTop={1} minWidth={0}>{detailBody}</box>
+        ) : null}
+      </DetailRail>
+    </scrollbox>
+  ) : detailBody);
+  const detailContextMeta = oauthVisible && oauth
+    ? oauthStateMeta(oauth.phase)
+    : recovery?.providerId === detailProvider?.id
+      ? "reconnect"
+      : connectDetailTitleMeta(detailRow);
+  const detailContextMetaFg = oauthVisible && oauth
+    ? oauthTone
+    : recovery?.providerId === detailProvider?.id
+      ? theme.ERROR
+      : detailProvider?.connected ? theme.SUCCESS : theme.MUTED;
 
-  const statusText = recovery
-    ? recovery.title
-    : inInput
-      ? `${activeProvider?.auth === "subscription" ? "paste sign-in token" : "paste API key"} for ${
-          activeProvider?.label ?? inputProviderId
-        }: ${connectInputMask(inputValue.length)}`
-      : filtering
-        ? `filter: ${filter}_`
-        : notice
-          ? notice
-          : filter
-            ? `filter: ${filter} · ${connectStatusLine(rows)}`
-            : connectStatusLine(rows);
-  const statusFg = recovery ? theme.ERROR : inInput ? theme.ACCENT : notice ? theme.SUCCESS : theme.MUTED;
+  const statusText = oauthVisible && oauth
+    ? oauth.message
+    : recovery
+      ? recoveryTitle ?? "provider needs to reconnect"
+      : inInput
+        ? `paste API key for ${activeProvider?.label ?? inputProviderId}: ${connectInputMask(inputValue.length)}`
+        : filtering
+          ? `filter: ${filter}_`
+          : notice
+            ? notice
+            : filter
+              ? `filter: ${filter} · ${connectStatusLine(rows)}`
+              : connectStatusLine(rows);
+  const statusFg = oauthVisible && oauth
+    ? oauth.phase === "failed" ? theme.ERROR : oauth.phase === "connected" ? theme.SUCCESS : theme.ACCENT
+    : recovery ? theme.ERROR : inInput ? theme.ACCENT : notice ? theme.SUCCESS : theme.MUTED;
 
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
@@ -548,9 +805,9 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
         flexShrink={0}
         minWidth={0}
       >
-        <Pane
+        <RailPane
           pane={layout.list}
-          bordered={layout.bordered}
+          railTone={layout.bordered ? theme.ACCENT : undefined}
           title={
             <TitleRow
               innerWidth={layout.list.innerWidth}
@@ -567,21 +824,20 @@ export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, en
           ) : (
             listBody
           )}
-        </Pane>
-        <Pane
+        </RailPane>
+        <RailPane
           pane={layout.detail}
-          bordered={layout.bordered}
           title={
             <TitleRow
               innerWidth={layout.detail.innerWidth}
-              title={connectDetailTitleLabel()}
-              meta={connectDetailTitleMeta(detailRow)}
-              metaFg={detailProvider?.connected ? theme.SUCCESS : theme.MUTED}
+              title={detailProvider?.label ?? connectDetailTitleLabel()}
+              meta={detailContextMeta}
+              metaFg={detailContextMetaFg}
             />
           }
         >
           {detailContent}
-        </Pane>
+        </RailPane>
       </box>
       <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>
         <Cells width={layout.contentWidth} fg={statusFg}>

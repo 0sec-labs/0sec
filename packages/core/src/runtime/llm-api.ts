@@ -2018,7 +2018,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   private noKeyError(): string {
     return (
       "No provider credential found. Set one of:\n" +
-      "  export 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN=... (ChatGPT Codex subscription auth)\n" +
+      "  env 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN=... 0sec <command> (ChatGPT Codex subscription auth)\n" +
       "  export OPENROUTER_API_KEY=sk-or-...   (OpenRouter — many models, one key)\n" +
       "  export DEEPSEEK_API_KEY=...           (DeepSeek — direct Flash 0731 inference)\n" +
       "  export ANTHROPIC_API_KEY=sk-ant-...    (Anthropic — direct Claude access)\n" +

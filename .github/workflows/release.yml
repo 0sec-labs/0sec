@@ -119,4 +119,3 @@ jobs:
               --notes "Automated multi-platform release. See CHANGELOG.md for changes." \
               --verify-tag
           fi
-

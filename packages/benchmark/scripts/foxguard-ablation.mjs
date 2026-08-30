@@ -123,7 +123,7 @@ function runOnce({ slice, staticAnalyzer, target }) {
   const t0 = Date.now();
   if (dryRun) {
     console.log(
-      `[dry-run] 0SEC_STATIC=${staticAnalyzer} 0sec review ${target}`,
+      `[dry-run] env 0SEC_STATIC=${staticAnalyzer} 0sec review ${target}`,
     );
     return {
       slice,

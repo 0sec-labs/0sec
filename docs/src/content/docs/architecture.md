@@ -138,7 +138,7 @@ triage and blind validation before they reach a report.
 ```mermaid
 flowchart TB
     subgraph Entry[Entry points]
-        CLI[0sec-cli]
+        CLI[0sec]
         API[Node SDK / CI]
     end
 

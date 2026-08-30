@@ -39,7 +39,8 @@ From the repo root:
 pnpm install --frozen-lockfile
 
 cd packages/core/src/triage/kernel-vm
-0SEC_KERNEL_VM_MAKE_JOBS=4 ./build.sh "$HOME/.0sec/kernel-vm/linux-6.8.12-kasan"
+env 0SEC_KERNEL_VM_MAKE_JOBS=4 \
+  ./build.sh "$HOME/.0sec/kernel-vm/linux-6.8.12-kasan"
 ```
 
 Output:
@@ -58,25 +59,33 @@ kernel version, or guest package list changes.
 
 ## Configure 0sec
 
-Required:
+Required values must be passed with `env`: `0SEC_*` names begin with a digit and
+cannot be exported by POSIX shells.
 
 ```bash
-export 0SEC_KERNEL_QEMU=1
-export 0SEC_KERNEL_QEMU_KERNEL="$HOME/.0sec/kernel-vm/linux-6.8.12-kasan/bzImage"
-export 0SEC_KERNEL_QEMU_DISK="$HOME/.0sec/kernel-vm/linux-6.8.12-kasan/rootfs.img"
+env \
+  0SEC_KERNEL_QEMU=1 \
+  0SEC_KERNEL_QEMU_KERNEL="$HOME/.0sec/kernel-vm/linux-6.8.12-kasan/bzImage" \
+  0SEC_KERNEL_QEMU_DISK="$HOME/.0sec/kernel-vm/linux-6.8.12-kasan/rootfs.img" \
+  0sec ingest --verify ./crashes
 ```
 
-Recommended local defaults:
+Recommended local defaults can be added to the same command:
 
 ```bash
-export 0SEC_KERNEL_QEMU_MEMORY_MB=2048
-export 0SEC_KERNEL_QEMU_SMP=2
-export 0SEC_KERNEL_QEMU_BOOT_TIMEOUT_SEC=180
-export 0SEC_KERNEL_QEMU_TIMEOUT_SEC=60
-export 0SEC_KERNEL_QEMU_ARTIFACT_DIR="$HOME/.0sec/kernel-vm/runs"
+env \
+  0SEC_KERNEL_QEMU=1 \
+  0SEC_KERNEL_QEMU_KERNEL="$HOME/.0sec/kernel-vm/linux-6.8.12-kasan/bzImage" \
+  0SEC_KERNEL_QEMU_DISK="$HOME/.0sec/kernel-vm/linux-6.8.12-kasan/rootfs.img" \
+  0SEC_KERNEL_QEMU_MEMORY_MB=2048 \
+  0SEC_KERNEL_QEMU_SMP=2 \
+  0SEC_KERNEL_QEMU_BOOT_TIMEOUT_SEC=180 \
+  0SEC_KERNEL_QEMU_TIMEOUT_SEC=60 \
+  0SEC_KERNEL_QEMU_ARTIFACT_DIR="$HOME/.0sec/kernel-vm/runs" \
+  0sec ingest --verify ./crashes
 ```
 
-On Linux hosts with KVM: `export 0SEC_KERNEL_QEMU_ACCEL=kvm`.
+On Linux hosts with KVM, add `0SEC_KERNEL_QEMU_ACCEL=kvm` to that `env` invocation.
 
 Leave `0SEC_KERNEL_QEMU_APPEND` unset unless using a custom guest. Default:
 

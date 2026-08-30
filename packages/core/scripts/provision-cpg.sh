@@ -24,7 +24,7 @@
 #        0sec hunt --source /root/linux-6.12-git --seed fix.patch --graph-slice
 # For code selected by kernel Kconfig, pass its enabled symbols as a
 # comma-separated environment variable, for example:
-#   0SEC_CPG_DEFINES=CONFIG_SMB_SERVER_KERBEROS5=1 provision-cpg.sh …
+#   env 0SEC_CPG_DEFINES=CONFIG_SMB_SERVER_KERBEROS5=1 provision-cpg.sh …
 # This lets c2cpg retain the compiled branch instead of indexing the fallback
 # `#else` stub.
 #
@@ -50,8 +50,9 @@ EXPORT_DIR="${WORK}/export"
 mkdir -p "$OUT_DIR"
 
 # Heap: roughly 2x the source footprint, capped; net/ (38MB) needed ~16GB.
-XMX="${0SEC_CPG_XMX:-16000}"
-CPG_DEFINES="${0SEC_CPG_DEFINES:-}"
+XMX="$(printenv 0SEC_CPG_XMX 2>/dev/null || true)"
+: "${XMX:=16000}"
+CPG_DEFINES="$(printenv 0SEC_CPG_DEFINES 2>/dev/null || true)"
 
 declare -a C2CPG_ARGS
 C2CPG_ARGS=(-J-Xmx"${XMX}"m)

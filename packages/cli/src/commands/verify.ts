@@ -910,7 +910,7 @@ async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promi
     if (process.env["0SEC_KERNEL_VERIFY"] !== "1") {
       throw new Error(
         "--kernel-finding requires 0SEC_KERNEL_VERIFY=1 (CI cost gate, #271). " +
-          "Export 0SEC_KERNEL_VERIFY=1 to opt in.",
+          "Run the command through `env 0SEC_KERNEL_VERIFY=1 0sec ...` to opt in.",
       );
     }
     if (!opts.kernelTree) {

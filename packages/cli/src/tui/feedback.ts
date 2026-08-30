@@ -265,9 +265,9 @@ const MAX_BODY_BYTES = 64 * 1024;
  * permissive, because the two have opposite failure directions: there, a
  * missed opt-out costs a suppressed update nudge; here, a missed opt-out means
  * client data crosses a boundary someone explicitly tried to close. Someone
- * who exports `0SEC_OFFLINE=true` has unambiguously stated an intent, and
- * honouring only `1` would transmit anyway. Anything set and not explicitly
- * falsy counts as opt-out.
+ * who supplies `0SEC_OFFLINE=true` for a command has unambiguously stated an
+ * intent, and honouring only `1` would transmit anyway. Anything set and not
+ * explicitly falsy counts as opt-out.
  */
 function isOptOutSet(value: string | undefined): boolean {
   if (value === undefined) return false;

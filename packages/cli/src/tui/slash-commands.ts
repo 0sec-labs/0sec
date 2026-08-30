@@ -80,6 +80,13 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     usage: "/help [command]",
   },
   {
+    name: "capabilities",
+    aliases: ["caps"],
+    category: "info",
+    description: "Show the harness capability map and its safety gates",
+    usage: "/capabilities",
+  },
+  {
     name: "status",
     aliases: [],
     category: "info",
@@ -161,9 +168,10 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
     name: "providers",
     aliases: [],
-    category: "info",
-    description: "Show which model providers have credentials on this machine",
+    category: "system",
+    description: "Open the chat-owned provider connection and OAuth pane",
     usage: "/providers",
+    tuiOnly: true,
   },
   {
     name: "explain",
@@ -222,6 +230,13 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     aliases: ["runs"],
     category: "navigation",
     description: "View active and recent operations",
+    tuiOnly: true,
+  },
+  {
+    name: "herd",
+    aliases: ["workers"],
+    category: "navigation",
+    description: "Inspect the active harness worker herd",
     tuiOnly: true,
   },
   {

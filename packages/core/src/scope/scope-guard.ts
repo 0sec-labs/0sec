@@ -118,7 +118,7 @@ export function describeScopeGuards(
       `so ${SCOPE_DEPENDENT_BASH_GUARDS.length} bash egress guards are INERT for this run: ` +
       `${SCOPE_DEPENDENT_BASH_GUARDS.join(", ")}. ` +
       "bash commands can reach any host the sandbox can reach. Pass --scope <file> to enable " +
-      "them, or 0SEC_REQUIRE_SCOPE=1 (0sec scan --require-scope) to refuse unscoped runs.",
+      "them, or run through `env 0SEC_REQUIRE_SCOPE=1 0sec ...` to refuse unscoped runs.",
   };
 }
 

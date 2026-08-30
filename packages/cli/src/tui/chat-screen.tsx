@@ -127,11 +127,13 @@ import {
   recallPrev,
 } from "./composer-history.js";
 import {
+  buildCapabilityPanel,
   buildHelpPanel,
   buildScopePanel,
   buildStatusPanel,
   buildToolsPanel,
 } from "./panels.js";
+import { getAllCapabilities } from "./capability-registry.js";
 import { fitTuiText } from "./text.js";
 import { severityToneFor, THEME_NAMES, getThemeEntry, isThemeName } from "./themes.js";
 import {
@@ -435,6 +437,17 @@ function statusRoleColor(
     default:
       return theme.MUTED;
   }
+}
+
+function startupRecoveryText(detail: string): string {
+  if (/no provider credential found/i.test(detail)) {
+    return "No provider connected. Use /connect: ChatGPT Codex uses device OAuth; OpenAI uses an API key.";
+  }
+  const recovery = connectionRecoveryForError(detail);
+  if (recovery?.providerId === "chatgpt-codex") {
+    return "ChatGPT Codex needs device OAuth. Use /connect; do not paste an OpenAI API key.";
+  }
+  return detail;
 }
 
 
@@ -1328,7 +1341,7 @@ export function ChatScreen({
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setStartupError(detail);
+      setStartupError(startupRecoveryText(detail));
       const recovery = connectionRecoveryForError(detail);
       if (recovery) connectionFailureRef.current?.(recovery);
     }
@@ -1407,7 +1420,9 @@ export function ChatScreen({
       return;
     }
 
-    for (const envVar of provider.envVars) delete process.env[envVar];
+    if (provider.auth === "api-key") {
+      for (const envVar of provider.envVars) delete process.env[envVar];
+    }
     process.env["0SEC_SELECTED_PROVIDER"] = provider.id;
 
     const previous = sessionRef.current;
@@ -2088,6 +2103,14 @@ export function ChatScreen({
         });
         return true;
       }
+      case "capabilities":
+        appendEntry({
+          kind: "panel",
+          text: "capabilities",
+          panel: buildCapabilityPanel(getAllCapabilities()),
+          turn: turn.current,
+        });
+        return true;
       case "status":
         appendEntry({
           kind: "panel",
@@ -2171,34 +2194,13 @@ export function ChatScreen({
         onNavigate("resume");
         return true;
       }
-      case "providers": {
-        const states = providerStates(process.env);
-        const items: SelectorItem[] = states.map((provider) => ({
-          id: provider.id,
-          label: provider.label,
-          meta: provider.configured
-            ? `configured${provider.via ? ` via ${provider.via}` : ""}`
-            : "not configured",
-          detail: provider.configured
-            ? `Credentials found. Select to replace the stored key.`
-            : provider.hint,
-          current: provider.configured,
-        }));
-        setPicker({
-          state: createSelectorState("Providers · select one to set a key", items),
-          commit: (providerId) => {
-            const info = PROVIDERS.find((provider) => provider.id === providerId);
-            if (!info) return;
-            setSecretPrompt({
-              providerId,
-              label: info.label,
-              envVar: info.envVars[0] ?? "",
-              value: "",
-            });
-          },
-        });
+      case "providers":
+        // Provider credentials, especially ChatGPT Codex device OAuth, belong
+        // to the chat-owned OpenTUI connection pane. Keeping a second inline
+        // key picker here created a divergent flow and could treat OAuth as a
+        // generic API-key field.
+        onNavigate("connect");
         return true;
-      }
       case "feedback": {
         const feedbackCommand = parseFeedbackCommand(args);
         if (feedbackCommand.kind === "usage") {

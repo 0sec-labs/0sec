@@ -8,6 +8,12 @@ export interface CodexAuthOptions {
   env?: Record<string, string | undefined>;
   /** Home directory used for the default `~/.codex/auth.json` path. */
   home?: string;
+  /**
+   * Explicit OAuth reconnect may replace stale process-local ChatGPT tokens
+   * with the newly written Codex auth file. Normal startup preserves shell
+   * exports as before.
+   */
+  force?: boolean;
 }
 
 /**
@@ -50,8 +56,11 @@ const LEGACY_AUTH_FILE_ENV = "0SEC_CODEX_AUTH_JSON_PATH";
 export function maybeLoadCodexAuth(options: CodexAuthOptions = {}): void {
   const env = options.env ?? process.env;
   if (
-    env["0SEC_CHATGPT_ACCESS_TOKEN"] ||
-    env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]
+    !options.force &&
+    (
+      env["0SEC_CHATGPT_ACCESS_TOKEN"] ||
+      env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]
+    )
   ) {
     return;
   }
@@ -71,6 +80,10 @@ export function maybeLoadCodexAuth(options: CodexAuthOptions = {}): void {
     const accessToken = nonEmpty(asString(raw.tokens?.access_token));
     const refreshToken = nonEmpty(asString(raw.tokens?.refresh_token));
     if (!accessToken && !refreshToken) return;
+    if (options.force) {
+      delete env["0SEC_CHATGPT_ACCESS_TOKEN"];
+      delete env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"];
+    }
     if (accessToken) {
       env["0SEC_CHATGPT_ACCESS_TOKEN"] = accessToken;
     }

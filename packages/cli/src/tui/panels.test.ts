@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildCapabilityPanel,
   buildHelpPanel,
   buildScopePanel,
   buildStatusPanel,
@@ -10,6 +11,7 @@ import {
   type PanelData,
   type PanelRow,
 } from "./panels.js";
+import { getAllCapabilities } from "./capability-registry.js";
 
 /** Row shapes that have historically broken column arithmetic. */
 const ROW_SHAPES: Record<string, PanelRow[]> = {
@@ -339,5 +341,15 @@ describe("every builder", () => {
         expect(cols.labelWidth + cols.gap + cols.valueWidth).toBeLessThanOrEqual(width);
       }
     }
+  });
+});
+
+describe("buildCapabilityPanel", () => {
+  it("keeps every registered capability and makes safety tiers visible", () => {
+    const panel = buildCapabilityPanel(getAllCapabilities());
+    expect(panel.title).toBe("Harness capabilities");
+    expect(panel.rows.filter((row) => row.heading)).toHaveLength(7);
+    expect(panel.rows.some((row) => row.value.includes("confirm"))).toBe(true);
+    expect(panel.rows.some((row) => row.value.includes("blocked"))).toBe(true);
   });
 });

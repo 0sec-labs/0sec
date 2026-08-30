@@ -23,6 +23,8 @@ export interface ProviderInfo {
   id: string;
   /** Human label, e.g. "Anthropic". */
   label: string;
+  /** Credential protocol; OAuth providers must never be treated as key fields. */
+  auth: "api-key" | "oauth";
   /** Every env var that can supply credentials, most-preferred first. */
   envVars: readonly string[];
   /** How to configure it, one line, operator-facing. */
@@ -54,27 +56,31 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   {
     id: "chatgpt-codex",
     label: "ChatGPT Codex",
+    auth: "oauth",
     // OAuth, not an API key. Both tokens are accepted and the access token is
     // read first (llm-api.ts L874-875, L1386-1394), so it leads the list.
     envVars: ["0SEC_CHATGPT_ACCESS_TOKEN", "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"],
     fileSource: "~/.codex/auth.json (override with 0SEC_CHATGPT_AUTH_FILE)",
-    hint: "run `codex login` to write ~/.codex/auth.json, or set 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN",
+    hint: "run `codex login` to write ~/.codex/auth.json, or invoke 0sec with env 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN=...",
   },
   {
     id: "deepseek",
     label: "DeepSeek",
+    auth: "api-key",
     envVars: ["DEEPSEEK_API_KEY"],
     hint: "set DEEPSEEK_API_KEY (endpoint override: DEEPSEEK_BASE_URL)",
   },
   {
     id: "openrouter",
     label: "OpenRouter",
+    auth: "api-key",
     envVars: ["OPENROUTER_API_KEY"],
     hint: "set OPENROUTER_API_KEY=sk-or-... from openrouter.ai/keys",
   },
   {
     id: "azure",
     label: "Azure OpenAI",
+    auth: "api-key",
     // Only the Azure key authenticates; the deployment URL comes from
     // AZURE_OPENAI_BASE_URL / OPENAI_BASE_URL / ~/.codex/config.toml
     // (L1435-1445). A key with no reachable base URL still counts as
@@ -85,36 +91,42 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   {
     id: "openai",
     label: "OpenAI",
+    auth: "api-key",
     envVars: ["OPENAI_API_KEY"],
     hint: "set OPENAI_API_KEY=sk-... from platform.openai.com/api-keys",
   },
   {
     id: "z-ai",
     label: "Z.ai GLM",
+    auth: "api-key",
     envVars: ["Z_AI_API_KEY"],
     hint: "set Z_AI_API_KEY from your Z.ai Coding Plan (endpoint override: Z_AI_BASE_URL)",
   },
   {
     id: "kimi",
     label: "Moonshot Kimi",
+    auth: "api-key",
     envVars: ["KIMI_API_KEY"],
     hint: "set KIMI_API_KEY from your Kimi coding plan (endpoint override: KIMI_BASE_URL)",
   },
   {
     id: "qwen",
     label: "Alibaba Qwen",
+    auth: "api-key",
     envVars: ["QWEN_API_KEY"],
     hint: "set QWEN_API_KEY from Alibaba Model Studio (endpoint override: QWEN_BASE_URL)",
   },
   {
     id: "xai",
     label: "xAI Grok",
+    auth: "api-key",
     envVars: ["XAI_API_KEY"],
     hint: "set XAI_API_KEY from console.x.ai (endpoint override: XAI_BASE_URL)",
   },
   {
     id: "anthropic",
     label: "Anthropic",
+    auth: "api-key",
     envVars: ["ANTHROPIC_API_KEY"],
     hint: "set ANTHROPIC_API_KEY=sk-ant-... from console.anthropic.com",
   },

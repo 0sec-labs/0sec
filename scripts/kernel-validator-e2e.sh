@@ -6,20 +6,24 @@ TMP_DIR="$(mktemp -d)"
 RESULT_JSON="${TMP_DIR}/kernel-validator-result.json"
 RAW_OUTPUT="${TMP_DIR}/kernel-validator-raw.txt"
 
-REPORT_URL="${0SEC_KERNEL_E2E_REPORT_URL:-https://syzkaller.appspot.com/text?tag=CrashReport&x=144881ca580000}"
-REPRO_URL="${0SEC_KERNEL_E2E_REPRO_URL:-https://syzkaller.appspot.com/text?tag=ReproC&x=1253b3d6580000}"
+REPORT_URL="$(printenv 0SEC_KERNEL_E2E_REPORT_URL 2>/dev/null || true)"
+: "${REPORT_URL:=https://syzkaller.appspot.com/text?tag=CrashReport&x=144881ca580000}"
+REPRO_URL="$(printenv 0SEC_KERNEL_E2E_REPRO_URL 2>/dev/null || true)"
+: "${REPRO_URL:=https://syzkaller.appspot.com/text?tag=ReproC&x=1253b3d6580000}"
 INPUT_DIR="${TMP_DIR}/input"
-ARTIFACT_DIR="${0SEC_KERNEL_QEMU_ARTIFACT_DIR:-${TMP_DIR}/vm-artifacts}"
+ARTIFACT_DIR="$(printenv 0SEC_KERNEL_QEMU_ARTIFACT_DIR 2>/dev/null || true)"
+: "${ARTIFACT_DIR:=${TMP_DIR}/vm-artifacts}"
+OSEC_KERNEL_SOURCE_TREE="$(printenv 0SEC_KERNEL_SOURCE_TREE 2>/dev/null || true)"
 
 mkdir -p "${INPUT_DIR}" "${ARTIFACT_DIR}"
 
 curl -fL --retry 3 --retry-delay 2 -s "${REPORT_URL}" > "${INPUT_DIR}/sample.log"
 curl -fL --retry 3 --retry-delay 2 -s "${REPRO_URL}" > "${INPUT_DIR}/sample.c"
 
-export 0SEC_KERNEL_QEMU=1
-export 0SEC_KERNEL_QEMU_ARTIFACT_DIR="${ARTIFACT_DIR}"
-
-node "${ROOT_DIR}/packages/cli/dist/index.js" ingest "${INPUT_DIR}" --verify -o json > "${RAW_OUTPUT}"
+env \
+  "0SEC_KERNEL_QEMU=1" \
+  "0SEC_KERNEL_QEMU_ARTIFACT_DIR=${ARTIFACT_DIR}" \
+  node "${ROOT_DIR}/packages/cli/dist/index.js" ingest "${INPUT_DIR}" --verify -o json > "${RAW_OUTPUT}"
 
 node - "${RAW_OUTPUT}" "${RESULT_JSON}" <<'EOF'
 const fs = require("node:fs");
@@ -68,13 +72,13 @@ EOF
 
 echo "Kernel validator E2E artifacts saved to: ${ARTIFACT_DIR}"
 
-if [[ -n "${0SEC_KERNEL_SOURCE_TREE:-}" ]]; then
+if [[ -n "${OSEC_KERNEL_SOURCE_TREE}" ]]; then
   DIRECT_RAW_OUTPUT="${TMP_DIR}/direct-reproducer-raw.txt"
   DIRECT_RESULT_JSON="${TMP_DIR}/direct-reproducer-result.json"
 
   node "${ROOT_DIR}/packages/cli/dist/index.js" ingest \
     --reproducer "${INPUT_DIR}/sample.c" \
-    --kernel-tree "${0SEC_KERNEL_SOURCE_TREE}" \
+    --kernel-tree "${OSEC_KERNEL_SOURCE_TREE}" \
     --config kasan \
     --output json > "${DIRECT_RAW_OUTPUT}"
 
@@ -153,7 +157,7 @@ EOF
 
   node "${ROOT_DIR}/packages/cli/dist/index.js" ingest "${REVIEW_INPUT_DIR}" \
     --review-subsystem \
-    --tree "${0SEC_KERNEL_SOURCE_TREE}" \
+    --tree "${OSEC_KERNEL_SOURCE_TREE}" \
     --review-subsystem-fixture "${REVIEW_FIXTURE}" \
     --output json > "${REVIEW_RAW_OUTPUT}"
 

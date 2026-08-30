@@ -43,7 +43,7 @@ block:
 ```bash
 0sec scan --target https://app.example.com --no-waf-evasion
 # or
-0SEC_WAF_EVASION=0 0sec scan --target https://app.example.com
+env 0SEC_WAF_EVASION=0 0sec scan --target https://app.example.com
 ```
 
 Env vars: `0SEC_ENGAGEMENT_PROFILE`, `0SEC_WAF_EVASION`,

@@ -20,7 +20,11 @@ import {
   fixInputEligibility,
   fixResultLines,
 } from "./fix-action.js";
-import { ChatScreen, type ChatScreenOptions } from "./chat-screen.js";
+import {
+  ChatScreen,
+  type ChatDestination,
+  type ChatScreenOptions,
+} from "./chat-screen.js";
 import { HerdScreen } from "./herd-screen.js";
 import { SettingsScreen } from "./settings-screen.js";
 import { ModelScreen } from "./model-screen.js";
@@ -1455,53 +1459,28 @@ function HeaderBar({
 }) {
   const theme = useTheme();
   const { width } = useTerminalDimensions();
-  const contentWidth = Math.max(1, width - SHELL_HORIZONTAL_PADDING * 2 - PANEL_HORIZONTAL_CHROME);
-  const compact = contentWidth < HEADER_COMPACT_WIDTH;
-  const inlineViewWidth = Math.max(1, Math.floor(contentWidth * 0.36));
-  const inlineStatusWidth = Math.max(1, Math.floor(contentWidth * 0.42));
-  const viewWidth = compact ? contentWidth : Math.min(inlineViewWidth, view.toUpperCase().length);
-  const titleWidth = compact ? contentWidth : Math.max(1, contentWidth - viewWidth);
-  const statusWidth = compact
-    ? contentWidth
-    : typeof status === "string"
-      ? Math.min(inlineStatusWidth, status.length)
-      : inlineStatusWidth;
-  const descriptionWidth = compact || !status
-    ? contentWidth
-    : Math.max(1, contentWidth - statusWidth);
-  const statusContent = typeof status === "string"
-    ? <text fg={theme.MUTED}>{fitTuiText(status, statusWidth)}</text>
-    : status;
+  const contentWidth = Math.max(1, width - SHELL_HORIZONTAL_PADDING * 2);
+  const statusWidth = status
+    ? Math.max(1, Math.min(Math.floor(contentWidth * 0.42), Math.max(1, contentWidth - 18)))
+    : 0;
+  const titleWidth = Math.max(1, contentWidth - statusWidth - (status ? 1 : 0));
 
   return (
-    <box border borderColor={theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} paddingY={0} marginBottom={1} width="100%" minWidth={0}>
-      <box flexDirection="column" width="100%" minWidth={0}>
-        {compact ? (
-          <>
-            <text fg={theme.TEXT}>{fitTuiText("0SEC TUI CONSOLE", titleWidth)}</text>
-            <text fg={theme.PRIMARY}>{fitTuiText(view.toUpperCase(), viewWidth)}</text>
-            <text fg={theme.MUTED}>{fitTuiText("Launch targets, monitor sessions, and review findings.", descriptionWidth)}</text>
-            {status ? <box width={statusWidth} flexShrink={0} minWidth={0}>{statusContent}</box> : null}
-          </>
-        ) : (
-          <>
-            <box flexDirection="row" width="100%" minWidth={0}>
-              <box flexGrow={1} minWidth={0}>
-                <text fg={theme.TEXT}>{fitTuiText("0SEC TUI CONSOLE", titleWidth)}</text>
-              </box>
-              <box width={viewWidth} flexShrink={0} flexDirection="column" alignItems="flex-end" minWidth={0}>
-                <text fg={theme.PRIMARY}>{fitTuiText(view.toUpperCase(), viewWidth)}</text>
-              </box>
+    <box flexDirection="column" width="100%" minWidth={0} marginBottom={1}>
+      <box flexDirection="row" width="100%" minWidth={0}>
+        <RailBar tone={theme.PRIMARY} />
+        <box flexDirection="row" marginLeft={1} flexGrow={1} minWidth={0}>
+          <box width={titleWidth} flexShrink={0} minWidth={0}>
+            <text fg={theme.TEXT}>{fitTuiText(`0sec / ${view}`, titleWidth)}</text>
+          </box>
+          {status ? (
+            <box width={statusWidth} flexShrink={0} minWidth={0} alignItems="flex-end">
+              {typeof status === "string" ? <text fg={theme.MUTED}>{fitTuiText(status, statusWidth)}</text> : status}
             </box>
-            <box flexDirection="row" width="100%" minWidth={0}>
-              <box flexGrow={1} minWidth={0}>
-                <text fg={theme.MUTED}>{fitTuiText("Launch targets, monitor sessions, and review findings.", descriptionWidth)}</text>
-              </box>
-              {status ? <box width={statusWidth} flexShrink={0} flexDirection="column" alignItems="flex-end" minWidth={0}>{statusContent}</box> : null}
-            </box>
-          </>
-        )}
+          ) : null}
+        </box>
       </box>
+      <box height={1} width="100%" marginTop={1} backgroundColor={theme.BORDER} />
     </box>
   );
 }
@@ -4213,6 +4192,21 @@ function ConsoleApp({
     openFindingDetail: (findingId, finding, chatOpts) =>
       navigate({ type: "finding", findingId, finding, chatOptions: chatOpts ?? chatOptionsRef.current }),
   };
+  const chatPaneActions: Record<Exclude<ChatDestination, "finding">, () => void> = {
+    launcher: shell.openLauncher,
+    ops: shell.openOps,
+    history: shell.openHistory,
+    findings: shell.openFindings,
+    doctor: shell.openDoctor,
+    replay: shell.openReplay,
+    settings: shell.openSettings,
+    models: () => shell.openModels(chatOptions),
+    market: shell.openMarket,
+    usage: () => shell.openUsage(chatOptions),
+    connect: shell.openConnect,
+    herd: shell.openHerd,
+    resume: () => shell.openResume(chatOptions),
+  };
 
   const launchSelection = async (selection: HomeSelection) => {
     if (!selection.target) return;
@@ -4350,83 +4344,15 @@ function ConsoleApp({
         options={chatOptions}
         submitHandle={chatSubmitRef}
         reconnectHandle={chatReconnectRef}
-        onConnectionFailure={(recovery) => navigate({ type: "connect", recovery })}
         pluginHostManager={pluginHostManager ?? undefined}
         evolutionStatus={evolutionStatus}
         onGoBack={shell.goBack}
         onNavigate={(destination, id) => {
-          // `herd` is not in `ChatDestination` yet (chat-screen owns that union
-          // and this change does not touch it); the cast-guard keeps run.tsx
-          // compiling and the route reachable, and the branch starts routing the
-          // moment the one-line chat-screen change lands.
-          if ((destination as string) === "herd") {
-            shell.openHerd();
-            return;
-          }
-          // `market` is not in `ChatDestination` yet (chat-screen owns that
-          // union and this change does not touch it); the cast-guard keeps
-          // run.tsx compiling and the route reachable, and the branch starts
-          // routing the moment the coordinator's one-line chat-screen change lands.
-          if ((destination as string) === "market") {
-            shell.openMarket();
-            return;
-          }
-          // `connect` is not in `ChatDestination` yet (chat-screen owns that
-          // union and this change does not touch it); the cast-guard keeps
-          // run.tsx compiling and the route reachable, and the branch starts
-          // routing the moment the one-line chat-screen change lands (a
-          // `case "connect": onNavigate("connect")` beside the "/model" case).
-          if ((destination as string) === "connect") {
-            shell.openConnect();
-            return;
-          }
-          // `usage` is not in `ChatDestination` yet (chat-screen owns that
-          // union and this change does not touch it); the cast-guard keeps
-          // run.tsx compiling and the route reachable, and the branch starts
-          // routing the moment the one-line chat-screen change lands (a
-          // `case "usage": onNavigate("usage")` beside the "/model" case). The
-          // chat can pass its live token snapshot through at that point.
-          if ((destination as string) === "usage") {
-            shell.openUsage(chatOptions);
-            return;
-          }
-          // `finding` opens the full-screen detail view. chat-screen passes the
-          // id (from a clickable sidebar finding, or `/finding <id>`); the
-          // record is resolved lazily from the store inside FindingDetailRoute.
-          // A bare `/finding` (no id) opens the view's honest empty state.
           if (destination === "finding") {
             shell.openFindingDetail(id, undefined, chatOptions);
             return;
           }
-          switch (destination) {
-            case "launcher":
-              shell.openLauncher();
-              return;
-            case "ops":
-              shell.openOps();
-              return;
-            case "history":
-              shell.openHistory();
-              return;
-            case "findings":
-              shell.openFindings();
-              return;
-            case "doctor":
-              shell.openDoctor();
-              return;
-            case "replay":
-              shell.openReplay();
-              return;
-            case "settings":
-              shell.openSettings();
-              return;
-            case "models":
-              shell.openModels(chatOptions);
-              return;
-            case "resume":
-              shell.openResume(chatOptions);
-              return;
-          }
+          chatPaneActions[destination]();
         }}
         onExit={onExit}
       />

@@ -337,6 +337,7 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
         </section>
       ) : null}
 
+      {!isEmptyWorkspace ? (
       <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <Card className="overflow-hidden">
           <CardHeader>
@@ -455,6 +456,7 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
           </CardContent>
         </Card>
       </section>
+      ) : null}
 
       <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
         <Card className="overflow-hidden">

@@ -18,12 +18,12 @@
  * The "explicit enablement" noted above now has one documented form, so an
  * A/B run does not depend on reconstructing the flag set by reading source:
  *
- *   0SEC_FEATURE_PRESET=fp-moat 0sec scan …
+ *   env 0SEC_FEATURE_PRESET=fp-moat 0sec scan …
  *   0sec scan --features fp-moat …
  *
  * The preset's membership lives in `agent/feature-presets.ts` and is pinned by
  * test. Applying it never overwrites a flag that is already set, so
- * `0SEC_FEATURE_POV_GATE=0` alongside the preset gives you a clean
+ * `env 0SEC_FEATURE_POV_GATE=0 0sec …` alongside the preset gives you a clean
  * single-layer ablation.
  *
  * Enabling layers is only half of a defensible claim; the other half is being

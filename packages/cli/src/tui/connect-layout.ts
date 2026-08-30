@@ -69,27 +69,16 @@ function clamp(value: number, low: number, high: number): number {
 // ---------------------------------------------------------------------------
 
 /**
- * How a provider is authenticated.
- *
- * - `api-key`      — paste a secret; the input sub-step writes it to the
- *                    credential store, which the runtime reads back via env.
- * - `subscription` — an OAuth / device-code sign-in. The real network dance
- *                    lives outside the tool (e.g. `codex login`); the screen
- *                    presents the honest "sign in, then paste the token" path
- *                    and stores whatever the operator actually pastes back.
+ * The provider table owns the protocol taxonomy. OAuth entries launch their
+ * real device flow; only API-key entries can enter the generic secret field.
  */
-export type AuthKind = "api-key" | "subscription";
+export type AuthKind = "api-key" | "oauth";
 
 /**
- * Providers surfaced in the "Popular" group, in the order shown. The first is
- * 0sec's recommended subscription option. Membership is a curation decision,
- * not a runtime fact, so it lives here and nowhere else; every id must exist in
- * `PROVIDERS` or it is silently ignored (a test guards that).
+ * Providers surfaced in the "Popular" group, in the order shown. Membership is
+ * a curation decision, not a runtime fact, so it lives here and nowhere else.
  */
 export const RECOMMENDED_IDS: readonly string[] = ["chatgpt-codex", "anthropic", "openai"];
-
-/** Providers whose auth is a subscription / OAuth sign-in rather than a key. */
-const SUBSCRIPTION_IDS = new Set<string>(["chatgpt-codex"]);
 
 /**
  * Plain-language subtitles for the recommended group. Kept short enough to sit
@@ -102,14 +91,14 @@ const PROVIDER_SUBTITLE: Record<string, string> = {
   openai: "Paste an OpenAI API key from platform.openai.com.",
 };
 
-/** The auth method for a provider id. Everything that is not a subscription is a key. */
+/** The auth method for a provider id comes from the runtime provider table. */
 export function authKindFor(id: string): AuthKind {
-  return SUBSCRIPTION_IDS.has(id) ? "subscription" : "api-key";
+  return PROVIDERS.find((provider) => provider.id === id)?.auth ?? "api-key";
 }
 
 /** The short, right-aligned auth hint on a provider row. */
 export function authHintLabel(auth: AuthKind): string {
-  return auth === "subscription" ? "subscription" : "API key";
+  return auth === "oauth" ? "OAuth" : "API key";
 }
 
 export interface ConnectGroup {
@@ -570,7 +559,7 @@ export function connectDetailLines(
   separate();
 
   push(
-    provider.auth === "subscription" ? "Auth: subscription sign-in" : "Auth: API key",
+    provider.auth === "oauth" ? "Auth: ChatGPT Codex device OAuth" : "Auth: OpenAI-compatible API key",
     "text",
   );
 
@@ -595,8 +584,8 @@ export function connectDetailLines(
 
   separate();
   push(
-    provider.auth === "subscription"
-      ? "Enter: start the subscription sign-in and paste your token."
+    provider.auth === "oauth"
+      ? "Enter: start Codex device OAuth. No API key or pasted token is used."
       : "Enter: paste an API key. It is stored owner-only on this machine.",
     "muted",
   );
@@ -713,7 +702,7 @@ export function connectDetailTitleMeta(row: ConnectRow | undefined): string {
   return row.provider.connected ? "connected" : "not connected";
 }
 
-export type ConnectMode = "browse" | "filter" | "input";
+export type ConnectMode = "browse" | "filter" | "input" | "oauth";
 
 /**
  * The prompt shown while the operator is pasting a credential. The secret is
@@ -730,6 +719,7 @@ export function connectInputMask(secretLength: number): string {
 /** The footer hint, per mode. Names the real bindings. */
 export function connectFooterHint(mode: ConnectMode, hasFilter = false): string {
   if (mode === "input") return "paste credential · enter save · esc cancel";
+  if (mode === "oauth") return "device sign-in running · esc cancel";
   if (mode === "filter") return "type to filter · enter connect · esc done · backspace delete";
   return [
     "↑↓ select",

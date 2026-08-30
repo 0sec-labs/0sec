@@ -12,15 +12,16 @@ task_id="$1"
 shift
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-: "${0SEC_ROOT:=$(cd -- "${script_dir}/../../.." && pwd)}"
+OSEC_ROOT="$(printenv 0SEC_ROOT 2>/dev/null || true)"
+: "${OSEC_ROOT:=$(cd -- "${script_dir}/../../.." && pwd)}"
 : "${CYBERGYM_ROOT:=/srv/cybergym}"
 : "${CYBERGYM_PYTHON:=${CYBERGYM_ROOT}/venv/bin/python}"
 : "${CYBERGYM_DIFFICULTY:=level1}"
 : "${CYBERGYM_BRIDGE_CAPABILITIES:=${CYBERGYM_ROOT}/bridge/capabilities.json}"
 : "${CYBERGYM_AUTH_FILE:=${HOME}/.codex/auth.json}"
 
-bridge_script="${0SEC_ROOT}/packages/benchmark/scripts/cybergym-oracle-bridge.py"
-container_script="${0SEC_ROOT}/packages/benchmark/scripts/run-cybergym-container.sh"
+bridge_script="${OSEC_ROOT}/packages/benchmark/scripts/cybergym-oracle-bridge.py"
+container_script="${OSEC_ROOT}/packages/benchmark/scripts/run-cybergym-container.sh"
 for path in "${CYBERGYM_PYTHON}" "${bridge_script}" "${container_script}" "${CYBERGYM_AUTH_FILE}"; do
   [[ -e "${path}" ]] || { printf 'missing required path: %s\n' "${path}" >&2; exit 2; }
 done

@@ -9,13 +9,13 @@ automated kernel crash validation.
 # Build (15-30 min, requires Docker)
 ./build.sh ./out
 
-# Configure
-export 0SEC_KERNEL_QEMU=1
-export 0SEC_KERNEL_QEMU_KERNEL=./out/bzImage
-export 0SEC_KERNEL_QEMU_DISK=./out/rootfs.img
-
-# Run with verification
-0sec ingest --verify /path/to/crash-reports/
+# `0SEC_*` names begin with a digit, so pass them with `env` rather than
+# Bash `export`.
+env \
+  0SEC_KERNEL_QEMU=1 \
+  0SEC_KERNEL_QEMU_KERNEL=./out/bzImage \
+  0SEC_KERNEL_QEMU_DISK=./out/rootfs.img \
+  0sec ingest --verify /path/to/crash-reports/
 
 # Run a standalone C reproducer through the same VM oracle
 0sec ingest --reproducer ./poc.c --kernel-tree ~/src/linux --config kasan --output json

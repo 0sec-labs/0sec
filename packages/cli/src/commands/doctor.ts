@@ -23,12 +23,12 @@ export function registerDoctorCommand(program: Command): void {
       console.log("");
       console.log(`  Node.js       ${hasSupportedNode ? chalk.green("ok") : chalk.red("bad")}  ${process.version}`);
       const apiStatus = hasApiKey
-        ? `${chalk.green("ok")}  ${apiRuntime.providerLabel}`
+        ? `${chalk.yellow("configured")}  ${apiRuntime.providerLabel}`
         : apiRuntime.configured
           ? `${chalk.red("bad")}  ${apiRuntime.providerLabel}`
           : `${chalk.yellow("missing")}  not configured`;
       console.log(`  API runtime   ${apiStatus}`);
-      console.log(`  CLI runtimes  ${availableRuntimes.length > 0 ? chalk.green("ok") : chalk.yellow("missing")}  ${availableRuntimes.join(", ") || "none"}`);
+      console.log(`  CLI runtimes  ${availableRuntimes.length > 0 ? chalk.yellow("found") : chalk.yellow("missing")}  ${availableRuntimes.join(", ") || "none"}`);
       console.log("");
 
       if (!hasSupportedNode) {
@@ -37,7 +37,7 @@ export function registerDoctorCommand(program: Command): void {
         console.log(chalk.red("  API runtime is configured but unusable."));
         console.log(chalk.gray(`  ${apiRuntime.error.split("\n").join("\n  ")}`));
       } else if (hasApiKey || availableRuntimes.length > 0) {
-        console.log(chalk.green("  Ready to scan."));
+        console.log(chalk.yellow("  Prerequisites found. The first request verifies credentials."));
         console.log(chalk.gray("  Try one of:"));
         console.log(chalk.gray("    0sec scan --target https://example.com --mode web"));
         console.log(chalk.gray("    0sec review ."));

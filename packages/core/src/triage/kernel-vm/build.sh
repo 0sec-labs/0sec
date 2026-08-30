@@ -8,11 +8,11 @@
 #   rootfs.img    — Debian root filesystem with GCC/binutils + shared-workdir boot path
 #   kernel.config — kernel .config
 #
-# After building, configure the kernel VM runner:
-#   export 0SEC_KERNEL_QEMU=1
-#   export 0SEC_KERNEL_QEMU_KERNEL=/path/to/bzImage
-#   export 0SEC_KERNEL_QEMU_DISK=/path/to/rootfs.img
-#   0sec ingest --verify <crash-reports-dir>
+# After building, configure the kernel VM runner for one invocation:
+#   env 0SEC_KERNEL_QEMU=1 \
+#     0SEC_KERNEL_QEMU_KERNEL=/path/to/bzImage \
+#     0SEC_KERNEL_QEMU_DISK=/path/to/rootfs.img \
+#     0sec ingest --verify <crash-reports-dir>
 #
 # NOTE: We use `docker buildx build` (not classic `docker build`) because the
 # Dockerfile pins individual stages with `FROM --platform=linux/amd64`. The
@@ -31,7 +31,8 @@ docker buildx version >/dev/null 2>&1 || {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_DIR="${1:-${SCRIPT_DIR}/out}"
-KERNEL_MAKE_JOBS="${0SEC_KERNEL_VM_MAKE_JOBS:-4}"
+KERNEL_MAKE_JOBS="$(printenv 0SEC_KERNEL_VM_MAKE_JOBS 2>/dev/null || true)"
+: "${KERNEL_MAKE_JOBS:=4}"
 
 mkdir -p "${OUT_DIR}"
 
@@ -63,7 +64,6 @@ ls -lh "${OUT_DIR}"/bzImage "${OUT_DIR}"/rootfs.img "${OUT_DIR}"/kernel.config "
 
 echo ""
 echo "To use with 0sec:"
-echo "  export 0SEC_KERNEL_QEMU=1"
-echo "  export 0SEC_KERNEL_QEMU_KERNEL=${OUT_DIR}/bzImage"
-echo "  export 0SEC_KERNEL_QEMU_DISK=${OUT_DIR}/rootfs.img"
-echo "  0sec ingest --verify <crash-reports-dir>"
+echo "  env 0SEC_KERNEL_QEMU=1 0SEC_KERNEL_QEMU_KERNEL=${OUT_DIR}/bzImage \\"
+echo "    0SEC_KERNEL_QEMU_DISK=${OUT_DIR}/rootfs.img \\"
+echo "    0sec ingest --verify <crash-reports-dir>"

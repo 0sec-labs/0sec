@@ -799,17 +799,23 @@ export function buildInitramfsKernelAppend(kaslr: boolean): string {
  * the host can scrape one stream for both the run output and the dmesg splats.
  *
  * `raceEnv` is the `0SEC_RACE_*` knob set the emitted exploit reads via
- * getenv at runtime — exported into the exploit's environment here so the lane
- * can drive RACE_SECONDS/FLOOD_THREADS/etc. without recompiling.
+ * getenv at runtime. Its names begin with a digit, so BusyBox `export` cannot
+ * set them; pass the validated assignments through `env` for `/exploit`.
  */
 export function renderInitramfsInitScript(
   moduleNames: string[],
   raceEnv: Record<string, string>,
   timeoutSec: number,
 ): string {
-  const envExports = Object.entries(raceEnv)
-    .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
-    .join("\n");
+  const raceEnvEntries = Object.entries(raceEnv)
+    .filter(([key]) => /^0SEC_RACE_[A-Z0-9_]+$/.test(key));
+  const envAssignments = raceEnvEntries
+    .map(([key, value]) => `${key}=${shellQuote(value)}`)
+    .join(" ");
+  const exploitCommand = [
+    envAssignments ? `/bin/busybox env ${envAssignments}` : "",
+    `/bin/busybox timeout ${timeoutSec} /exploit > /tmp/run.log 2>&1`,
+  ].filter(Boolean).join(" ");
   const insmods = moduleNames
     .map((m) => `insmod /lib/modules/${m} 2>&1 && echo "insmod ${m} ok" || echo "insmod ${m} rc=$?"`)
     .join("\n");
@@ -823,9 +829,8 @@ export function renderInitramfsInitScript(
     'echo "=== 0SEC-INITRAMFS weaponize lane up ==="',
     "cat /proc/version",
     insmods,
-    envExports,
     'echo "=== 0SEC-INITRAMFS run (env: ' +
-      Object.keys(raceEnv).join(",") +
+      raceEnvEntries.map(([key]) => key).join(",") +
       ') ==="',
     // CRITICAL: the engine's emitted exploit prints a RECLAIM marker on EVERY
     // spray-loop iteration (thousands/sec). Streaming that to the slow 8250 UART
@@ -836,7 +841,7 @@ export function renderInitramfsInitScript(
     // stream either way, and the KASAN splats (kernel printk, a separate path)
     // still interleave live. `timeout` caps a hung flood; busybox `timeout` takes
     // the seconds as a POSITIONAL arg (`timeout SECS PROG`), NOT GNU `-t SECS`.
-    `/bin/busybox timeout ${timeoutSec} /exploit > /tmp/run.log 2>&1 || echo "0SEC-INITRAMFS exploit exit=$?" >> /tmp/run.log`,
+    `${exploitCommand} || echo "0SEC-INITRAMFS exploit exit=$?" >> /tmp/run.log`,
     'echo "=== 0SEC-INITRAMFS exploit output (batched off the UART hot path) ==="',
     "cat /tmp/run.log",
     'echo "=== 0SEC-INITRAMFS post-run ==="',

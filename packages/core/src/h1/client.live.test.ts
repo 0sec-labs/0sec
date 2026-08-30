@@ -4,11 +4,11 @@
 // the network even when local creds are present. When you do want to
 // run it:
 //
-//   0SEC_H1_LIVE=1 pnpm --filter @0sec/core test src/h1/client.live.test.ts
+//   env 0SEC_H1_LIVE=1 pnpm --filter @0sec/core test src/h1/client.live.test.ts
 //
 // or:
 //
-//   0SEC_H1_LIVE=1 H1_API_IDENTIFIER=… H1_API_TOKEN=… \
+//   env 0SEC_H1_LIVE=1 H1_API_IDENTIFIER=… H1_API_TOKEN=… \
 //     pnpm --filter @0sec/core test src/h1/client.live.test.ts
 //
 // Without 0SEC_H1_LIVE=1, every assertion in this file is skipped.

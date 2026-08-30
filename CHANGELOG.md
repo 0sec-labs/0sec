@@ -22,6 +22,12 @@ on the published npm package and the GitHub Release tag.
   `/run` opens one explicit-target engagement pane rather than separate
   scan/audit/review/deep-review launch modes; a deep source engagement uses the
   current validated finder-lens strategy through the shared unified runner.
+- Chat `/capabilities` now exposes the harness capability catalogue with
+  explicit `ready`, `confirm`, and `blocked` safety tiers; every OpenTUI pane
+  is routed through the typed chat navigation contract.
+- ChatGPT Codex now uses `codex login --device-auth` from the chat-owned
+  provider pane. It never enters the generic API-key store or asks for an
+  OpenAI API key; OpenAI remains a separate API-key provider.
 
 ## [0.15.0] - 2026-08-30
 

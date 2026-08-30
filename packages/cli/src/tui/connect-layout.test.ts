@@ -316,13 +316,13 @@ describe("buildConnectRows", () => {
     expect(new Set([...popular, ...all])).toEqual(new Set(PROVIDERS.map((p) => p.id)));
   });
 
-  it("leads the Popular group with the recommended subscription option", () => {
+  it("leads the Popular group with the recommended device OAuth option", () => {
     const rows = buildConnectRows({ states: EMPTY });
     const firstProvider = rows.find((row) => row.kind === "provider");
     expect(firstProvider?.kind).toBe("provider");
     if (firstProvider?.kind === "provider") {
       expect(firstProvider.provider.id).toBe(RECOMMENDED_IDS[0]);
-      expect(firstProvider.provider.auth).toBe("subscription");
+      expect(firstProvider.provider.auth).toBe("oauth");
     }
   });
 
@@ -373,10 +373,10 @@ describe("buildConnectRows", () => {
     byLabel.forEach((row, index) => {
       if (row.kind === "heading") expect(byLabel[index + 1]?.kind).toBe("provider");
     });
-    const bySubscription = buildConnectRows({ states: EMPTY, filter: "subscription" });
-    expect(bySubscription.filter((row) => row.kind === "provider").length).toBeGreaterThan(0);
-    for (const row of bySubscription) {
-      if (row.kind === "provider") expect(row.provider.auth).toBe("subscription");
+    const byOauth = buildConnectRows({ states: EMPTY, filter: "oauth" });
+    expect(byOauth.filter((row) => row.kind === "provider").length).toBeGreaterThan(0);
+    for (const row of byOauth) {
+      if (row.kind === "provider") expect(row.provider.auth).toBe("oauth");
     }
     expect(buildConnectRows({ states: EMPTY, filter: "zzzznope" })).toEqual([]);
   });
@@ -506,10 +506,10 @@ describe("the detail pane", () => {
     expect(text).toContain(dark?.envVars[0] ?? "");
   });
 
-  it("names the subscription path for the subscription provider", () => {
-    const row = rows.find((r) => r.kind === "provider" && r.provider.auth === "subscription");
+  it("names the device OAuth path for ChatGPT Codex", () => {
+    const row = rows.find((r) => r.kind === "provider" && r.provider.auth === "oauth");
     const text = textOf(connectDetailLines({ row }, 80));
-    expect(text.toLowerCase()).toContain("subscription");
+    expect(text.toLowerCase()).toContain("oauth");
   });
 
   it("keeps every detail line inside the pane it was measured for", () => {
@@ -581,12 +581,12 @@ describe("connected reporting, masks and hints", () => {
   });
 
   it("labels auth kinds in words", () => {
-    expect(authKindFor("chatgpt-codex")).toBe("subscription");
+    expect(authKindFor("chatgpt-codex")).toBe("oauth");
     expect(authKindFor("openai")).toBe("api-key");
-    expect(authHintLabel("subscription")).toBe("subscription");
+    expect(authHintLabel("oauth")).toBe("OAuth");
     expect(authHintLabel("api-key")).toBe("API key");
     // The auth hint fits the 12-cell column it is budgeted for.
-    for (const kind of ["subscription", "api-key"] as const) {
+    for (const kind of ["oauth", "api-key"] as const) {
       expect(authHintLabel(kind).length).toBeLessThanOrEqual(12);
     }
   });

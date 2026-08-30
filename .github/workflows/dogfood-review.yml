@@ -1,0 +1,102 @@
+name: "0sec: Dogfood Review"
+
+# The product reviews its own trusted mainline delta after normal CI has built
+# and tested it. This deliberately does not run on PR code: the review runtime
+# receives a model credential and may inspect the checked-out source.
+on:
+  workflow_run:
+    workflows: ["0sec: Main"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: 0sec-dogfood-review-main
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    env:
+      OPENAI_API_KEY: ${{ secrets.DOGFOOD_OPENAI_API_KEY }}
+      0SEC_CHATGPT_ACCESS_TOKEN: ""
+      0SEC_CHATGPT_OAUTH_REFRESH_TOKEN: ""
+      0SEC_CHATGPT_ACCOUNT_ID: ""
+      0SEC_CHATGPT_AUTH_FILE: "${{ runner.temp }}/0sec-dogfood-no-auth.json"
+      0SEC_CODEX_AUTH_JSON_PATH: "${{ runner.temp }}/0sec-dogfood-no-auth.json"
+      0SEC_SELECTED_PROVIDER: openai
+      0SEC_MODEL: gpt-5.6-luna
+      DOGFOOD_MODEL: gpt-5.6-luna
+      DOGFOOD_COST_CEILING_USD: "2"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+      - name: Bootstrap runner
+        run: bash "$GITHUB_WORKSPACE/scripts/ci-runner-bootstrap.sh"
+      - name: Require dogfood credential
+        run: |
+          set -euo pipefail
+          test -n "$OPENAI_API_KEY" || {
+            echo "::error::DOGFOOD_OPENAI_API_KEY is required for the trusted self-review lane."
+            exit 1
+          }
+      - name: Build the CLI under review
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm build
+          (cd dist && npm install --omit=dev --no-audit --no-fund)
+      - name: Review the merged delta with 0sec
+        run: |
+          set -euo pipefail
+          base="$(git rev-parse HEAD^)"
+          set +e
+          node dist/0sec.js review . \
+            --cost-ceiling "$DOGFOOD_COST_CEILING_USD" \
+            --diff-base "$base" \
+            --changed-only \
+            --depth quick \
+            --runtime api \
+            --model "$DOGFOOD_MODEL" \
+            --format sarif \
+            --db-path "$RUNNER_TEMP/0sec-dogfood.sqlite" \
+            > dogfood-review.sarif 2> dogfood-review.stderr
+          review_status=$?
+          set -e
+          cat dogfood-review.stderr >&2
+          if [ "$review_status" -ne 0 ]; then
+            exit "$review_status"
+          fi
+          if grep -q "\\[0sec\\] Agent loop error" dogfood-review.stderr; then
+            echo "::error::0sec could not complete the dogfood review."
+            exit 1
+          fi
+      - name: Upload dogfood SARIF
+        if: always() && hashFiles('dogfood-review.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: dogfood-review.sarif
+      - name: Preserve dogfood evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: 0sec-dogfood-review-${{ github.sha }}
+          path: |
+            dogfood-review.sarif
+            dogfood-review.stderr
+          if-no-files-found: warn
+          retention-days: 14

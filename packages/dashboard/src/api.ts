@@ -40,6 +40,12 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
 
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("json")) {
+    throw new Error(
+      `Dashboard API returned ${contentType || "non-JSON content"} for ${path}. Serve the UI through \`0sec dashboard\`.`,
+    );
+  }
   return response.json() as Promise<T>;
 }
 

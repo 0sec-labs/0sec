@@ -25,9 +25,11 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "${OUT_DIR}"
+KERNEL_MAKE_JOBS="$(printenv 0SEC_KERNEL_VM_MAKE_JOBS 2>/dev/null || true)"
+: "${KERNEL_MAKE_JOBS:=4}"
 
 docker build \
-  --build-arg "KERNEL_MAKE_JOBS=${0SEC_KERNEL_VM_MAKE_JOBS:-4}" \
+  --build-arg "KERNEL_MAKE_JOBS=${KERNEL_MAKE_JOBS}" \
   -t 0sec-kernel-builder-local \
   -f "${SCRIPT_DIR}/Dockerfile.local-tree" \
   "${SCRIPT_DIR}"

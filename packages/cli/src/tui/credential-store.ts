@@ -71,8 +71,10 @@ export function credentialsFilePath(homeDir?: string): string {
   return join(homeStateDir(homeDir), CREDENTIALS_FILENAME);
 }
 
-/** Provider ids the runtime can actually authenticate, straight from PROVIDERS. */
-const KNOWN_PROVIDER_IDS = new Set(PROVIDERS.map((info) => info.id));
+/** API-key providers the generic key store is allowed to persist. */
+const STORABLE_PROVIDER_IDS = new Set(
+  PROVIDERS.filter((provider) => provider.auth === "api-key").map((provider) => provider.id),
+);
 
 /**
  * An exported-but-empty value is the classic way credentials break: `export
@@ -110,7 +112,7 @@ export function normalizeCredentials(raw: unknown): StoredCredentials {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return out;
 
   for (const [providerId, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!KNOWN_PROVIDER_IDS.has(providerId)) continue;
+    if (!STORABLE_PROVIDER_IDS.has(providerId)) continue;
     if (typeof value !== "string") continue;
     const secret = value.trim();
     if (secret.length === 0) continue;
@@ -186,10 +188,10 @@ export function saveCredentials(creds: StoredCredentials, homeDir?: string): boo
  * broken export, not a choice.
  *
  * The check spans *all* of a provider's variables, not just the one we would
- * write. A shell that exported `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` has already
- * configured that provider; injecting a stored access token alongside it would
- * mix credentials from two sources into one auth attempt, and the runtime
- * prefers ours — which is precisely the silent override this rule forbids.
+ * write. A parent process that supplied `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`
+ * already configured that provider; injecting a stored access token alongside
+ * it would mix credentials from two sources into one auth attempt, and the
+ * runtime prefers ours — which is precisely the silent override this rule forbids.
  *
  * When we do fill, we fill `envVars[0]`: that list is ordered by the runtime's
  * own preference, so the first entry is the variable it actually reads first.

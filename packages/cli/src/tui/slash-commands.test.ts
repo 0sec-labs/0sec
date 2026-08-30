@@ -103,6 +103,13 @@ describe("findCommand", () => {
     expect(result.command).toBe("clear");
   });
 
+  it("recognises /capabilities by alias caps", () => {
+    const result = findCommand("/caps");
+    expect(result.isSlash).toBe(true);
+    expect(result.isKnown).toBe(true);
+    expect(result.command).toBe("capabilities");
+  });
+
   it("recognises /exit by alias quit", () => {
     const result = findCommand("/quit");
     expect(result.isSlash).toBe(true);
@@ -129,6 +136,13 @@ describe("findCommand", () => {
     expect(result.isSlash).toBe(true);
     expect(result.isKnown).toBe(true);
     expect(result.command).toBe("ops");
+  });
+
+  it("recognises /herd by alias workers", () => {
+    const result = findCommand("/workers");
+    expect(result.isSlash).toBe(true);
+    expect(result.isKnown).toBe(true);
+    expect(result.command).toBe("herd");
   });
 
   // ── whitespace handling ───────────────────────────────────────────────

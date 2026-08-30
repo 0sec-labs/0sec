@@ -115,7 +115,7 @@ console.log(
 if (!archetypeSweepEnabled()) {
   console.log(
     "[hunt-sweep] 0SEC_ARCHETYPE_SWEEP is not set to 1 — sweep disabled (this is the default). " +
-      "Set 0SEC_ARCHETYPE_SWEEP=1 to run. Exiting cleanly.",
+      "Run with `env 0SEC_ARCHETYPE_SWEEP=1 0sec ...` to enable it. Exiting cleanly.",
   );
   process.exit(0);
 }

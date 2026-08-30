@@ -243,6 +243,7 @@ describe("LlmApiRuntime provider detection", () => {
     expect(resolved.wireApi).toBe("responses");
   });
 
+
   it("detects provider from explicit config key prefix", () => {
     const rt1 = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "sk-or-cfg" });
     expect((rt1 as any).provider).toBe("openrouter");

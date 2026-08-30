@@ -8,7 +8,7 @@
  * advisory DB, not just against a stubbed response shape.
  *
  * GATED on an env flag so CI / offline `vitest run` never makes a network call:
- *   0SEC_LIVE_INTEL_TEST=1 pnpm --filter @0sec/core exec \
+ *   env 0SEC_LIVE_INTEL_TEST=1 pnpm --filter @0sec/core exec \
  *     vitest run src/triage/novelty.live.test.ts
  */
 

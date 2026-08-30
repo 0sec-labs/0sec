@@ -14,6 +14,8 @@
  * Portable — no React, OpenTUI, or @0sec/core imports, no I/O.
  */
 
+import type { CapabilityEntry } from "./capability-registry.js";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -197,6 +199,55 @@ export function buildHelpPanel(
     : plural(matched.length, "command");
 
   return { title: "Slash commands", subtitle, rows };
+}
+
+// ---------------------------------------------------------------------------
+// Harness capabilities
+// ---------------------------------------------------------------------------
+
+const CAPABILITY_CATEGORY_LABELS: Record<string, string> = {
+  engagement: "Engagement",
+  findings: "Findings",
+  verification: "Verify and fix",
+  connect: "Providers",
+  settings: "Workspace",
+  evolution: "Evolution",
+  automation: "Advanced",
+};
+
+/**
+ * Render the chat capability registry as an honest map of what is available,
+ * what requires confirmation, and what is intentionally blocked from direct
+ * chat dispatch.
+ */
+export function buildCapabilityPanel(
+  capabilities: readonly CapabilityEntry[],
+): PanelData {
+  const rows: PanelRow[] = [];
+  let category: string | undefined;
+  for (const capability of capabilities) {
+    if (capability.category !== category) {
+      category = capability.category;
+      rows.push({
+        value: CAPABILITY_CATEGORY_LABELS[category] ?? category,
+        heading: true,
+      });
+    }
+    const tier = capability.safetyTier === "automatic"
+      ? "ready"
+      : capability.safetyTier === "operator-confirmed"
+        ? "confirm"
+        : "blocked";
+    rows.push({
+      label: capability.label,
+      value: `${tier} · ${capability.description}`,
+    });
+  }
+  return {
+    title: "Harness capabilities",
+    subtitle: `${capabilities.length} registered actions`,
+    rows,
+  };
 }
 
 // ---------------------------------------------------------------------------
