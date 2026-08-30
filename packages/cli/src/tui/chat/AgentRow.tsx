@@ -55,6 +55,8 @@ function statusMark(status: string, theme: Theme): { glyph: string; color: strin
   if (status === "failed") return { glyph: "×", color: theme.ERROR };
   if (status === "completed") return { glyph: "·", color: theme.SUCCESS };
   if (status === "running") return { glyph: "·", color: theme.ACCENT };
+  // Parked: finished its task but still alive, ready to be revived by a message.
+  if (status === "parked") return { glyph: "◌", color: theme.MUTED };
   return { glyph: "·", color: theme.MUTED };
 }
 

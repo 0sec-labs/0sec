@@ -480,7 +480,12 @@ export interface SubagentLifecyclePayload {
   name?: string;
   /** Scan id of the parent that called spawn_agent. */
   parent_scan_id: string;
-  status: "queued" | "running" | "completed" | "failed";
+  /**
+   * `parked` is a long-lived agent that finished its task but stays alive and
+   * addressable, ready to be revived by a message (see `hub/park.ts`); it is not
+   * terminal like `completed`/`failed`.
+   */
+  status: "queued" | "running" | "completed" | "failed" | "parked";
   /** The task description passed to spawn_agent. */
   task: string;
   /** Effective max turns for the sub-agent (clamped to ≤25). */

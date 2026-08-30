@@ -828,7 +828,7 @@ export function fitHerdEmptyText(width: number): string {
 // ---------------------------------------------------------------------------
 
 /** The four lifecycle states a subagent moves through. Mirrors the bus. */
-export type SubagentStatus = "queued" | "running" | "completed" | "failed";
+export type SubagentStatus = "queued" | "running" | "completed" | "failed" | "parked";
 
 /** How many activity entries a single agent's ring buffer retains. */
 export const HERD_ACTIVITY_MAX = 200;
@@ -895,7 +895,7 @@ function pickFiniteInt(value: unknown): number | undefined {
 }
 
 function pickStatus(value: unknown): SubagentStatus | undefined {
-  return value === "queued" || value === "running" || value === "completed" || value === "failed"
+  return value === "queued" || value === "running" || value === "completed" || value === "failed" || value === "parked"
     ? value
     : undefined;
 }
@@ -1019,6 +1019,9 @@ function statusPhase(status: SubagentStatus): HerdPhase {
       return "working";
     case "queued":
       return "idle";
+    case "parked":
+      // Alive but waiting for a message — idle, not done.
+      return "idle";
     default:
       // completed AND failed are both terminal → "done"; a failed child keeps
       // its error visible in the note rather than masquerading as "blocked".
@@ -1035,6 +1038,8 @@ export function subagentStatusLabel(status: SubagentStatus): string {
       return "running";
     case "completed":
       return "completed";
+    case "parked":
+      return "parked";
     default:
       return "failed";
   }
