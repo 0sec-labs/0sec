@@ -1,9 +1,9 @@
 ---
 title: Feature Extractor
-description: Reference for the 45 handcrafted finding-triage features exposed by extractFeatures() and FEATURE_NAMES.
+description: Reference for the 55 handcrafted finding-triage features exposed by extractFeatures() and FEATURE_NAMES.
 ---
 
-`packages/core/src/triage/feature-extractor.ts` exports a 45-element numeric
+`packages/core/src/triage/feature-extractor.ts` exports a 55-element numeric
 vector used as a fast first-pass triage signal:
 
 - `extractFeatures(finding): number[]`
@@ -40,6 +40,7 @@ explainable, and cheap enough to run before any paid verification.
 | Metadata features | 8 | `23-30` |
 | Text quality features | 10 | `31-40` |
 | Cross-field features | 4 | `41-44` |
+| Kernel crash features | 10 | `45-54` |
 
 ## Full reference
 
@@ -113,15 +114,35 @@ explainable, and cheap enough to run before any paid verification.
 | 43 | `cross_response_request_length_ratio` | float | `0+` | Large response / request ratios can indicate leakage or reflected amplification |
 | 44 | `cross_evidence_completeness` | float | `0-1` | Non-empty request / response / analysis count divided by 3 |
 
+### Kernel crash features
+
+Added for kernel-target findings (0verse), where the signal lives in the crash
+report rather than an HTTP request/response. Zero-valued on web findings, so the
+same 55-D vector serves both domains.
+
+| Idx | Name | Type | Range | Rationale |
+|-----|------|------|-------|-----------|
+| 45 | `kernel_crash_type_ordinal` | float | `0+` | Crash class encoded as an ordinal (UAF/OOB/etc.) — different classes carry different exploitability priors |
+| 46 | `kernel_stack_depth` | float | `0+` | Call-stack depth of the crash — shallow, reproducible stacks are easier to triage |
+| 47 | `kernel_has_reproducer` | bool | `0/1` | A syz/C reproducer is attached — the strongest single exploitability signal |
+| 48 | `kernel_access_is_write` | bool | `0/1` | The faulting access is a write (vs read) — write primitives are more exploitable |
+| 49 | `kernel_access_size` | float | `0+` | Size of the faulting access |
+| 50 | `kernel_network_subsystem` | bool | `0/1` | Crash is in a network subsystem — remotely reachable surface |
+| 51 | `kernel_has_alloc_site` | bool | `0/1` | Allocation site is known (memory-corruption triage) |
+| 52 | `kernel_has_free_site` | bool | `0/1` | Free site is known (UAF triage) |
+| 53 | `kernel_is_kasan` | bool | `0/1` | KASAN-reported — a sanitizer-confirmed memory bug |
+| 54 | `kernel_subsystem_criticality` | float | `0-1` | Criticality weight of the affected subsystem |
+
 ## How features are chosen
 
-The features deliberately mix five signal families:
+The features deliberately mix six signal families:
 
 - response evidence
 - request payload shape
 - metadata priors
 - text-quality heuristics
 - cross-field consistency
+- kernel crash-report signals (0verse targets)
 
 That split reflects how triage actually works in practice: a finding is not
 credible because any one field looks good, but because several independent
