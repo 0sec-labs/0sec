@@ -30,15 +30,6 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     env:
-      OPENAI_API_KEY: ${{ secrets.DOGFOOD_OPENAI_API_KEY }}
-      0SEC_CHATGPT_ACCESS_TOKEN: ""
-      0SEC_CHATGPT_OAUTH_REFRESH_TOKEN: ""
-      0SEC_CHATGPT_ACCOUNT_ID: ""
-      0SEC_CHATGPT_AUTH_FILE: "/tmp/0sec-dogfood-no-auth-${{ github.run_id }}.json"
-      0SEC_CODEX_AUTH_JSON_PATH: "/tmp/0sec-dogfood-no-auth-${{ github.run_id }}.json"
-      0SEC_SELECTED_PROVIDER: openai
-      0SEC_MODEL: gpt-5.6-luna
-      DOGFOOD_MODEL: gpt-5.6-luna
       DOGFOOD_COST_CEILING_USD: "2"
     steps:
       - uses: actions/checkout@v6
@@ -48,24 +39,51 @@ jobs:
       - name: Bootstrap runner
         run: bash "$GITHUB_WORKSPACE/scripts/ci-runner-bootstrap.sh"
       - name: Require dogfood credential
+        env:
+          OPENAI_API_KEY: ${{ secrets.DOGFOOD_OPENAI_API_KEY }}
         run: |
           set -euo pipefail
           test -n "$OPENAI_API_KEY" || {
             echo "::error::DOGFOOD_OPENAI_API_KEY is required for the trusted self-review lane."
             exit 1
           }
-      - name: Build the CLI under review
+      # Do not execute checkout-controlled package lifecycle code in the
+      # credentialed lane. A previously published release scans this checkout.
+      - name: Download verified release reviewer
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          pnpm install --frozen-lockfile
-          pnpm build
-          (cd dist && npm install --omit=dev --no-audit --no-fund)
+          tool_dir="$RUNNER_TEMP/0sec-dogfood-reviewer"
+          mkdir -p "$tool_dir"
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern 0sec-linux-x64 \
+            --pattern checksums.txt \
+            --dir "$tool_dir"
+          expected="$(awk '$2 == "0sec-linux-x64" { print $1 }' "$tool_dir/checksums.txt")"
+          actual="$(sha256sum "$tool_dir/0sec-linux-x64" | awk '{ print $1 }')"
+          test -n "$expected" && test "$actual" = "$expected" || {
+            echo "::error::release reviewer checksum verification failed."
+            exit 1
+          }
+          chmod 755 "$tool_dir/0sec-linux-x64"
       - name: Review the merged delta with 0sec
+        env:
+          OPENAI_API_KEY: ${{ secrets.DOGFOOD_OPENAI_API_KEY }}
+          0SEC_CHATGPT_ACCESS_TOKEN: ""
+          0SEC_CHATGPT_OAUTH_REFRESH_TOKEN: ""
+          0SEC_CHATGPT_ACCOUNT_ID: ""
+          0SEC_CHATGPT_AUTH_FILE: "/tmp/0sec-dogfood-no-auth-${{ github.run_id }}.json"
+          0SEC_CODEX_AUTH_JSON_PATH: "/tmp/0sec-dogfood-no-auth-${{ github.run_id }}.json"
+          0SEC_SELECTED_PROVIDER: openai
+          0SEC_MODEL: gpt-5.6-luna
+          DOGFOOD_MODEL: gpt-5.6-luna
         run: |
           set -euo pipefail
           base="$(git rev-parse HEAD^)"
           set +e
-          node dist/0sec.js review . \
+          "$RUNNER_TEMP/0sec-dogfood-reviewer/0sec-linux-x64" review . \
             --cost-ceiling "$DOGFOOD_COST_CEILING_USD" \
             --diff-base "$base" \
             --changed-only \
