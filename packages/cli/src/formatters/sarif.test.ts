@@ -75,6 +75,7 @@ describe("formatSarif", () => {
     expect(result.properties.evidence.request).toContain("../../etc/passwd");
     expect(result.properties.verificationResult.status).toBe("reproduced");
     expect(result.codeFlows[0].threadFlows[0].locations[0].location.message.text).toBe("exploit: Request traversal payload");
+    expect(result.codeFlows[0].threadFlows[0].locations[0].location.physicalLocation.artifactLocation.uri).toBe("pkg/file.ts");
     expect(result.codeFlows[0].threadFlows[0].locations[0].location.properties.action).toMatchObject({
       type: "http",
       method: "GET",

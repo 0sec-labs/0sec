@@ -31,6 +31,10 @@ jobs:
     timeout-minutes: 30
     env:
       DOGFOOD_COST_CEILING_USD: "2"
+      # Reviewed as a supply-chain trust root; update this pair only in a
+      # separately reviewed release-bump change.
+      DOGFOOD_REVIEWER_TAG: v0.15.0
+      DOGFOOD_REVIEWER_SHA256: 1d9846be6345b8e2a4566bdf31a6c0684e9aae3503d16324948723ceb0e4f440
     steps:
       - uses: actions/checkout@v6
         with:
@@ -48,23 +52,19 @@ jobs:
             exit 1
           }
       # Do not execute checkout-controlled package lifecycle code in the
-      # credentialed lane. A previously published release scans this checkout.
+      # credentialed lane. A pinned, independently verified release scans this
+      # checkout instead of mutable `releases/latest` assets.
       - name: Download verified release reviewer
         run: |
           set -euo pipefail
           tool_dir="$RUNNER_TEMP/0sec-dogfood-reviewer"
           mkdir -p "$tool_dir"
-          release_base="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download"
           curl -fsSL --retry 3 --retry-delay 2 \
             --output "$tool_dir/0sec-linux-x64" \
-            "$release_base/0sec-linux-x64"
-          curl -fsSL --retry 3 --retry-delay 2 \
-            --output "$tool_dir/checksums.txt" \
-            "$release_base/checksums.txt"
-          expected="$(awk '$2 == "0sec-linux-x64" { print $1 }' "$tool_dir/checksums.txt")"
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${DOGFOOD_REVIEWER_TAG}/0sec-linux-x64"
           actual="$(sha256sum "$tool_dir/0sec-linux-x64" | awk '{ print $1 }')"
-          test -n "$expected" && test "$actual" = "$expected" || {
-            echo "::error::release reviewer checksum verification failed."
+          test "$actual" = "$DOGFOOD_REVIEWER_SHA256" || {
+            echo "::error::pinned release reviewer checksum verification failed."
             exit 1
           }
           chmod 755 "$tool_dir/0sec-linux-x64"
@@ -105,7 +105,7 @@ jobs:
           fi
       - name: Upload dogfood SARIF
         if: always() && hashFiles('dogfood-review.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: dogfood-review.sarif
       - name: Preserve dogfood evidence

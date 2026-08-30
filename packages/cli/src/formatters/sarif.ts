@@ -16,6 +16,9 @@ interface SarifResult {
     threadFlows: Array<{
       locations: Array<{
         location: {
+          physicalLocation: {
+            artifactLocation: { uri: string };
+          };
           message: { text: string };
           properties?: Record<string, unknown>;
         };
@@ -74,7 +77,10 @@ function actionSummary(step: PocStep): Record<string, unknown> {
   }
 }
 
-function pocStepsToCodeFlows(pocSteps: PocStep[] | undefined): SarifResult["codeFlows"] {
+function pocStepsToCodeFlows(
+  pocSteps: PocStep[] | undefined,
+  target: string,
+): SarifResult["codeFlows"] {
   if (!pocSteps || pocSteps.length === 0) return undefined;
   return [
     {
@@ -82,6 +88,9 @@ function pocStepsToCodeFlows(pocSteps: PocStep[] | undefined): SarifResult["code
         {
           locations: pocSteps.map((step) => ({
             location: {
+              physicalLocation: {
+                artifactLocation: { uri: target },
+              },
               message: { text: `${step.kind}: ${step.summary}` },
               properties: {
                 stepId: step.id,
@@ -114,7 +123,7 @@ function findingToResult(finding: Finding, target: string): SarifResult {
     },
   };
 
-  const codeFlows = pocStepsToCodeFlows(finding.pocSteps);
+  const codeFlows = pocStepsToCodeFlows(finding.pocSteps, target);
   if (codeFlows) result.codeFlows = codeFlows;
 
   result.properties = {
