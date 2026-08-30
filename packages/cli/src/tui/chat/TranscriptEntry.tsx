@@ -264,15 +264,15 @@ export function renderEntry(
     // · elapsed), so the answer itself is unadorned and the provenance sits
     // quietly beneath it.
     if (transcriptStyle === "rail") {
-      // BOTH voices are framed the same way — a thin left spine over a faint
-      // panel — so each turn reads as its own card, clearly set apart from the
-      // unframed tool activity that runs between them. Previously only the
-      // operator turn was framed and the AI answer was bare body text, so a long
-      // answer blended into the tool cards above it with nothing "around" it.
-      // The SPINE TONE is what tells the two apart: the operator turn takes the
-      // neutral ACCENT (it reads like the composer that produced it), the AI turn
-      // takes the BRAND purple (the "0sec" voice) and carries a small brand
-      // label so the answer announces itself.
+      // BOTH voices are marked the same way — a thin left SPINE plus a bold label,
+      // the body sitting flat on the canvas (no panel fill). An earlier version
+      // filled each turn with PANEL_ALT so it read as a card, but with every turn
+      // carded the transcript became a stack of heavy grey rectangles ("too much
+      // card"); OpenCode's answer is a faint left bar + label, which demarcates a
+      // turn without the weight. The SPINE TONE tells the two apart: the operator
+      // turn takes the neutral ACCENT (it reads like the composer that produced
+      // it), the AI turn takes the BRAND purple (the "0sec" voice) and carries a
+      // small brand label so the answer announces itself.
       const spine = isUser ? ACCENT : BRAND;
       // The AI turn's footer is quiet provenance only — the per-turn telemetry
       // the operator opted into: the model when `modelDisplay` routes it here
@@ -296,9 +296,9 @@ export function renderEntry(
         restFitted = footerParts.length ? fitTuiText(footerParts.join(" · "), footerBudget) : "";
       }
       return (
-        <box key={entry.id} flexDirection="row" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} backgroundColor={PANEL_ALT}>
+        <box key={entry.id} flexDirection="row" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop}>
           <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={spine} />
-          <box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1}>
+          <box flexDirection="column" flexGrow={1} minWidth={0} paddingLeft={1}>
             {label ? <text fg={labelTone} attributes={TextAttributes.BOLD}>{label}</text> : null}
             {body}
             {restFitted ? (

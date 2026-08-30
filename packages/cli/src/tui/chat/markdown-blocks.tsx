@@ -96,7 +96,7 @@ export function headingColor(level: number, theme: Theme, tone?: string): string
  * overflowing its row.
  */
 export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Theme, tone?: string) {
-  const { BORDER, BRAND, MUTED, PRIMARY, overlay } = theme;
+  const { BORDER, BRAND, MUTED, PRIMARY } = theme;
   return blocks.map((block, index) => {
     const id = `${key}-b${index}`;
     const prev = index > 0 ? blocks[index - 1] : undefined;
@@ -123,25 +123,22 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
       return wrap(<text fg={tone ?? BORDER}>{"─".repeat(24)}</text>);
     }
     if (block.kind === "code") {
-      // A fenced block reads as a quiet ELEVATED PANEL — no border, no left bar,
-      // matching how OpenCode/Claude Code/gemini render code (chrome-free; polish
-      // comes from fill + syntax colour + spacing). The body fills `overlay`, the
-      // one surface guaranteed a step lighter than every container (CANVAS /
-      // PANEL / PANEL_ALT), so the panel stays visible whether the turn is on the
-      // bare canvas or inside a PANEL_ALT card — on Midnight `surfaceAlt` equals
-      // `PANEL_ALT`, which is exactly why the old surfaceAlt fill was invisible.
-      // The box grows to the full message column, so the fill is a clean
-      // rectangle regardless of line lengths — no per-line right-padding needed.
-      // The language is a small DIM label on its own top row, flush LEFT
-      // (metadata, not content), shown only for a real language — generic
-      // "text"/"plain" fences a model emits for paths and output earn no label.
-      // Each line is tokenised so keywords/strings/comments carry theme colour
-      // and weight; whitespace is preserved verbatim.
+      // A fenced block is rendered CHROME-FREE — no fill, no border, no bar —
+      // matching OpenCode/Claude Code/gemini, which distinguish code by SYNTAX
+      // COLOUR + spacing, never a background per snippet. An earlier version
+      // filled every block with a surface tint, but models fence single-line
+      // paths and command output constantly, so a card behind each one stacked
+      // into a ladder of grey bars ("too much"). Instead the block is inset two
+      // cells from prose (a light gutter that groups it as code) with a small DIM
+      // language label on its own top row — shown only for a real language, since
+      // generic "text"/"plain" fences a model emits for paths/output earn no
+      // label. Each line is tokenised so keywords/strings/comments carry theme
+      // colour and weight; whitespace is preserved verbatim.
       const lang = block.language;
       const GENERIC_FENCE_LANGS = new Set(["text", "txt", "plain", "plaintext", "none", "output"]);
       const label = lang && !GENERIC_FENCE_LANGS.has(lang.toLowerCase()) ? lang.toLowerCase() : "";
       return wrap(
-        <box flexDirection="column" flexShrink={0} minWidth={0} backgroundColor={overlay} paddingX={1}>
+        <box flexDirection="column" flexShrink={0} minWidth={0} marginLeft={2}>
           {label ? <text flexShrink={0} fg={MUTED} attributes={TextAttributes.DIM}>{label}</text> : null}
           {block.lines.map((line, i) => {
             const tokens = highlightCode(line, lang);
