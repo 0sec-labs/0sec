@@ -315,6 +315,29 @@ that contain (neutralized) untrusted output; a paraphrase can strip the
 first-person agent text. This is addressed in Section~\ref{sec:security}.
 \end{enumerate}
 
+\subsection{Implementation status (2026-08)}
+
+The first, self-contained slice of the design has shipped, so the paper tracks
+the code:
+
+\begin{itemize}[leftmargin=1.6em]
+\item \textbf{Tunable trigger (partial fix for gap~1).} The native-loop trigger
+and regrow are no longer hardcoded: \texttt{resolveCompactionThresholds(env)}
+(pure, tested) reads \texttt{0SEC\_COMPACTION\_THRESHOLD} /
+\texttt{0SEC\_COMPACTION\_REGROW} (clamped, fail-soft to the $77$k/$30$k
+defaults), so an operator can match the model's real window today. This is a
+pragmatic stand-in for the full window-\emph{fraction} trigger: the codebase has
+no context-window catalog to derive a fraction from, so deriving the model's
+window size is the remaining prerequisite for that automation.
+\item \textbf{Richer preservation.} The LLM summary prompt now also preserves
+open TODO/plan items, the current objective/phase, and known-working
+payloads/commands --- so a compaction cannot silently drop in-progress work or
+force the agent to re-derive a working exploit.
+\item \textbf{Still open:} the automatic fraction trigger (needs the window
+catalog), the cheap-summarizer model route (gap~2), console-loop compaction
+(gap~3), and the checkpoint/resume object (gap~4) remain as designed below.
+\end{itemize}
+
 \section{Design}
 
 \subsection{Decision}
