@@ -164,6 +164,7 @@ import {
 } from "../hub/mailbox.js";
 import { PRIMARY_AGENT_NAME, assignAgentName, uniquifyAgentName } from "../hub/name-generator.js";
 import { DetachedAgentSupervisor, runPersistentAgent } from "../hub/supervisor.js";
+import { ProcessManager, probePort, type ReadyGate } from "./process-manager.js";
 import {
   MAX_DRAINS_PER_TURN,
   clampOutboundBody,
@@ -2401,6 +2402,70 @@ export function validateSpawnPersistentAgentArgs(
   return { ok: true, args: { task, ...(name ? { name } : {}), maxTurns } };
 }
 
+/* ------------------------------------------------------------- monitor (processes) */
+
+/** Ready-gate / wait defaults, clamped so a poll loop can't run unbounded. */
+const MONITOR_READY_TIMEOUT_DEFAULT_S = 30;
+const MONITOR_TIMEOUT_MAX_S = 300;
+const MONITOR_POLL_MS = 300;
+
+/** `monitor` argument schema — validated then rejected before any side effect. */
+const monitorArgsSchema = z
+  .object({
+    op: z.enum(["start", "logs", "wait", "stop", "ps", "send"], {
+      required_error: "op is required",
+      invalid_type_error: "op must be one of start|logs|wait|stop|ps|send",
+    }),
+    name: z.string().min(1).max(64).optional(),
+    command: z.string().min(1).optional(),
+    args: z.array(z.string()).optional(),
+    cwd: z.string().optional(),
+    ready_log: z.string().optional(),
+    ready_port: z.number().int().positive().max(65535).optional(),
+    ready_timeout_s: z.number().int().positive().optional(),
+    cursor: z.number().int().nonnegative().optional(),
+    grep: z.string().optional(),
+    limit: z.number().int().positive().optional(),
+    wait_for: z.enum(["exit", "ready"]).optional(),
+    pattern: z.string().optional(),
+    timeout_s: z.number().int().positive().optional(),
+    signal: z.enum(["TERM", "KILL", "INT", "HUP"]).optional(),
+    text: z.string().optional(),
+  })
+  .strip();
+
+export type MonitorArgs = z.infer<typeof monitorArgsSchema>;
+
+export function validateMonitorArgs(
+  raw: unknown,
+): { ok: true; args: MonitorArgs } | { ok: false; error: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { ok: false, error: "arguments must be an object" };
+  }
+  const parsed = monitorArgsSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "invalid arguments" };
+  }
+  const a = parsed.data;
+  // Per-op required fields — rejected here so the handler can assume them.
+  if (a.op !== "ps" && !a.name) return { ok: false, error: `monitor op "${a.op}" requires 'name'` };
+  if (a.op === "start" && !a.command) return { ok: false, error: "monitor op 'start' requires 'command'" };
+  if (a.op === "send" && (a.text === undefined || a.text === "")) {
+    return { ok: false, error: "monitor op 'send' requires non-empty 'text'" };
+  }
+  // Reject a malformed regex up front (grep / ready_log / pattern).
+  for (const [field, val] of [["grep", a.grep], ["ready_log", a.ready_log], ["pattern", a.pattern]] as const) {
+    if (val !== undefined) {
+      try {
+        void new RegExp(val);
+      } catch {
+        return { ok: false, error: `monitor '${field}' is not a valid regex: ${val}` };
+      }
+    }
+  }
+  return { ok: true, args: a };
+}
+
 /**
  * Result of running one subagent. Discriminated so a child failing is data,
  * not a thrown exception — `spawn_agents` needs one child's failure to leave
@@ -2687,6 +2752,12 @@ export class ToolExecutor {
    */
   private _detachedSupervisor: DetachedAgentSupervisor | null = null;
   /**
+   * Supervises this session's background processes (the `monitor` tool). Lazily
+   * created; every live process is killed in cleanup() so none outlives the
+   * session. See `process-manager.ts`.
+   */
+  private _processManager: ProcessManager | null = null;
+  /**
    * Set of proposed flag strings that the `done` tool rejected once as
    * likely decoys. A second `done` call with the same flag passes through
    * — the anti-honeypot heuristic is a speed bump, not a hard wall.
@@ -2955,6 +3026,11 @@ export class ToolExecutor {
         // no detached loop outlives the session.
         await this._detachedSupervisor.abortAll();
         this._detachedSupervisor = null;
+      }
+      if (this._processManager) {
+        // Kill every background process the monitor tool started.
+        this._processManager.killAll();
+        this._processManager = null;
       }
     } catch {
       // Best-effort cleanup
@@ -5861,6 +5937,145 @@ export class ToolExecutor {
         note: `Persistent agent "${displayName}" is running; it will PARK when its task is done. Message it with send_message to revive it for follow-up work.`,
       },
     };
+  }
+
+  /** Session-scoped background-process supervisor (lazy). */
+  private processManager(): ProcessManager {
+    if (!this._processManager) this._processManager = new ProcessManager();
+    return this._processManager;
+  }
+
+  private monitorSleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * `monitor` — supervise a long-running background process across turns (see
+   * process-manager.ts). Ops: start (with a log/port ready-gate), logs
+   * (cursor + grep), wait (exit | pattern | timeout), stop (signal), ps, send.
+   * Args are Zod-validated then rejected before any side effect.
+   */
+  private async monitor(args: Record<string, unknown>): Promise<ToolResult> {
+    const parsed = validateMonitorArgs(args);
+    if (!parsed.ok) {
+      this.recordToolHealth({ tool: "monitor", category: "error", message: parsed.error });
+      return { success: false, output: null, error: parsed.error };
+    }
+    const a = parsed.args;
+    const pm = this.processManager();
+    const now = () => Date.now();
+
+    if (a.op === "ps") {
+      const t = now();
+      return {
+        success: true,
+        output: {
+          processes: pm.list().map((p) => ({
+            name: p.name,
+            pid: p.pid,
+            status: p.status,
+            exit_code: p.exitCode,
+            uptime_s: Math.round((t - p.startedAt) / 1000),
+          })),
+        },
+      };
+    }
+
+    const name = a.name as string;
+
+    if (a.op === "start") {
+      let proc;
+      try {
+        proc = pm.start({ name, command: a.command as string, args: a.args, cwd: a.cwd, env: undefined });
+      } catch (err) {
+        return { success: false, output: null, error: err instanceof Error ? err.message : String(err) };
+      }
+      const gate: ReadyGate = {
+        ...(a.ready_log ? { log: new RegExp(a.ready_log) } : {}),
+        ...(a.ready_port ? { port: a.ready_port } : {}),
+      };
+      if (!gate.log && !gate.port) {
+        return { success: true, output: { started: true, name, pid: proc.pid, status: proc.status } };
+      }
+      // Block until the ready-gate holds / the process exits / the timeout. Log
+      // match is STICKY across polls so a combined log+port gate can be satisfied
+      // by a log line and a port that come ready at different moments.
+      const timeoutMs = Math.min(MONITOR_TIMEOUT_MAX_S, a.ready_timeout_s ?? MONITOR_READY_TIMEOUT_DEFAULT_S) * 1000;
+      const deadline = now() + timeoutMs;
+      let cursor = 0;
+      let logMatched = gate.log === undefined;
+      let matchedLine: string | undefined;
+      for (;;) {
+        if (proc.status !== "running") {
+          return { success: true, output: { started: true, name, pid: proc.pid, status: proc.status, ready: "exited", exit_code: proc.exitCode } };
+        }
+        const batch = proc.log.read(cursor);
+        cursor = batch.cursor;
+        if (gate.log && !logMatched) {
+          const hit = batch.lines.find((l) => gate.log!.test(l.text));
+          if (hit) {
+            logMatched = true;
+            matchedLine = hit.text;
+          }
+        }
+        const portOpen = gate.port ? await probePort(gate.port) : true;
+        if (logMatched && portOpen) {
+          const ready = gate.log && gate.port ? "both" : gate.log ? "log" : "port";
+          return { success: true, output: { started: true, name, pid: proc.pid, status: "running", ready, ...(matchedLine ? { matched_line: matchedLine } : {}) } };
+        }
+        if (now() >= deadline) {
+          return { success: true, output: { started: true, name, pid: proc.pid, status: "running", ready: "timeout", note: `ready-gate not satisfied within ${timeoutMs / 1000}s; the process is still running` } };
+        }
+        await this.monitorSleep(MONITOR_POLL_MS);
+      }
+    }
+
+    const proc = pm.get(name);
+    if (!proc) return { success: false, output: null, error: `no process named "${name}" (use op:ps to list)` };
+
+    if (a.op === "logs") {
+      const grep = a.grep ? new RegExp(a.grep) : undefined;
+      const batch = proc.log.read(a.cursor ?? 0, { grep, limit: a.limit });
+      return {
+        success: true,
+        output: { name, status: proc.status, exit_code: proc.exitCode, cursor: batch.cursor, lines: batch.lines.map((l) => l.text) },
+      };
+    }
+
+    if (a.op === "stop") {
+      const ok = pm.stop(name, a.signal ?? "TERM");
+      return { success: true, output: { stopped: ok, name, signal: a.signal ?? "TERM", status: proc.status } };
+    }
+
+    if (a.op === "send") {
+      const ok = pm.send(name, a.text as string);
+      return { success: true, output: { sent: ok, name } };
+    }
+
+    // op === "wait": block until the process exits, a pattern matches new output,
+    // or the timeout. Watches NEW output from the tail by default.
+    const pattern = a.pattern ? new RegExp(a.pattern) : undefined;
+    const timeoutMs = Math.min(MONITOR_TIMEOUT_MAX_S, a.timeout_s ?? MONITOR_READY_TIMEOUT_DEFAULT_S) * 1000;
+    const deadline = now() + timeoutMs;
+    let cursor = a.cursor ?? proc.log.head;
+    for (;;) {
+      if (proc.status !== "running") {
+        const tail = proc.log.read(cursor, { limit: a.limit });
+        return { success: true, output: { name, reason: "exit", status: proc.status, exit_code: proc.exitCode, cursor: tail.cursor, lines: tail.lines.map((l) => l.text) } };
+      }
+      if (pattern) {
+        const batch = proc.log.read(cursor);
+        cursor = batch.cursor;
+        const hit = batch.lines.find((l) => pattern.test(l.text));
+        if (hit) {
+          return { success: true, output: { name, reason: "pattern", status: "running", matched_line: hit.text, cursor } };
+        }
+      }
+      if (now() >= deadline) {
+        return { success: true, output: { name, reason: "timeout", status: proc.status, cursor } };
+      }
+      await this.monitorSleep(MONITOR_POLL_MS);
+    }
   }
 
   private async spawnAgent(args: Record<string, unknown>): Promise<ToolResult> {

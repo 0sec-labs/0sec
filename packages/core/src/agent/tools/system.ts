@@ -178,6 +178,31 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
     required: ["tasks"],
   },
 
+  monitor: {
+    name: "monitor",
+    description:
+      "Run and supervise a LONG-RUNNING process in the background across turns — a dev server to test against, a reverse-shell/OAST listener, a payload-hosting server, a long scanner (nuclei/ffuf/nmap) or fuzzer, or a build. Use this instead of bash for anything that must keep running while you keep working (bash is one-shot, 120s max). Ops: 'start' launches it (args as an array, no shell) with an optional ready-gate that blocks until a log line matches or a TCP port opens; 'logs' tails output by cursor with a grep filter (no re-reading); 'wait' blocks until it exits / a pattern appears / a timeout; 'stop' sends a signal; 'ps' lists processes with pid+status; 'send' writes to stdin.",
+    parameters: {
+      op: { type: "string", description: "start | logs | wait | stop | ps | send" },
+      name: { type: "string", description: "Stable handle for the process (required for all ops except ps)." },
+      command: { type: "string", description: "start: the executable to run (no shell; use args for arguments)." },
+      args: { type: "array", items: { type: "string" }, description: "start: argument vector (no shell quoting)." },
+      cwd: { type: "string", description: "start: working directory." },
+      ready_log: { type: "string", description: "start: regex; block until a stdout/stderr line matches (ready-gate)." },
+      ready_port: { type: "number", description: "start: TCP port; block until it accepts connections (ready-gate)." },
+      ready_timeout_s: { type: "number", description: "start: ready-gate timeout in seconds (default 30, max 300)." },
+      cursor: { type: "number", description: "logs: resume offset from a previous logs call (0 = from the start)." },
+      grep: { type: "string", description: "logs: regex to filter lines." },
+      limit: { type: "number", description: "logs: max lines to return." },
+      wait_for: { type: "string", description: "wait: 'exit' or 'ready'." },
+      pattern: { type: "string", description: "wait: regex over new output that satisfies the wait." },
+      timeout_s: { type: "number", description: "wait: timeout in seconds (default 30, max 300)." },
+      signal: { type: "string", description: "stop: TERM | KILL | INT | HUP (default TERM)." },
+      text: { type: "string", description: "send: text to write to the process stdin." },
+    },
+    required: ["op"],
+  },
+
   spawn_persistent_agent: {
     name: "spawn_persistent_agent",
     description:
@@ -249,6 +274,7 @@ export const systemDispatch: Record<string, string> = {
   spawn_agent: "spawnAgent",
   spawn_agents: "spawnAgents",
   spawn_persistent_agent: "spawnPersistentAgent",
+  monitor: "monitor",
   pty_session: "ptySession",
   plan: "planTool",
   self_extend: "selfExtend",

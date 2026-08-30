@@ -35,6 +35,7 @@ const EXPECTED_ROUTING: Record<string, string> = {
   spawn_agent: "spawnAgent",
   spawn_agents: "spawnAgents",
   spawn_persistent_agent: "spawnPersistentAgent",
+  monitor: "monitor",
   web_search: "webSearch",
   intel_search_advisories: "intelSearchAdvisories",
   intel_lookup_cve: "intelLookupCve",

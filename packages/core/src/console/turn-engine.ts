@@ -722,6 +722,7 @@ const NETWORK_CAPABLE_TOOLS: Record<string, true> = {
   spawn_agent: true,
   spawn_agents: true,
   spawn_persistent_agent: true,
+  monitor: true,
   run_sqlmap: true,
   run_nmap: true,
   run_ffuf: true,
