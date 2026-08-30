@@ -37,7 +37,21 @@ describe("CloudClient.pingHealth — auth + headers", () => {
     expect(headers.Accept).toBe("application/json");
     expect(headers["User-Agent"]).toMatch(/^0sec-cli\//);
   });
+  it.each(["https://cloud.0sec.ai", "https://cloud.0.security"])(
+    "uses the hosted API health endpoint for %s",
+    async (host) => {
+      let url = "";
+      const fetchImpl = (async (input: string | URL | Request) => {
+        url = String(input);
+        return jsonResponse({ status: "ok" });
+      }) as typeof fetch;
+
+      await new CloudClient({ host, token: SECRET, fetchImpl }).pingHealth();
+      expect(url).toBe(`${host}/api/health`);
+    },
+  );
 });
+
 
 describe("CloudClient.pingHealth — error mapping", () => {
   it("throws CloudUnauthorizedError on 401", async () => {

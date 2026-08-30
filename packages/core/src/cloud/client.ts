@@ -1,19 +1,16 @@
 // 0sec-cloud HTTP client. Bearer-auth, JSON, scaffolding.
 //
-// Scope (this PR):
-//   - One method: `pingHealth()` — hits `GET /health` to verify that the
-//     configured token is accepted by the server.
+// Scope:
+//   - One method: `pingHealth()` — hits the configured health endpoint to
+//     verify cloud reachability.
 //
-// Out of scope (follow-up PR, after the server-side mint endpoint lands):
+// The hosted 0cloud dashboard serves health under `/api/health`; generic
+// self-hosted receivers retain the original `/health` convention.
+//
+// Out of scope:
 //   - `dispatchScan()`, `listScans()`, etc. — those will use real
 //     response schemas with zod once the cloud API surface is pinned.
-//
-// DIVERGENCE FROM h1/client.ts:
-//   - Bearer-token auth (single secret) instead of HTTP Basic. There is
-//     no identifier to embed in the header.
-//   - No pagination, no rate-limit retry, no cursor-aware paginator —
-//     none of those exist for `/health`. Follow-up will reintroduce them
-//     when listing scans / findings.
+//   - No pagination, no rate-limit retry, no cursor-aware paginator.
 //
 // SECURITY:
 //   - The Authorization header value is built from the token but never
@@ -73,6 +70,18 @@ export interface CloudClientOptions {
 export interface CloudHealthResponse {
   status: string;
 }
+function healthPath(host: string): string {
+  try {
+    const hostname = new URL(host).hostname.toLowerCase();
+    if (hostname === "cloud.0sec.ai" || hostname === "cloud.0.security") {
+      return "/api/health";
+    }
+  } catch {
+    // Preserve the generic path and let getJson surface the malformed host.
+  }
+  return "/health";
+}
+
 
 export class CloudClient {
   private readonly host: string;
@@ -86,16 +95,11 @@ export class CloudClient {
   }
 
   /**
-   * Verify the configured token by hitting `GET /health`. Returns the
-   * parsed body on success. Throws a typed error on non-2xx.
-   *
-   * The server contract for `/health` (per #303): respond 200 with a
-   * JSON body containing at least `{ status: "ok" }` when the bearer is
-   * accepted. 401 means the token is invalid; 403 means it's valid but
-   * lacks the scope required to talk to the API at all (rare).
+   * Verify cloud reachability through its health route. The hosted dashboard
+   * uses `/api/health`; a self-hosted receiver uses `/health`.
    */
   async pingHealth(): Promise<CloudHealthResponse> {
-    return this.getJson<CloudHealthResponse>("/health");
+    return this.getJson<CloudHealthResponse>(healthPath(this.host));
   }
 
   /**
