@@ -312,6 +312,17 @@ export function registerConsoleCommand(program: Command): void {
         return;
       }
 
+      // Attach any configured MCP servers (0SEC_MCP = JSON array of
+      // {id,command,args?}) once, before either interactive front-end launches.
+      // Connecting here (not inside React) keeps the TUI session build
+      // synchronous — the connected host is threaded down as an option. The
+      // session closes the host on cleanup. Fail-soft: a bad config or a server
+      // that won't connect degrades to no MCP tools, never blocks the console.
+      const mcpHost = await connectMcpServers(parseMcpConfig(process.env["0SEC_MCP"]));
+      if (mcpHost) {
+        console.log(chalk.dim(`MCP: connected ${mcpHost.serverIds().length} server(s) — ${mcpHost.registeredTools().length} tool(s)`));
+      }
+
       if (isBunRuntime() && canUseOpenTui()) {
         // `run.tsx` imports Bun-only OpenTUI dependencies, so Node must not
         // resolve it before falling back to the readline console.
@@ -324,6 +335,7 @@ export function registerConsoleCommand(program: Command): void {
           maxToolIterations,
           allowScanners: opts.allowScanners,
           autonomyMode,
+          ...(mcpHost ? { mcpHost } : {}),
         };
         if (openResumePicker) {
           await showOpenTuiResume(baseOptions);
@@ -339,6 +351,7 @@ export function registerConsoleCommand(program: Command): void {
       if (!scope) {
         console.error(chalk.red("0sec console under Node requires --scope <file>."));
         console.error(chalk.dim("The readline fallback cannot approve session-only scope extensions; use the Bun TUI for scope-on-demand."));
+        if (mcpHost) await mcpHost.closeAll();
         process.exitCode = 2;
         return;
       }
@@ -346,14 +359,8 @@ export function registerConsoleCommand(program: Command): void {
       let session: ConsoleSession;
       try {
         const runtime = createConsoleRuntime({ model: opts.model });
-        // Attach any configured MCP servers (0SEC_MCP = JSON array of
-        // {id,command,args?}). Fail-soft: a bad config or a server that won't
-        // connect degrades to no MCP tools, never blocks the console. The
-        // session closes the host on cleanup (rl close).
-        const mcpHost = await connectMcpServers(parseMcpConfig(process.env["0SEC_MCP"]));
-        if (mcpHost) {
-          console.log(chalk.dim(`MCP: connected ${mcpHost.serverIds().length} server(s) — ${mcpHost.registeredTools().length} tool(s)`));
-        }
+        // MCP host was connected once above (shared with the TUI path); the
+        // session closes it on cleanup (rl close).
         session = createConsoleSession({
           runtime,
           target: focusedTarget,

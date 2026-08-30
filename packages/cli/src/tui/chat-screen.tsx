@@ -35,6 +35,7 @@ import {
   type ToolCall,
   sendOperatorMessage,
   type MessagingRuntime,
+  type McpHost,
 } from "@0sec/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import {
@@ -275,7 +276,7 @@ import {
 } from "./chat/AgentRow.js";
 import { agentAccentFor } from "./agent-color.js";
 
-export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market" | "usage" | "connect" | "finding" | "resume";
+export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market" | "usage" | "connect" | "herd" | "finding" | "resume";
 
 /**
  * Map a status pill's semantic colour role onto the live palette. Kept theme-
@@ -454,6 +455,14 @@ export interface ChatScreenOptions {
   initialMessages?: NativeMessage[];
   /** A one-shot finding workflow request submitted after the session is ready. */
   initialPrompt?: string;
+  /**
+   * A connected MCP host whose registered tools join the console's tool set
+   * (network-gated, `mcp__`-fenced as untrusted). The CLI connects it before
+   * launching the TUI and threads it down here, so the session build stays
+   * synchronous — no async connect inside React. The session closes the host on
+   * cleanup. Absent when no `0SEC_MCP` servers are configured.
+   */
+  mcpHost?: McpHost;
 }
 
 export interface ChatScreenProps {
@@ -1218,6 +1227,10 @@ export function ChatScreen({
       // Undefined when the shell wired no manager (the default) — no plugin
       // tools, exactly as before. The console reads the host at turn boundaries.
       pluginHost: pluginHostManager?.current(),
+      // Configured MCP servers (connected by the CLI before the TUI launched).
+      // Their tools are network-gated + fenced as untrusted; the session closes
+      // the host on cleanup.
+      ...(options?.mcpHost ? { mcpHost: options.mcpHost } : {}),
       // The LAUNCH mode is only the seed. Rebuilds trigger on /model and on
       // resume, and reseeding from options there would drop the operator back
       // to standard while the header kept showing the mode they chose.
@@ -2596,6 +2609,9 @@ export function ChatScreen({
         return true;
       case "launcher":
         onNavigate("launcher");
+        return true;
+      case "herd":
+        onNavigate("herd");
         return true;
       case "ops":
         onNavigate("ops");
