@@ -38,6 +38,57 @@ Config hot reload is not source mutation. A future signed policy bundle may be
 selected at a checkpoint only when the transition is retained in the run lineage;
 the current CLI does no live policy promotion.
 
+## Self-evolving finder lenses
+
+The CLI can evolve **additive appsec finder lenses**, not executable worker
+code or policy. A curated miss input must carry a known-positive fixture and
+negative controls; `lens-synth` generates a candidate, runs the existing
+fail-closed tournament, and only persists a champion when the operator
+explicitly enables promotion:
+
+```bash
+0sec lens-synth --miss-input curated-misses.json --watch --promote
+```
+
+The watcher processes the initial file revision and later content changes.
+Promotions go to `~/.0sec/lenses/appsec-archetypes.json`, never the bundled
+registry. Each promotion or retirement is recorded in the registry's
+hash-linked ledger. Inspect it with `0sec lens-synth --status`; remove a bad
+addition from future reviews with `0sec lens-synth --rollback <lens-id>`.
+
+A deep source engagement captures the complete lens array before target
+preparation. A completed promotion becomes visible to the **next** source
+engagement in a long-lived CLI process; it cannot alter a running review,
+replace a baked lens, add tools, or change scope, credentials, model,
+verifier, or budget.
+
+### TUI automatic mode
+
+The OpenTUI can own that watcher, so launching `0` or `0sec tui` continuously
+processes the curated inbox while the TUI remains open. It is deliberately
+disabled by default and requires two **Security** settings:
+
+```json
+{
+  "autoEvolveFinderLenses": true,
+  "autoPromoteFinderLenses": true
+}
+```
+
+Import that configuration with `0sec config import evolution.json --yes`, or
+enable the two settings in the TUI. The default inbox is
+`~/.0sec/lens-synthesis/miss-input.json`; atomically replace that file with a
+curated miss input to trigger a new evaluation. Set
+`OSEC_TUI_LENS_SYNTH_INPUT=/absolute/path.json` to use a different inbox and
+`OSEC_TUI_LENS_SYNTH_POLL_INTERVAL_MS` to change the polling interval.
+
+The chat status reports `evolve:auto`, `evolve:waiting input`,
+`evolve:promoted`, or `evolve:error`. `0` and `0sec tui` open the same
+chat-first OpenTUI surface; `/run` opens its explicit-target engagement pane.
+Enter a URL, a source path, a git URL, or a package prefix (`npm:`, `pypi:`,
+`cargo:`, `oci:`); a deep source engagement snapshots the current validated
+registry before it starts.
+
 ## Sealed evaluation lanes
 
 [`bench improvement-project`](/benchmark/#offline-0research-projection) projects

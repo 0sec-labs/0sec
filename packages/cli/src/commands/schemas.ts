@@ -75,6 +75,7 @@ const findingStatusEnum = z.enum([
   "confirmed",
   "scored",
   "reported",
+  "fixed",
   "false-positive",
 ]);
 

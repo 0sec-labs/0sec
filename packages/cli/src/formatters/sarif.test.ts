@@ -81,6 +81,23 @@ describe("formatSarif", () => {
     });
   });
 
+  it("marks a partial report unsuccessful when its analysis failed", () => {
+    const report: ScanReport = {
+      target: "pkg/file.ts",
+      scanDepth: "quick",
+      startedAt: "2026-06-28T18:00:00.000Z",
+      completedAt: "2026-06-28T18:01:00.000Z",
+      durationMs: 60_000,
+      warnings: [{ stage: "attack", message: "AI analysis failed" }],
+      executionSuccessful: false,
+      summary: { totalAttacks: 0, totalFindings: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      findings: [],
+    };
+
+    const sarif = JSON.parse(formatSarif(report));
+    expect(sarif.runs[0].invocations[0].executionSuccessful).toBe(false);
+  });
+
   it("includes semanticDedupe in properties when set", () => {
     const report: ScanReport = {
       target: "pkg/file.ts",

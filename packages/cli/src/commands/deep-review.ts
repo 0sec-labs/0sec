@@ -39,17 +39,15 @@ import { statSync } from "node:fs";
 import { resolve, join, sep, relative } from "node:path";
 import type { Finding, RuntimeMode, ScanReport } from "@0sec/shared";
 import type { FinderLens, ThreatLane, VerifyLens } from "@0sec/core";
-// The one non-type value import from the core barrel here: the appsec lens
-// registry loader. The barrel is already eagerly loaded at CLI boot
-// (packages/cli/src/index.ts imports maybeSubscribeCloudEventSink from it), so
-// this adds no new startup cost; it lets `defaultFinderLenses` stay a plain
-// module-eval const (its reference identity is relied on by selectProfileLenses
-// and its tests) while sourcing the appsec lenses from the data-driven JSON.
+// The loader is called once for each review invocation, before target
+// preparation. That creates a stable lens snapshot for the engagement while
+// allowing the next review in a long-lived CLI process to observe a completed
+// durable-registry promotion.
 import { eventBus, loadAppsecFinderLenses, ScanCostLedger } from "@0sec/core";
 import { leadToCandidateFinding, type HuntOutcome } from "./hunt.js";
 import { resolveOsecRunStorage, writeOsecRunReport } from "@0sec/db";
 
-interface DeepReviewOutcome extends HuntOutcome {
+export interface DeepReviewOutcome extends HuntOutcome {
   report?: ScanReport;
 }
 
@@ -168,19 +166,18 @@ const genericFinderLenses: FinderLens[] = [
 ];
 
 /**
- * Generic finder lenses for profiles without a bespoke on-chain lens set
- * (default / c-library / linux-kernel / cardano-haskell / unknown): the four
- * coarse {@link genericFinderLenses} UNIONED with the data-driven, cross-
- * language appsec lens registry ({@link loadAppsecFinderLenses}, backed by
- * `packages/core/src/stages/data/appsec-archetypes.json`). The appsec lenses
- * ADD coverage — os-command-injection, method-authz-differential, template-
- * xss/SSTI, sso-trust, and resource-exhaustion-DoS — the four generic buckets
- * under-weighted (the Swiss engagement misses). Each appsec lens has a distinct
- * id, so they union with the generics rather than colliding on the best-of-N
- * group key. On-chain profiles keep their bespoke sets and never see these (see
- * {@link selectProfileLenses}); only the default fallback bucket is widened.
+ * Build a default-profile finder snapshot. Baked and durable appsec lenses are
+ * additive; callers must capture this once at an engagement boundary.
  */
-export const defaultFinderLenses: FinderLens[] = [...genericFinderLenses, ...loadAppsecFinderLenses()];
+export function createDefaultFinderLenses(): FinderLens[] {
+  return [...genericFinderLenses, ...loadAppsecFinderLenses()];
+}
+
+/**
+ * Compatibility snapshot for direct consumers. `runDeepReview` creates a new
+ * snapshot per invocation so registry hot reloads cannot alter active scans.
+ */
+export const defaultFinderLenses: FinderLens[] = createDefaultFinderLenses();
 
 /**
  * Generic verify lenses (multi-lens refute quorum) for the default profile
@@ -252,10 +249,14 @@ export interface SelectedLenses {
 /**
  * Pick the finder + verify lens set for a `--profile`. The five on-chain
  * profiles have bespoke lens sets; every other profile (default / c-library /
- * linux-kernel / cardano-haskell / unset / unknown) falls back to the generic
- * {@link defaultFinderLenses} / {@link defaultVerifyLenses}. Pure + testable.
+ * linux-kernel / cardano-haskell / unset / unknown) falls back to the supplied
+ * immutable default finder snapshot and {@link defaultVerifyLenses}.
  */
-export function selectProfileLenses(profile: string | undefined, sets: ProfileLensSets): SelectedLenses {
+export function selectProfileLenses(
+  profile: string | undefined,
+  sets: ProfileLensSets,
+  defaultFinderSnapshot: FinderLens[] = defaultFinderLenses,
+): SelectedLenses {
   switch ((profile ?? "").trim().toLowerCase()) {
     case "evm-onchain":
       return { finderLenses: sets.evmFinderLenses, verifyLenses: sets.evmVerifyLenses, matchedProfile: "evm-onchain" };
@@ -268,7 +269,7 @@ export function selectProfileLenses(profile: string | undefined, sets: ProfileLe
     case "move-onchain":
       return { finderLenses: sets.moveFinderLenses, verifyLenses: sets.moveVerifyLenses, matchedProfile: "move-onchain" };
     default:
-      return { finderLenses: defaultFinderLenses, verifyLenses: defaultVerifyLenses, matchedProfile: "default" };
+      return { finderLenses: defaultFinderSnapshot, verifyLenses: defaultVerifyLenses, matchedProfile: "default" };
   }
 }
 
@@ -547,6 +548,9 @@ export interface RunDeepReviewOptions {
 export async function runDeepReview(
   opts: RunDeepReviewOptions,
 ): Promise<DeepReviewOutcome> {
+  // The active engagement owns this array from here through every finder and
+  // verifier call. A later registry promotion is visible only to the next run.
+  const defaultFinderSnapshot = createDefaultFinderLenses();
   const {
     runHuntScan,
     makeMultiLensVerifier,
@@ -723,7 +727,7 @@ export async function runDeepReview(
       cairoVerifyLenses,
       moveFinderLenses,
       moveVerifyLenses,
-    });
+    }, defaultFinderSnapshot);
 
     // B3 — stack-aware lens selection: ONLY on the default fall-through. On a
     // clearly-managed target (C#/JS/TS/Java/Python/Go …) drop the memory-safety

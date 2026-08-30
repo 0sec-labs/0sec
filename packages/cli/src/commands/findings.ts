@@ -8,6 +8,7 @@ import {
   resolveOsecDbPath,
   resolveOsecRunStorage,
 } from "@0sec/db";
+import { buildFindingConsoleCommand } from "../finding-handoff.js";
 
 type FindingsListOptions = {
   dbPath?: string;
@@ -331,7 +332,8 @@ export function registerFindingsCommand(program: Command): void {
     .argument("<id>", "Finding ID (full or prefix)")
     .option("--db-path <path>", "Path to SQLite database")
     .action(async (id: string, opts: { dbPath?: string }, command: Command) => {
-      const db = new osecDB(resolveDbPath(opts, command));
+      const selectedDbPath = resolveDbPath(opts, command);
+      const db = new osecDB(selectedDbPath);
 
       try {
         const all = db.listFindings({ limit: 5000 }) as FindingRow[];
@@ -409,6 +411,8 @@ export function registerFindingsCommand(program: Command): void {
             console.log(`  ${chalk.gray(row.id.slice(0, 8))} ${chalk.gray(`scan:${row.scanId.slice(0, 8)}`)} ${chalk.white(row.status)} ${triageColor(row.triageStatus)(String(row.triageStatus ?? "new"))}`);
           }
         }
+        console.log(`  ${chalk.gray("Continue in chat:")}`);
+        console.log(`  ${chalk.cyan(buildFindingConsoleCommand(finding, selectedDbPath))}`);
         console.log("");
       } catch (err) {
         console.error(chalk.red(err instanceof Error ? err.message : String(err)));

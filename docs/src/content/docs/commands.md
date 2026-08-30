@@ -235,7 +235,7 @@ validate it in an isolated Git worktree, and optionally apply it. Stricter than
 remediation guidance:
 
 - `<repo>` must be the clean root of a local Git worktree;
-- the finding (or `--verification-result`) must be `status: "reproduced"`;
+- the finding must carry reproduced verification evidence, either directly or through `--verification-result`;
 - the finding needs a code-only `verificationSpec`;
 - `--test-command` is required and runs after every candidate patch;
 - the original checkout stays untouched unless `--apply` is set — and `--apply`
@@ -243,6 +243,12 @@ remediation guidance:
   the regression run.
 
 ```bash
+# Start from a finding already stored by 0sec; no JSON export or copy/paste.
+0sec fix ./my-app \
+  --finding-id NF-001 \
+  --test-command "pnpm test" \
+  --output ./candidate-fix.patch
+
 # Generate and validate a candidate; keep the original checkout unchanged.
 0sec fix ./my-app \
   --finding ./finding.json \
@@ -265,7 +271,9 @@ proof that a deployed target is remediated.
 | Flag | Description | Default |
 |------|-------------|---------|
 | `<repo>` | Clean local Git worktree with the affected source | required |
-| `--finding <path>` | Finding JSON with a code-only `verificationSpec` | required |
+| `--finding <path>` | External finding JSON with a code-only `verificationSpec` | one of this or `--finding-id` |
+| `--finding-id <id>` | Persisted finding ID or unique prefix | one of this or `--finding` |
+| `--db-path <path>` | Database containing `--finding-id` | |
 | `--verification-result <path>` | Optional `0sec verify` JSON when the finding does not already carry a reproduced result | |
 | `--test-command <command>` | Explicit regression command run in the candidate worktree | required |
 | `--runtime <runtime>` | `auto` or `api` | `auto` |
@@ -491,6 +499,10 @@ it explicitly.
 # Explicit, with an engagement target and a scope file
 0sec console --target https://api.example.com --scope ./scope.json
 
+# Continue from a finding with its target and evidence in the same chat turn.
+# The focused request investigates or plans only; it never applies a patch.
+0sec console --finding NF-001 --finding-intent draft_fix
+
 # Start in Co-pilot: approve every non-read-only tool call
 0sec console --autonomy copilot --scope ./scope.json
 
@@ -508,6 +520,9 @@ it explicitly.
 |------|-------------|---------|
 | `--target <url>` | Engagement target the tools operate against; can also be named in chat | (none) |
 | `--scope <file>` | Initial authorization scope. Required for YOLO and for the Node fallback | (none) |
+| `--finding <id>` | Focus the first chat turn on a persisted finding | (none) |
+| `--finding-intent <intent>` | `investigate`, `verify`, or proposal-only `draft_fix` | `investigate` |
+| `--db-path <path>` | Database containing `--finding` | (auto-discovered) |
 | `-m, --model <id>` | Override the LLM model id | provider default |
 | `--role <role>` | Tool set to expose: `audit`, `review`, `discovery`, `attack`, `verify` (`audit` = every tool) | `audit` |
 | `--mode <mode>` | `standard`, `recon`, `copilot`, or `yolo` | `standard` |
@@ -662,12 +677,13 @@ transcript rather than a scan.
 
 ## dashboard
 
-Local verification workbench: a Kanban board for triaging findings, reviewing
-evidence, and tracking active scans. Runs entirely locally.
+Local findings workspace for evidence, triage, and a context-preserving handoff
+to the scoped terminal chat. Runs entirely on loopback.
 
 ```bash
 0sec dashboard
 0sec dashboard --port 48123
+0sec dashboard --host ::1
 ```
 
 **Key flags:**
@@ -675,7 +691,7 @@ evidence, and tracking active scans. Runs entirely locally.
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--port <port>` | Port to bind | `48123` |
-| `--host <host>` | Host to bind | `127.0.0.1` |
+| `--host <host>` | Loopback host only: `127.0.0.0/8` or `::1` | `127.0.0.1` |
 | `--no-open` | Do not auto-open a browser | (opens by default) |
 | `--db-path <path>` | Path to SQLite database | `~/.0sec/0sec.db` |
 
@@ -685,11 +701,12 @@ To inspect a run-local database, pass its path explicitly:
 0sec dashboard --db-path ~/.0sec/runs/<run-id>/state.db
 ```
 
-The dashboard's live integration feed is `GET /api/v1/presentation/events`.
-It is a same-origin Server-Sent Events stream of `0sec.presentation/v1` records;
-clients may send the last received event ID in `Last-Event-ID` to resume
-persisted records. Keep the default loopback host unless the dashboard is behind
-an authenticated reverse proxy.
+The dashboard only binds loopback addresses; it refuses `0.0.0.0`, LAN, and
+public hosts. For remote access, keep it on loopback and use SSH port
+forwarding or an authenticated reverse proxy that connects locally. The live
+integration feed is `GET /api/v1/presentation/events`, a same-origin
+Server-Sent Events stream of `0sec.presentation/v1` records. Clients may send
+the last received event ID in `Last-Event-ID` to resume persisted records.
 
 ## history
 
@@ -812,13 +829,16 @@ in the control plane, not this local store.
 # Inspect a specific finding with full evidence
 0sec findings show NF-001
 
+# Continue the same finding in the scoped interactive chat.
+0sec console --finding NF-001
+
 # Triage findings
 0sec findings accept <finding-id> --note "confirmed and tracked"
 0sec findings suppress <finding-id> --note "known test fixture"
 0sec findings reopen <finding-id>
 ```
 
-**Finding lifecycle:** `discovered` -> `verified` -> `confirmed` -> `scored` -> `reported` (or `false-positive` if verification fails).
+**Finding lifecycle:** `discovered` -> `verified` -> `confirmed` -> `scored` -> `reported` -> `fixed` (or `false-positive` if verification fails).
 
 **Subcommands:**
 

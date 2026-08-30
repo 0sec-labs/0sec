@@ -1283,6 +1283,11 @@ export interface ScanReport {
   /** True when the scan was aborted by the per-scan cost ceiling. */
   costCeilingExceeded?: boolean;
   /**
+   * False only when an analysis stage failed after the scan had already
+   * produced a partial report. Consumers must not render that as a clean run.
+   */
+  executionSuccessful?: boolean;
+  /**
    * Full conversation trace from the agent loop (discovery + attack messages).
    * Populated only when the caller opts in (e.g. benchmark runs). Not included
    * in normal scan output to avoid bloating JSON reports.
@@ -1710,6 +1715,10 @@ export interface ReviewReport {
   semgrepFindings: number;
   summary: ReportSummary;
   findings: Finding[];
+  /** Non-fatal stage failures retained alongside any partial findings. */
+  warnings?: Array<{ stage: string; message: string }>;
+  /** True when the primary review agent failed; partial static results may remain. */
+  researchFailed?: boolean;
   /**
    * Ranked/deduped cross-validated foxguard leads surfaced as structured data,
    * in ADDITION to the review-prompt injection (0sec FoxGuard cross-validation,

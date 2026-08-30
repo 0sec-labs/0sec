@@ -53,6 +53,7 @@ export function formatPresentationDocument(
           summary: document.report.summary,
           findings: document.report.findings,
           warnings: [],
+          executionSuccessful: document.report.researchFailed ? false : undefined,
         };
 
   switch (format) {

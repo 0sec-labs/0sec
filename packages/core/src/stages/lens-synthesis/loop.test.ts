@@ -282,6 +282,7 @@ describe("registerArchetype idempotency", () => {
     expect(second.reason).toContain("idempotent");
     expect(readRegistry().archetypes).toHaveLength(2); // seed + one, not three
   });
+
   it("writes a ledger-bound user overlay and retires it without touching the bundled registry", () => {
     const overlayPath = join(tmpDir, "durable-overlay.json");
     const promoted = registerArchetype(archetype, {

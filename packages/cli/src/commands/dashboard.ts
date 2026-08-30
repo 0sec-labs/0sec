@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { URL } from "node:url";
+import { isIP } from "node:net";
 import type { Command } from "commander";
 import chalk from "chalk";
 import {
@@ -15,6 +16,7 @@ import {
 } from "@0sec/shared";
 import { readToolCallNames } from "@0sec/core";
 import { presentationEventBus } from "../presentation/event-bus.js";
+import { buildFindingConsoleCommand } from "../finding-handoff.js";
 
 type DashboardOptions = {
   dbPath?: string;
@@ -1543,6 +1545,7 @@ async function handleApiRequest(
       });
 
       json(res, 200, {
+        consoleCommand: buildFindingConsoleCommand(rows[0]!, dbPath),
         fingerprint: familyPath.fingerprint,
         case: familyCase,
         latest: rows[0],
@@ -1576,26 +1579,39 @@ async function handleApiRequest(
   return false;
 }
 
+function isLoopbackDashboardHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (normalized === "::1") return true;
+  return isIP(normalized) === 4 && normalized.startsWith("127.");
+}
+
 export function registerDashboardCommand(program: Command): void {
   program
     .command("dashboard")
     .description("Run a local mission-control dashboard for scans and findings")
     .option("--db-path <path>", "Path to SQLite database")
     .option("--port <port>", "Port to bind", "48123")
-    .option("--host <host>", "Host to bind", "127.0.0.1")
+    .option("--host <host>", "Loopback host to bind (127.0.0.0/8 or ::1)", "127.0.0.1")
     .option("--no-open", "Do not auto-open a browser")
     .action(async (opts: DashboardOptions) => {
-      const host = opts.host ?? "127.0.0.1";
+      const host = opts.host?.trim() || "127.0.0.1";
       const port = parseInt(opts.port ?? "48123", 10);
       if (!Number.isInteger(port) || port <= 0 || port > 65535) {
         throw new Error(`Invalid port: ${opts.port ?? "48123"}`);
       }
+      if (!isLoopbackDashboardHost(host)) {
+        throw new Error(
+          "Dashboard only binds loopback addresses (127.0.0.0/8 or ::1). Use an SSH tunnel or an authenticated reverse proxy bound to local loopback for remote access.",
+        );
+      }
+      const origin = `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
+
 
       const assetDir = resolveDashboardAssetDir();
       const controlToken = randomUUID();
 
       const server = createServer(async (req, res) => {
-        const requestUrl = new URL(req.url ?? "/", `http://${host}:${port}`);
+        const requestUrl = new URL(req.url ?? "/", origin);
 
         try {
           if (requestUrl.pathname.startsWith("/api/")) {
@@ -1623,7 +1639,7 @@ export function registerDashboardCommand(program: Command): void {
       });
 
       server.listen(port, host, () => {
-        const url = `http://${host}:${port}`;
+        const url = origin;
         console.log(chalk.red.bold("  \u25C6 0sec") + chalk.gray(" dashboard"));
         console.log(chalk.gray(`  ${url}`));
         console.log(chalk.gray("  Ctrl+C to stop"));

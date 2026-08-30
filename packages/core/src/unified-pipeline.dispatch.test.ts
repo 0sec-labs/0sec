@@ -975,7 +975,7 @@ describe("runPipeline — research phase + review profile", () => {
     expect(config.costCeilingUsd).toBe(1.5);
   });
 
-  it("agent failure becomes a warning rather than throwing through the pipeline", async () => {
+  it("preserves partial output while marking an agent failure unsuccessful", async () => {
     installPackageMock.mockReturnValue(fakeInstalledPackage("npm", "lodash", "4.17.21"));
     runAnalysisAgentMock.mockRejectedValue(new Error("api 500 transient"));
 
@@ -990,6 +990,7 @@ describe("runPipeline — research phase + review profile", () => {
     });
 
     expect(report.findings).toEqual([]);
+    expect(report.researchFailed).toBe(true);
     const w = report.warnings.find((x) => x.message.includes("AI analysis failed"));
     expect(w).toBeDefined();
     expect(w!.stage).toBe("research");
@@ -1429,7 +1430,7 @@ describe("runPipeline — diff-aware review", () => {
     ]);
   });
 
-  it("default foxguard with --changed-only scopes foxguard to changed files only", async () => {
+  it("default foxguard uses its native diff mode for changed-only review", async () => {
     const { repoDir, changedFile } = makeRepoWithDiff();
 
     await runPipeline({
@@ -1447,7 +1448,10 @@ describe("runPipeline — diff-aware review", () => {
     expect(runFoxguardScanMock).toHaveBeenCalledTimes(1);
     expect(runSemgrepScanMock).not.toHaveBeenCalled();
     const opts = runFoxguardScanMock.mock.calls[0]![2];
-    expect(opts).toEqual({ paths: [join(repoDir, changedFile)] });
+    expect(opts).toEqual({
+      paths: [join(repoDir, changedFile)],
+      diffBase: "HEAD~",
+    });
   });
 
   it("missing diff-base produces a warning but the pipeline still completes", async () => {

@@ -79,7 +79,6 @@ import {
   registerExploitCommand,
   registerHuntCommand,
   registerRecencyHuntCommand,
-  registerDeepReviewCommand,
   registerLensSynthCommand,
   registerMemsafetyCommand,
   registerAssumptionHuntCommand,
@@ -150,7 +149,6 @@ registerVerifyCommand(program);
 registerExploitCommand(program);
 registerHuntCommand(program);
 registerRecencyHuntCommand(program);
-registerDeepReviewCommand(program);
 registerLensSynthCommand(program);
 registerMemsafetyCommand(program);
 registerAssumptionHuntCommand(program);
@@ -179,6 +177,7 @@ registerPluginCommand(program);
 registerThemeCommand(program);
 registerConfigCommand(program);
 
+
 // ── Interactive menu ──
 //
 // Under Bun, launches the OpenTUI home (`@opentui/react`-based mission
@@ -202,9 +201,6 @@ async function showInteractiveMenu(): Promise<void> {
   console.log(`  ${chalk.bold("Install")} (single curl, no Node / Bun required):`);
   console.log(`    curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash`);
   console.log("");
-  console.log(`  ${chalk.dim("Or via Bun:")}`);
-  console.log(`    bun add -g 0sec-cli`);
-  console.log("");
   console.log(`  ${chalk.dim("After install, run:")}`);
   console.log(`    0sec scan --target https://example.com`);
   console.log(`    0sec --help`);
@@ -213,7 +209,7 @@ async function showInteractiveMenu(): Promise<void> {
 
 // ── Entry point ──
 const userArgs = process.argv.slice(2);
-const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "fix", "file-review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "identity", "adgraph", "entragraph", "cloud", "xnu-fuzz", "research", "timeline", "console", "agent-assure", "binary", "plugin", "theme", "config", "help"];
+const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "fix", "file-review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "identity", "adgraph", "entragraph", "cloud", "xnu-fuzz", "research", "timeline", "console", "agent-assure", "binary", "plugin", "theme", "config", "help"];
 
 if (userArgs.length === 0) {
   showInteractiveMenu().catch((err) => {
@@ -242,7 +238,8 @@ if (userArgs.length === 0) {
     process.argv = [process.argv[0], process.argv[1], ...route, ...extraArgs];
     program.parse();
   } else {
-    program.parse();
+    console.error("Ambiguous target. Use the control plane (`0`) or an explicit URL, path, source:, npm:, pypi:, cargo:, or oci: target.");
+    process.exitCode = 2;
   }
 } else {
   program.parse();

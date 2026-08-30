@@ -81,6 +81,22 @@ describe("runFoxguardScan", () => {
     );
   });
 
+  it("uses Foxguard's diff command for multi-file changed-only reviews", () => {
+    const runner = vi.fn().mockReturnValue(SAMPLE_FOXGUARD_JSON) as unknown as typeof ExecFileSync;
+
+    runFoxguardScan("/repo", () => {}, {
+      runner,
+      diffBase: "HEAD^",
+      paths: ["/repo/src/first.ts", "/repo/src/second.ts"],
+    });
+
+    expect(runner).toHaveBeenCalledWith(
+      "npx",
+      ["--yes", `foxguard@${FOXGUARD_PINNED_TAG}`, "diff", "HEAD^", "/repo", "--format", "json"],
+      expect.objectContaining({ timeout: 300_000, stdio: "pipe", encoding: "utf-8" }),
+    );
+  });
+
   it("treats non-zero exit + populated stdout as a successful scan with findings", () => {
     // Foxguard returns exit code 1 whenever it finds at least one issue. The
     // runner throws but the stdout still carries the JSON array.

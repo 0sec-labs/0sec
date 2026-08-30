@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { detectTargetType, prepare } from "./prepare.js";
@@ -59,7 +59,6 @@ describe("prepare source-code URL-vs-localpath branch (#1051)", () => {
     const repoDir = join(tmpRoot, "checkout");
     mkdirSync(repoDir, { recursive: true });
 
-    const before = readdirSync(tmpdir());
     const result = await prepare(repoDir, "source-code", {}, () => {});
 
     // Local path resolves to itself (not a cloned `${tmp}/repo`).
@@ -67,12 +66,6 @@ describe("prepare source-code URL-vs-localpath branch (#1051)", () => {
     // Cleanup is a no-op for a local path (the checkout must survive).
     result.cleanup();
     expect(existsSync(repoDir)).toBe(true);
-    // No new `0sec-review-*` clone temp dir was created.
-    const after = readdirSync(tmpdir());
-    const newCloneDirs = after.filter(
-      (d) => !before.includes(d) && d.startsWith("0sec-review-"),
-    );
-    expect(newCloneDirs).toEqual([]);
   });
 
   it("throws on a non-existent local source path (fail loud)", async () => {

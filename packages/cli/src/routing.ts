@@ -1,36 +1,15 @@
-import {
-  expandHomePath,
-  isExistingLocalTargetPath,
-  isExplicitLocalTargetPath,
-} from "@0sec/core";
-
-function isExistingLocalPath(target: string): boolean {
-  return isExistingLocalTargetPath(target);
-}
+import { resolveEngagement } from "./engagement-plan.js";
 
 export function detectAndRoute(target: string): string[] | null {
-  if (target.startsWith("mcp://")) {
-    return ["scan", "--target", target];
-  }
+  const resolution = resolveEngagement(target);
+  if (!resolution.ok) return null;
+  const { plan } = resolution;
 
-  if (
-    isExplicitLocalTargetPath(target) ||
-    isExistingLocalPath(target)
-  ) {
-    return ["review", expandHomePath(target)];
+  if (plan.kind === "web") {
+    return ["scan", "--target", plan.target];
   }
-
-  if (target.startsWith("https://github.com/") || target.startsWith("git@")) {
-    return ["review", target];
+  if (plan.kind === "source") {
+    return ["review", plan.target, "--depth", "deep"];
   }
-
-  if (target.startsWith("http://") || target.startsWith("https://")) {
-    return ["scan", "--target", target];
-  }
-
-  if (/^(@[a-z0-9-]+\/)?[a-z0-9][a-z0-9._-]*(@.*)?$/.test(target)) {
-    return ["audit", target];
-  }
-
-  return null;
+  return ["audit", plan.target, "--ecosystem", plan.ecosystem ?? "npm"];
 }

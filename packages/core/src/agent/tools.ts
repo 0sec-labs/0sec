@@ -7921,6 +7921,23 @@ export class ToolExecutor {
     };
   }
 
+  /** `run_scanner` — route to the right scanner by `tool` (handlers unchanged). */
+  private async runScanner(args: Record<string, unknown>): Promise<ToolResult> {
+    const tool = String(args.tool ?? "").trim();
+    switch (tool) {
+      case "sqlmap":
+        return this.runSqlmap(args);
+      case "nmap":
+        return this.runNmap(args);
+      case "ffuf":
+        return this.runFfuf(args);
+      case "nuclei":
+        return this.runNuclei(args);
+      default:
+        return { success: false, output: null, error: `run_scanner: unknown tool "${tool}" — use sqlmap|nmap|ffuf|nuclei` };
+    }
+  }
+
   private async runSqlmap(args: Record<string, unknown>): Promise<ToolResult> {
     const url = String(args.url ?? "");
     if (!url) {

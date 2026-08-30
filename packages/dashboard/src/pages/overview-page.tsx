@@ -210,14 +210,14 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
       <PageHeader
         eyebrow="Control"
         title="Operations control"
-        summary="Launch new targets, watch the autonomous queue, and jump to the threads or runs that actually need intervention."
+        summary="Launch new targets, watch the autonomous queue, and jump to the findings or runs that actually need intervention."
         actions={(
           <>
             <Button asChild variant="outline">
               <NavLink to="/runs">Open runs</NavLink>
             </Button>
             <Button asChild variant="accent">
-              <NavLink to="/threads">Open thread console</NavLink>
+              <NavLink to="/findings">Open findings workspace</NavLink>
             </Button>
           </>
         )}
@@ -231,7 +231,7 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
                 <CardEyebrow>First run</CardEyebrow>
                 <CardTitle className="mt-2">Launch the first target</CardTitle>
                 <CardDescription>
-                  A thread is the clustered underlying issue behind repeated hits across runs. Start a target, let the pipeline decompose the work, then review only the threads that survive automation.
+                  A finding family is the clustered underlying issue behind repeated observations across runs. Start a target, let the pipeline collect proof, then review only the families that survive automation.
                 </CardDescription>
               </div>
             </CardHeader>
@@ -439,17 +439,17 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
               <CardEyebrow>Situation</CardEyebrow>
               <CardTitle className="mt-2">Live system state</CardTitle>
               <CardDescription>
-                Read the queue, worker fleet, and review backlog at a glance before drilling into threads or runs.
+                Read the queue, worker fleet, and review backlog at a glance before drilling into findings or runs.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2">
             <SituationStat icon={Workflow} label="Runnable now" value={data.queue.runnable} hint="Work items ready to claim." />
             <SituationStat icon={Activity} label="Workers" value={activeWorkers.length} hint="Live orchestration daemons." />
-            <SituationStat icon={AlertCircle} label="Review" value={reviewQueue.length} hint="Threads waiting on sign-off." />
-            <SituationStat icon={Siren} label="Blocked" value={blockedThreads.length} hint="Threads outside the happy path." />
-            <SituationStat icon={Bot} label="Running threads" value={runningThreads.length} hint="Threads with live worker activity." />
-            <SituationStat icon={Clock3} label="Unassigned" value={unassignedThreads.length} hint="Threads without an owner." />
+            <SituationStat icon={AlertCircle} label="Review" value={reviewQueue.length} hint="Finding families waiting on sign-off." />
+            <SituationStat icon={Siren} label="Blocked" value={blockedThreads.length} hint="Finding families outside the happy path." />
+            <SituationStat icon={Bot} label="Running findings" value={runningThreads.length} hint="Finding families with live worker activity." />
+            <SituationStat icon={Clock3} label="Unassigned" value={unassignedThreads.length} hint="Finding families without an owner." />
             <SituationStat icon={Play} label="Active runs" value={activeScans.length} hint="Runs still executing." />
             <SituationStat icon={Trash2} label="Stopped workers" value={stoppedWorkers.length} hint="Rows safe to prune." />
           </CardContent>
@@ -460,24 +460,24 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
         <Card className="overflow-hidden">
           <CardHeader>
             <div>
-              <CardEyebrow>Queue</CardEyebrow>
-              <CardTitle className="mt-2">Operations inbox</CardTitle>
+              <CardEyebrow>Findings</CardEyebrow>
+              <CardTitle className="mt-2">Decision queue</CardTitle>
               <CardDescription>
-                Threads that most likely need a human decision next: blocked execution, review gates, or ownership gaps.
+                Finding families that most likely need a human decision next: blocked execution, review gates, or ownership gaps.
               </CardDescription>
             </div>
             <Button asChild variant="ghost" size="sm">
-              <NavLink to="/threads">Open threads</NavLink>
+              <NavLink to="/findings">Open findings</NavLink>
             </Button>
           </CardHeader>
           <CardContent>
             {needsAttention.length === 0 ? (
-              <CardEmpty className="text-left">No threads currently need intervention.</CardEmpty>
+              <CardEmpty className="text-left">No findings currently need intervention.</CardEmpty>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead>Thread</TableHead>
+                    <TableHead>Finding</TableHead>
                     <TableHead>Ownership</TableHead>
                     <TableHead>Signal</TableHead>
                     <TableHead className="w-[14rem]">State</TableHead>
@@ -487,7 +487,7 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
                   {needsAttention.map((group) => (
                     <TableRow key={group.fingerprint}>
                       <TableCell className="font-medium">
-                        <NavLink to={`/threads/${group.fingerprint}`} className="text-foreground hover:text-primary">
+                        <NavLink to={`/findings/${group.fingerprint}`} className="text-foreground hover:text-primary">
                           {group.latest.title}
                         </NavLink>
                       </TableCell>
@@ -534,7 +534,7 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
                   <div key={group.fingerprint} className="rounded-lg border border-border bg-background px-4 py-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <NavLink to={`/threads/${group.fingerprint}`} className="text-sm font-medium text-foreground hover:text-primary">
+                        <NavLink to={`/findings/${group.fingerprint}`} className="text-sm font-medium text-foreground hover:text-primary">
                           {group.latest.title}
                         </NavLink>
                         <div className="mt-1 text-xs text-muted-foreground">
@@ -658,24 +658,24 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
         <Card className="overflow-hidden">
           <CardHeader>
             <div>
-              <CardEyebrow>Threads</CardEyebrow>
+              <CardEyebrow>Findings</CardEyebrow>
               <CardTitle className="mt-2">Latest movement</CardTitle>
               <CardDescription>
-                Most recent thread changes across automation, triage, and review.
+                Most recent finding-family changes across automation, triage, and review.
               </CardDescription>
             </div>
             <Button asChild variant="ghost" size="sm">
-              <NavLink to="/threads">Open threads</NavLink>
+              <NavLink to="/findings">Open findings</NavLink>
             </Button>
           </CardHeader>
           <CardContent>
             {latestThreads.length === 0 ? (
-              <CardEmpty className="text-left">No threads recorded yet.</CardEmpty>
+              <CardEmpty className="text-left">No findings recorded yet.</CardEmpty>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead>Thread</TableHead>
+                    <TableHead>Finding</TableHead>
                     <TableHead>Updated</TableHead>
                     <TableHead>Coverage</TableHead>
                     <TableHead className="w-[16rem]">State</TableHead>
@@ -685,7 +685,7 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
                   {latestThreads.map((group) => (
                     <TableRow key={group.fingerprint}>
                       <TableCell className="font-medium">
-                        <NavLink to={`/threads/${group.fingerprint}`} className="text-foreground hover:text-primary">
+                        <NavLink to={`/findings/${group.fingerprint}`} className="text-foreground hover:text-primary">
                           {group.latest.title}
                         </NavLink>
                       </TableCell>
@@ -786,8 +786,8 @@ export function OverviewPage({ data }: { data: DashboardResponse }) {
                         </NavLink>
                         {event.findingFingerprint ? (
                           <div>
-                            <NavLink to={`/threads/${event.findingFingerprint}`} className="text-xs text-muted-foreground hover:text-primary">
-                              Open thread
+                            <NavLink to={`/findings/${event.findingFingerprint}`} className="text-xs text-muted-foreground hover:text-primary">
+                              Open finding
                             </NavLink>
                           </div>
                         ) : null}

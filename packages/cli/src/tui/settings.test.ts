@@ -121,6 +121,25 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings({ transcriptDetail: "folded" }).transcriptDetail).toBe("expanded");
   });
 
+  it("keeps self-evolution disabled by default and accepts only explicit boolean gates", () => {
+    expect(DEFAULT_SETTINGS.autoEvolveFinderLenses).toBe(false);
+    expect(DEFAULT_SETTINGS.autoPromoteFinderLenses).toBe(false);
+    expect(normalizeSettings({
+      autoEvolveFinderLenses: true,
+      autoPromoteFinderLenses: true,
+    })).toMatchObject({
+      autoEvolveFinderLenses: true,
+      autoPromoteFinderLenses: true,
+    });
+    expect(normalizeSettings({
+      autoEvolveFinderLenses: "yes",
+      autoPromoteFinderLenses: 1,
+    })).toMatchObject({
+      autoEvolveFinderLenses: false,
+      autoPromoteFinderLenses: false,
+    });
+  });
+
   it("accepts every declared choice for every enum setting", () => {
     for (const def of SETTING_DEFS) {
       if (def.kind !== "enum") continue;

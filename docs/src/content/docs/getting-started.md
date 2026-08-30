@@ -6,14 +6,13 @@ description: Install 0sec and run an authorized investigation.
 ## Install
 
 Install the verified release binary with one command, build from source, or run
-the container image. The optional `0sec-cli` npm launcher downloads the matching
-GitHub Release binary on first use when it is available on npm.
+the container image.
 
 ```bash
 # Verified release binary (macOS Apple Silicon / Linux x64/arm64)
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
+export PATH="$HOME/.0sec/bin:$PATH"
 0sec --help          # or just: 0 --help
-
 
 # Source
 git clone https://github.com/0sec-labs/0sec.git
@@ -26,6 +25,8 @@ node packages/cli/dist/index.js --help
 # Docker
 docker run --rm ghcr.io/0sec-labs/0sec:latest --help
 ```
+Add the `export` line to your shell profile to make the release binary available in future shells.
+
 
 ## Set a model key
 

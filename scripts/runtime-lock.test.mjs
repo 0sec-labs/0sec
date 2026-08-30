@@ -40,11 +40,9 @@ test("bundle generator copies the immutable runtime lock", () => {
   assert.doesNotMatch(read("scripts/bundle-cli.mjs"), /\bcfonts\b/);
 });
 
-for (const dockerfile of ["Dockerfile", "Dockerfile.prebuilt"]) {
-  test(`${dockerfile} installs locked runtime dependencies`, () => {
-    const source = read(dockerfile);
-    assert.match(source, /npm ci --omit=dev --ignore-scripts/);
-    assert.doesNotMatch(source, /npm install --omit=dev/);
-    assert.doesNotMatch(source, /npm install -g playwright/);
-  });
-}
+test("Dockerfile installs locked runtime dependencies", () => {
+  const source = read("Dockerfile");
+  assert.match(source, /npm ci --omit=dev --ignore-scripts/);
+  assert.doesNotMatch(source, /npm install --omit=dev/);
+  assert.doesNotMatch(source, /npm install -g playwright/);
+});

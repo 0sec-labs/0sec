@@ -179,7 +179,7 @@ export function formatSarif(report: ScanReport): string {
         results: report.findings.map((f) => findingToResult(f, report.target)),
         invocations: [
           {
-            executionSuccessful: true,
+            executionSuccessful: report.executionSuccessful !== false,
             startTimeUtc: report.startedAt,
             endTimeUtc: report.completedAt,
           },

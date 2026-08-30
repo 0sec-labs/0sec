@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Clock3,
+  Copy,
+  MessageSquare,
   Search,
   ShieldCheck,
   ShieldOff,
@@ -402,10 +404,10 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
   ].filter(Boolean) as string[];
   const resultLabel =
     viewMode === "review"
-      ? `${reviewGroups.length} review threads`
+      ? `${reviewGroups.length} review families`
       : viewMode === "board"
-        ? `${filteredGroups.length} board threads`
-        : `${queueGroups.length} inbox threads`;
+        ? `${filteredGroups.length} board families`
+        : `${queueGroups.length} queued families`;
 
   function clearFilters() {
     setConsoleState((current) => ({
@@ -434,7 +436,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
 
     let content: React.ReactNode;
     if (familyQuery.isLoading) {
-      content = <LoadingState label="Thread detail" />;
+      content = <LoadingState label="Finding detail" />;
     } else if (familyQuery.error) {
       content = <ErrorState error={familyQuery.error} />;
     } else if (familyQuery.data) {
@@ -460,19 +462,19 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
     } else {
       content = (
         <EmptyState
-          title="Thread unavailable"
-          body="The selected thread could not be loaded from the local database."
+          title="Finding unavailable"
+          body="The selected finding family could not be loaded from the local database."
         />
       );
     }
 
     openPanel({
-      title: selectedGroup?.latest.title ?? "Thread detail",
-      description: "Inspect the selected thread as a persistent execution record with ownership, evidence, and review posture in one place.",
+      title: selectedGroup?.latest.title ?? "Finding detail",
+      description: "Inspect this finding family as one execution record with ownership, evidence, chat handoff, and review posture.",
       content: <div className="p-6">{content}</div>,
       onClose: () => {
         setDismissedFingerprint(selectedFingerprint);
-        navigate("/threads");
+        navigate("/findings");
       },
     });
 
@@ -498,9 +500,9 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Threads"
-        title="Thread console"
-        summary="Threads are the persistent attack issues that survive across runs. Use this surface to steer automation, inspect evidence, and make the human calls only when the pipeline cannot."
+        eyebrow="Findings"
+        title="Findings workspace"
+        summary="A finding family groups repeated observations across runs. Start from evidence and the recommended next action; use terminal chat only when the case needs judgment."
         actions={(
           <>
             <Button variant="outline" onClick={() => setFiltersOpen(true)}>
@@ -509,8 +511,8 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
               {filtersActive ? <Badge variant="neutral">{activeFilterLabels.length + (search.trim() ? 1 : 0)}</Badge> : null}
             </Button>
             {selectedFingerprint ? (
-              <Button variant="outline" onClick={() => navigate("/threads")}>
-                Close thread
+              <Button variant="outline" onClick={() => navigate("/findings")}>
+                Close finding
               </Button>
             ) : null}
           </>
@@ -521,15 +523,15 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
         <CardHeader>
           <div className="space-y-3">
             <div>
-              <CardEyebrow>Views</CardEyebrow>
-              <CardTitle className="mt-2">Inbox first</CardTitle>
+              <CardEyebrow>Work queues</CardEyebrow>
+              <CardTitle className="mt-2">Start with what needs a decision</CardTitle>
               <CardDescription>
-                Prioritize runnable, active, blocked, and review-ready threads before dropping to the board.
+                Keep autonomous execution separate from evidence review. The board remains a secondary view, not a second workflow to maintain.
               </CardDescription>
             </div>
             <Tabs value={viewMode} onValueChange={(value) => setConsoleState((current) => ({ ...current, viewMode: value as ThreadViewMode }))}>
               <TabsList>
-                <TabsTrigger value="inbox">Inbox</TabsTrigger>
+                <TabsTrigger value="inbox">Queue</TabsTrigger>
                 <TabsTrigger value="review">Review</TabsTrigger>
                 <TabsTrigger value="board">Board</TabsTrigger>
               </TabsList>
@@ -538,7 +540,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <ModeStat label="Ready now" value={`${readyGroups.length}`} meta="Queued for the next autonomous step." />
-          <ModeStat label="Running now" value={`${activeGroups.length}`} meta="Threads with live worker activity." />
+          <ModeStat label="Running now" value={`${activeGroups.length}`} meta="Finding families with live worker activity." />
           <ModeStat label="Blocked" value={`${blockedGroups.length}`} meta="Need more access, context, or a better PoC." />
           <ModeStat label="Review" value={`${reviewGroups.length}`} meta="Waiting on agent or human sign-off." />
         </CardContent>
@@ -552,7 +554,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
               <Input
                 value={search}
                 onChange={(event) => setConsoleState((current) => ({ ...current, search: event.target.value }))}
-                placeholder="Search threads, workflow state, assignee, severity, consensus, or fingerprint"
+                placeholder="Search findings, workflow state, assignee, severity, consensus, or fingerprint"
                 className="pl-9"
               />
             </div>
@@ -564,7 +566,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
               <Badge variant="neutral">{dashboard.groups.length} total</Badge>
               {selectedFingerprint ? (
                 <Badge variant={selectedVisible ? "accent" : "warning"}>
-                  {selectedVisible ? "Thread open" : "Selected thread hidden by filters"}
+                  {selectedVisible ? "Finding open" : "Selected finding hidden by filters"}
                 </Badge>
               ) : null}
             </div>
@@ -592,10 +594,10 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
             groups={filteredGroups}
             selectedFingerprint={selectedFingerprint}
             pendingFingerprint={workflowMutation.isPending ? workflowMutation.variables?.fingerprint ?? null : null}
-            onSelect={(nextFingerprint) => navigate(`/threads/${nextFingerprint}`)}
+            onSelect={(nextFingerprint) => navigate(`/findings/${nextFingerprint}`)}
             onMove={(nextFingerprint, workflowStatus) => {
               if (selectedFingerprint !== nextFingerprint) {
-                navigate(`/threads/${nextFingerprint}`);
+                navigate(`/findings/${nextFingerprint}`);
               }
 
               workflowMutation.mutate({
@@ -613,7 +615,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
             humanReviewGroups={humanReviewGroups}
             selectedFingerprint={selectedFingerprint}
             pendingFingerprint={workflowMutation.isPending ? workflowMutation.variables?.fingerprint ?? null : null}
-            onSelect={(nextFingerprint) => navigate(`/threads/${nextFingerprint}`)}
+            onSelect={(nextFingerprint) => navigate(`/findings/${nextFingerprint}`)}
           />
         ) : (
           <ThreadInbox
@@ -625,7 +627,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
             queueSort={queueSort}
             pendingFingerprint={workflowMutation.isPending ? workflowMutation.variables?.fingerprint ?? null : null}
             onSortChange={(value) => setConsoleState((current) => ({ ...current, queueSort: value }))}
-            onSelect={(nextFingerprint) => navigate(`/threads/${nextFingerprint}`)}
+            onSelect={(nextFingerprint) => navigate(`/findings/${nextFingerprint}`)}
           />
         )}
       </div>
@@ -633,9 +635,9 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
       <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
         <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-xl">
           <SheetHeader className="border-b border-border pr-12">
-            <SheetTitle>Thread filters</SheetTitle>
+            <SheetTitle>Finding filters</SheetTitle>
             <SheetDescription>
-              Scope the thread console by phase, review gate, severity, ownership, or live worker activity.
+              Scope finding families by phase, review gate, severity, ownership, or live worker activity.
             </SheetDescription>
           </SheetHeader>
 
@@ -724,7 +726,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
 
             <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
               <div className="text-sm text-muted-foreground">
-                {visibleGroups.length} of {dashboard.groups.length} threads visible
+                {visibleGroups.length} of {dashboard.groups.length} finding families visible
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={clearFilters}>
@@ -760,6 +762,7 @@ function FindingFamilyInspector({
 }) {
   const [note, setNote] = useState(data.latest.triageNote ?? "");
   const [assignee, setAssignee] = useState(data.workflow.assignee ?? "");
+  const [handoffNotice, setHandoffNotice] = useState<string | null>(null);
   const datalistId = `assignee-suggestions-${data.fingerprint}`;
   const operatorSuggestions = useMemo(() => {
     const values = new Set<string>();
@@ -793,6 +796,39 @@ function FindingFamilyInspector({
       : nextQueuedWorkItem
         ? nextQueuedWorkItem.summary || "The next queued step is ready to run."
         : data.workflow.reviewReason || "No explicit runbook activity is available yet.";
+  const handoffIntent =
+    data.case?.targetType === "repository" && data.workflow.consensus === "verified"
+      ? "draft_fix"
+      : data.workflow.reviewGate === "human_review"
+        ? "verify"
+        : "investigate";
+  const handoffCommand = data.consoleCommand.replace(
+    "--finding-intent investigate",
+    `--finding-intent ${handoffIntent}`,
+  );
+  const handoffTitle =
+    handoffIntent === "draft_fix"
+      ? "Plan a source fix in chat"
+      : handoffIntent === "verify"
+        ? "Review the evidence in chat"
+        : "Investigate in chat";
+  const handoffDescription =
+    handoffIntent === "draft_fix"
+      ? "The chat will establish root cause and propose a patch and regression test. It cannot apply a patch from this handoff."
+      : handoffIntent === "verify"
+        ? "The chat will independently assess the evidence before you accept or suppress this finding."
+        : "The chat starts with this finding's evidence and asks for the next smallest authorized step.";
+
+  const copyHandoff = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
+      await navigator.clipboard.writeText(handoffCommand);
+      setHandoffNotice("Copied. Run the command in a terminal to continue with the same finding context.");
+    } catch {
+      setHandoffNotice("Copy is unavailable here. Select the command below and run it in a terminal.");
+    }
+  };
+
 
   useEffect(() => {
     setNote(data.latest.triageNote ?? "");
@@ -801,13 +837,17 @@ function FindingFamilyInspector({
   useEffect(() => {
     setAssignee(data.workflow.assignee ?? "");
   }, [data.fingerprint, data.workflow.assignee]);
+  useEffect(() => {
+    setHandoffNotice(null);
+  }, [data.fingerprint]);
+
 
   return (
     <div className="space-y-5">
       <InspectorPane
         eyebrow="Operator"
-        title="Thread controls"
-        description="Keep ownership, workflow, review posture, and disposition in one place instead of scattering the control state across separate panes."
+        title="Finding controls"
+        description="Review evidence, route the next action into the console, and make a final disposition only when the proof is sufficient."
       >
         <div className="flex flex-wrap gap-2">
           <SeverityBadge severity={data.latest.severity} />
@@ -842,7 +882,7 @@ function FindingFamilyInspector({
               <div className="mt-1 text-sm leading-6 text-muted-foreground">{executionDetail}</div>
               {nextQueuedWorkItem ? (
                 <div className="mt-3 text-xs leading-5 text-muted-foreground">
-                  Queued autonomous stages are claimed automatically by a live daemon once dependencies clear. If a thread stalls here, check `Operations` for queue health or worker heartbeats.
+                  Queued autonomous stages are claimed automatically by a live daemon once dependencies clear. If a finding stalls here, check `Operations` for queue health or worker heartbeats.
                 </div>
               ) : null}
             </div>
@@ -865,9 +905,30 @@ function FindingFamilyInspector({
             />
           </div>
         </div>
+        <div className="rounded-md border border-primary/30 bg-primary/5 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 space-y-2">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="size-4 text-primary" />
+                <CardEyebrow>Continue in console</CardEyebrow>
+              </div>
+              <div className="text-sm font-medium text-foreground">{handoffTitle}</div>
+              <div className="text-sm leading-6 text-muted-foreground">{handoffDescription}</div>
+              <code className="block overflow-x-auto rounded bg-background/80 px-3 py-2 font-mono text-xs text-foreground">
+                {handoffCommand}
+              </code>
+              {handoffNotice ? <div className="text-xs leading-5 text-muted-foreground">{handoffNotice}</div> : null}
+            </div>
+            <Button variant="outline" size="sm" onClick={() => void copyHandoff()}>
+              <Copy className="size-4" />
+              Copy command
+            </Button>
+          </div>
+        </div>
+
 
         <label className="block space-y-2">
-          <CardEyebrow>Thread owner</CardEyebrow>
+          <CardEyebrow>Finding owner</CardEyebrow>
           <div className="flex gap-2">
             <Input
               list={datalistId}
@@ -907,27 +968,16 @@ function FindingFamilyInspector({
           </div>
         ) : null}
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-          <div className="space-y-2">
-            <CardEyebrow>Workflow phase</CardEyebrow>
-            <div className="grid grid-cols-2 gap-2">
-              {WORKFLOW_ACTIONS.map((action) => (
-                <Button
-                  key={action.value}
-                  variant={data.workflow.phase === action.value ? "default" : "outline"}
-                  onClick={() => onWorkflow(data.fingerprint, action.value, assignee, action.value)}
-                  disabled={isSaving}
-                  className="justify-start"
-                >
-                  {action.label}
-                </Button>
-              ))}
+        <div className="rounded-md border border-border bg-muted/20 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-2xl space-y-2">
+              <CardEyebrow>Operator disposition</CardEyebrow>
+              <div className="text-sm font-medium text-foreground">Keep execution state derived from real work.</div>
+              <div className="text-sm leading-6 text-muted-foreground">
+                The queue and console own investigation and remediation planning. Use a disposition only after the evidence is sufficient to accept or suppress this finding family.
+              </div>
             </div>
-          </div>
-
-          <div className="rounded-md border border-border bg-muted/20 p-4">
-            <CardEyebrow>Disposition</CardEyebrow>
-            <div className="mt-3 grid gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="success"
                 onClick={() => onTriage("accepted", note)}
@@ -987,7 +1037,7 @@ function FindingFamilyInspector({
           <Textarea
             value={note}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="Capture why this thread is actionable, benign, needs another agent pass, or is waiting on a human call."
+            placeholder="Capture why this finding is actionable, benign, needs another agent pass, or is waiting on a human call."
           />
         </label>
       </InspectorPane>
@@ -995,7 +1045,7 @@ function FindingFamilyInspector({
       <InspectorPane
         eyebrow="Execution"
         title="Execution record"
-        description="Open the runbook, evidence, and occurrence detail only when the current thread needs deeper inspection."
+        description="Open the runbook, evidence, and occurrence detail only when this finding needs deeper inspection."
       >
         <Tabs defaultValue="runbook" className="gap-4">
           <TabsList>
@@ -1009,7 +1059,7 @@ function FindingFamilyInspector({
               <CardEyebrow>Work chain</CardEyebrow>
               {data.workItems.length === 0 ? (
                 <div className="rounded-md border border-dashed border-border bg-muted/20 px-4 py-8 text-sm text-muted-foreground">
-                  No persisted work graph exists yet for this thread.
+                  No persisted work graph exists yet for this finding.
                 </div>
               ) : (
                 <ExecutionGraph
@@ -1024,7 +1074,7 @@ function FindingFamilyInspector({
               <CardEyebrow>Shared artifacts</CardEyebrow>
               {data.artifacts.length === 0 ? (
                 <div className="rounded-md border border-dashed border-border bg-muted/20 px-4 py-8 text-sm text-muted-foreground">
-                  No shared artifacts have been persisted for this thread yet.
+                  No shared artifacts have been persisted for this finding yet.
                 </div>
               ) : (
                 <div className="grid gap-3">
@@ -1046,7 +1096,7 @@ function FindingFamilyInspector({
 
           <TabsContent value="evidence">
             <div className="space-y-3">
-              <CardEyebrow>Thread evidence</CardEyebrow>
+              <CardEyebrow>Finding evidence</CardEyebrow>
               <EvidenceTabs
                 request={data.latest.evidenceRequest}
                 response={data.latest.evidenceResponse}
@@ -1061,7 +1111,7 @@ function FindingFamilyInspector({
                 <div>
                   <CardEyebrow>Occurrences</CardEyebrow>
                   <CardTitle className="mt-2">Matching findings</CardTitle>
-                  <CardDescription>Each row is an occurrence grouped into this thread.</CardDescription>
+                  <CardDescription>Each row is an occurrence grouped into this finding family.</CardDescription>
                 </div>
               </CardHeader>
               <CardContent>
@@ -1120,10 +1170,10 @@ function ThreadInbox({
       <Card className="overflow-hidden">
         <CardHeader>
           <div>
-            <CardEyebrow>Runnable surface</CardEyebrow>
-            <CardTitle className="mt-2">Autonomous inbox</CardTitle>
+            <CardEyebrow>Autonomous queue</CardEyebrow>
+            <CardTitle className="mt-2">What can move next</CardTitle>
             <CardDescription>
-              The inbox is the operational surface: what can run now, what is already running, and what is blocked.
+              This queue separates runnable work from active execution. Open a finding when evidence needs a human decision or chat handoff.
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1141,17 +1191,17 @@ function ThreadInbox({
         <CardContent className="space-y-4">
           {groups.length === 0 ? (
             <EmptyState
-              title="No threads in the inbox"
-              body="Adjust filters or launch a run to populate the thread queue."
+              title="No finding families in the queue"
+              body="Adjust filters or launch a run to populate the finding queue."
             />
           ) : (
             <>
               <ThreadSectionCard
                 eyebrow="Ready"
                 title="Ready to claim"
-                description="Runnable threads with no review gate. These are the next autonomous work candidates."
+                description="Runnable finding families with no review gate. These are the next autonomous work candidates."
                 count={readyGroups.length}
-                emptyLabel="No ready threads under the active filters."
+                emptyLabel="No ready finding families under the active filters."
               >
                 {readyGroups.map((group) => (
                   <ThreadListItem
@@ -1168,7 +1218,7 @@ function ThreadInbox({
               <ThreadSectionCard
                 eyebrow="Running"
                 title="Live execution"
-                description="Threads currently owned by a worker or marked in progress."
+                description="Finding families currently owned by a worker or marked in progress."
                 count={activeGroups.length}
                 emptyLabel="No live execution right now."
               >
@@ -1195,7 +1245,7 @@ function ThreadInbox({
               <CardEyebrow>Blocked work</CardEyebrow>
               <CardTitle className="mt-2">Needs intervention</CardTitle>
               <CardDescription>
-                Threads that need context, access, or a better exploit path before the worker can continue.
+                Finding families that need context, access, or a better exploit path before the worker can continue.
               </CardDescription>
             </div>
           </CardHeader>
@@ -1204,7 +1254,7 @@ function ThreadInbox({
               <div className="px-6 pb-6">
                 <EmptyState
                   title="Nothing is blocked"
-                  body="The current thread set has no blocked execution paths."
+                  body="The current finding set has no blocked execution paths."
                 />
               </div>
             ) : (
@@ -1230,16 +1280,16 @@ function ThreadInbox({
           <CardHeader>
             <div>
               <CardEyebrow>Reading model</CardEyebrow>
-              <CardTitle className="mt-2">How to use threads</CardTitle>
+              <CardTitle className="mt-2">How to use findings</CardTitle>
               <CardDescription>
-                Runs create evidence. Threads cluster repeated evidence over time. Workers claim runnable thread work until a review gate or blocker stops them.
+                Runs create evidence. Finding families group related observations over time. Workers claim runnable work until a review gate or blocker stops them.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="grid gap-3">
-            <ModeStat label="Filtered threads" value={`${groups.length}`} meta="Current inbox scope after search and filters." />
-            <ModeStat label="Ready plus running" value={`${readyGroups.length + activeGroups.length}`} meta="Threads automation can touch without human sign-off." />
-            <ModeStat label="Blocked plus review" value={`${blockedGroups.length}`} meta="Threads drifting out of the autonomous happy path." />
+            <ModeStat label="Filtered families" value={`${groups.length}`} meta="Current queue scope after search and filters." />
+            <ModeStat label="Ready plus running" value={`${readyGroups.length + activeGroups.length}`} meta="Work automation can touch without human sign-off." />
+            <ModeStat label="Blocked plus review" value={`${blockedGroups.length}`} meta="Cases outside the autonomous happy path." />
           </CardContent>
         </Card>
       </div>
@@ -1267,16 +1317,16 @@ function ThreadReviewDeck({
           <div>
             <CardEyebrow>Agent review</CardEyebrow>
             <CardTitle className="mt-2">Consensus and replication</CardTitle>
-            <CardDescription>
-              Threads that need another autonomous pass, conflict resolution, or a stronger PoC before operator review.
-            </CardDescription>
+              <CardDescription>
+                Finding families that need another autonomous pass, conflict resolution, or a stronger PoC before operator review.
+              </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="px-0 pb-0">
           {agentReviewGroups.length === 0 ? (
             <div className="px-6 pb-6">
               <EmptyState
-                title="No agent review threads"
+                title="No agent-review families"
                 body="Nothing currently needs another agent pass under the active filters."
               />
             </div>
@@ -1304,17 +1354,17 @@ function ThreadReviewDeck({
           <div>
             <CardEyebrow>Human review</CardEyebrow>
             <CardTitle className="mt-2">Operator sign-off</CardTitle>
-            <CardDescription>
-              Threads that already have enough signal and now need a final human call on disposition or reporting.
-            </CardDescription>
+              <CardDescription>
+                Finding families with enough signal for a final human disposition or report.
+              </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="px-0 pb-0">
           {humanReviewGroups.length === 0 ? (
             <div className="px-6 pb-6">
               <EmptyState
-                title="No human review threads"
-                body="No threads currently require operator sign-off under the active filters."
+                title="No human-review families"
+                body="No finding families currently require operator sign-off under the active filters."
               />
             </div>
           ) : (
@@ -1369,7 +1419,7 @@ function ThreadSectionCard({
       <CardContent className="px-0 pb-0">
         {count === 0 ? (
           <div className="px-4 pb-4">
-            <EmptyState title={emptyLabel} body="The queue will repopulate here as runs produce thread work." />
+            <EmptyState title={emptyLabel} body="The queue will repopulate here as runs produce finding work." />
           </div>
         ) : (
           <CardList>{children}</CardList>

@@ -42,7 +42,6 @@ const publicRoots = [
   "scripts/create-public-source-export.mjs",
   "scripts/create-public-source-export.test.mjs",
   "Dockerfile",
-  "Dockerfile.prebuilt",
   "LICENSE",
   "LICENSE-MIT",
   "NOTICE",
@@ -58,9 +57,7 @@ const publicRoots = [
   "scripts/assert-sqlite-wasm.mjs",
   "scripts/bundle-cli.mjs",
   "scripts/dist-package-lock.json",
-  "scripts/docker-contract.test.mjs",
   "scripts/runtime-lock.test.mjs",
-  "scripts/npm-launcher",
   "scripts/ci-runner-bootstrap.sh",
   "scripts/smoke-cli.sh",
   "test-targets",
@@ -94,7 +91,7 @@ function isUnder(path, root) {
 function isGenerated(sourceRelative) {
   return sourceRelative.endsWith(".tsbuildinfo") ||
     sourceRelative.split("/").some((part) =>
-      ["node_modules", "dist", "dist-bin", "dist-npm"].includes(part),
+      ["node_modules", "dist", "dist-bin"].includes(part),
     );
 }
 

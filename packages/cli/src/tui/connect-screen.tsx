@@ -31,7 +31,7 @@
  * completed OAuth handshake.
  */
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { TextAttributes } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 
@@ -43,6 +43,7 @@ import {
   saveCredentials,
   type StoredCredentials,
 } from "./credential-store.js";
+import type { ConnectionRecovery } from "./connection-recovery.js";
 import {
   authHintLabel,
   buildConnectRows,
@@ -99,6 +100,10 @@ export interface ConnectScreenProps {
   onBack: () => void;
   /** Leave the console entirely — ctrl+c. */
   onExit: () => void;
+  /** Provider/authentication failure that opened this screen, if any. */
+  recovery?: ConnectionRecovery;
+  /** Called after a provider is persisted so the chat can rebuild in place. */
+  onConnected?: (providerId: string) => void;
   /** Environment to read credentials from. Defaults to the real one; injected for tests. */
   env?: Record<string, string | undefined>;
   /**
@@ -199,7 +204,7 @@ function TitleRow({
   );
 }
 
-export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectScreenProps) {
+export function ConnectScreen({ frame, onBack, onExit, recovery, onConnected, env, homeDir }: ConnectScreenProps) {
   const theme = useTheme();
   const { width, height } = useTerminalDimensions();
 
@@ -228,6 +233,7 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
     [states, storedIds, filter],
   );
 
+  const recoveredProviderRef = useRef<string | undefined>(undefined);
   const [selected, setSelected] = useState(() => {
     const at = firstSelectableIndex(buildConnectRows({ states, stored: storedIds }));
     return at >= 0 ? at : 0;
@@ -237,6 +243,20 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
   const activeRow = cursor >= 0 ? rows[cursor] : undefined;
   const activeProvider: ConnectProvider | undefined =
     activeRow?.kind === "provider" ? activeRow.provider : undefined;
+  const detailRow =
+    activeRow?.kind === "provider" && recovery?.providerId === activeRow.provider.id
+      ? {
+          ...activeRow,
+          provider: {
+            ...activeRow.provider,
+            connected: false,
+            source: undefined,
+            via: undefined,
+          },
+        }
+      : activeRow;
+  const detailProvider: ConnectProvider | undefined =
+    detailRow?.kind === "provider" ? detailRow.provider : undefined;
 
   const layout = computeConnectLayout({ width, height, noticeRows: 1 });
   const window = computeConnectWindow({ rows, selected: cursor, visible: layout.visibleRows, anchor });
@@ -253,6 +273,19 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
   useEffect(() => {
     if (cursor >= 0 && cursor !== selected) setSelected(cursor);
   }, [cursor, selected]);
+  useEffect(() => {
+    const providerId = recovery?.providerId;
+    if (!providerId || recoveredProviderRef.current === providerId) return;
+    const recoveryIndex = rows.findIndex(
+      (entry) => entry.kind === "provider" && entry.provider.id === providerId,
+    );
+    recoveredProviderRef.current = providerId;
+    if (recoveryIndex >= 0) {
+      setSelected(recoveryIndex);
+      setAnchor(Math.max(0, recoveryIndex - 1));
+    }
+  }, [recovery?.providerId, rows]);
+
 
   const move = (delta: number) => {
     const next = moveSelection(rows, cursor, delta);
@@ -300,6 +333,7 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
     setStored(reloaded);
     const label = states.find((s) => s.id === id)?.label ?? id;
     setNotice(reloaded[id] ? `connected ${label}` : `${label} not stored`);
+    onConnected?.(id);
   };
 
   useKeyboard((key) => {
@@ -424,6 +458,8 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
     const selectedRow = index === cursor;
     const background = selectedRow ? theme.PANEL_ALT : undefined;
     const provider = entry.provider;
+    const recovering = recovery?.providerId === provider.id;
+    const connected = provider.connected && !recovering;
     return (
       <box
         key={`provider-${provider.id}`}
@@ -439,14 +475,14 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
           {""}
         </Cells>
         <Cells width={row.checkWidth} fg={theme.SUCCESS} bg={background}>
-          {provider.connected ? "✓" : ""}
+          {connected ? "✓" : ""}
         </Cells>
         <Cells width={row.checkGap} bg={background}>
           {""}
         </Cells>
         <Cells
           width={row.labelWidth}
-          fg={provider.connected ? theme.SUCCESS : selectedRow ? theme.ACCENT : theme.MUTED}
+          fg={connected ? theme.SUCCESS : selectedRow ? theme.ACCENT : theme.MUTED}
           bg={background}
         >
           {provider.label}
@@ -454,15 +490,15 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
         <Cells width={row.authGap} bg={background}>
           {""}
         </Cells>
-        <Cells width={row.authWidth} align="right" fg={theme.MUTED} bg={background}>
-          {provider.connected ? "connected" : authHintLabel(provider.auth)}
+        <Cells width={row.authWidth} align="right" fg={recovering ? theme.ERROR : theme.MUTED} bg={background}>
+          {recovering ? "reconnect" : connected ? "connected" : authHintLabel(provider.auth)}
         </Cells>
       </box>
     );
   });
 
   const detailBody = clipConnectDetailLines(
-    connectDetailLines({ row: activeRow, compact: layout.detailCompact }, layout.detail.innerWidth),
+    connectDetailLines({ row: detailRow, compact: layout.detailCompact }, layout.detail.innerWidth),
     layout.detail.bodyRows,
     layout.detail.innerWidth,
   ).map((line, index) => (
@@ -470,20 +506,39 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
       {line.text}
     </Cells>
   ));
+  const detailContent = recovery ? (
+    <scrollbox
+      width={layout.detail.innerWidth}
+      height={Math.max(1, layout.detail.bodyRows)}
+      flexShrink={0}
+      minWidth={0}
+      minHeight={0}
+    >
+      <box flexDirection="column" width="100%" minWidth={0}>
+        <text fg={theme.ERROR} attributes={TextAttributes.BOLD} wrapMode="word">{recovery.title}</text>
+        <text fg={theme.MUTED} wrapMode="word">{recovery.detail}</text>
+        <text fg={theme.ACCENT} marginTop={1} wrapMode="word">
+          Press Enter to connect {activeProvider?.label ?? "the selected provider"}, or use ↑/↓ to choose another provider. Esc returns to the full error transcript.
+        </text>
+        <box flexDirection="column" marginTop={1} minWidth={0}>{detailBody}</box>
+      </box>
+    </scrollbox>
+  ) : detailBody;
 
-  const statusText = inInput
-    ? `${activeProvider?.auth === "subscription" ? "paste sign-in token" : "paste API key"} for ${
-        activeProvider?.label ?? inputProviderId
-      }: ${connectInputMask(inputValue.length)}`
-    : filtering
-      ? `filter: ${filter}_`
-      : notice
-        ? notice
-        : filter
-          ? `filter: ${filter} · ${connectStatusLine(rows)}`
-          : connectStatusLine(rows);
-
-  const statusFg = inInput ? theme.ACCENT : notice ? theme.SUCCESS : theme.MUTED;
+  const statusText = recovery
+    ? recovery.title
+    : inInput
+      ? `${activeProvider?.auth === "subscription" ? "paste sign-in token" : "paste API key"} for ${
+          activeProvider?.label ?? inputProviderId
+        }: ${connectInputMask(inputValue.length)}`
+      : filtering
+        ? `filter: ${filter}_`
+        : notice
+          ? notice
+          : filter
+            ? `filter: ${filter} · ${connectStatusLine(rows)}`
+            : connectStatusLine(rows);
+  const statusFg = recovery ? theme.ERROR : inInput ? theme.ACCENT : notice ? theme.SUCCESS : theme.MUTED;
 
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
@@ -520,12 +575,12 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
             <TitleRow
               innerWidth={layout.detail.innerWidth}
               title={connectDetailTitleLabel()}
-              meta={connectDetailTitleMeta(activeRow)}
-              metaFg={activeProvider?.connected ? theme.SUCCESS : theme.MUTED}
+              meta={connectDetailTitleMeta(detailRow)}
+              metaFg={detailProvider?.connected ? theme.SUCCESS : theme.MUTED}
             />
           }
         >
-          {detailBody}
+          {detailContent}
         </Pane>
       </box>
       <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>

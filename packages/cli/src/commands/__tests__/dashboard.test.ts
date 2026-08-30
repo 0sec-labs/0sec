@@ -546,17 +546,29 @@ describe("dashboard — argument validation", () => {
     expect(httpState.listenCalls).toEqual([{ port: 48123, host: "127.0.0.1" }]);
   });
 
-  it("threads custom --port and --host into server.listen", async () => {
+  it("accepts IPv6 loopback and threads it into server.listen", async () => {
     const err = await runCli([
       "dashboard",
       "--no-open",
       "--port",
       "9090",
       "--host",
-      "0.0.0.0",
+      "::1",
     ]);
     expect(err).toBeUndefined();
-    expect(httpState.listenCalls).toEqual([{ port: 9090, host: "0.0.0.0" }]);
+    expect(httpState.listenCalls).toEqual([{ port: 9090, host: "::1" }]);
+  });
+
+  it("rejects a non-loopback host before starting the server", async () => {
+    const err = await runCli([
+      "dashboard",
+      "--no-open",
+      "--host",
+      "0.0.0.0",
+    ]);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/only binds loopback/i);
+    expect(httpState.listenCalls).toHaveLength(0);
   });
 
   it("throws if the dashboard asset dir cannot be located", async () => {

@@ -665,7 +665,7 @@ export function renderEntry(
       return (
         <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={ERROR} paddingX={1}>
           <text fg={ERROR}>{fitTuiText(`${entry.text}${repeat}`, frame.contentWidth)}</text>
-          {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text> : null}
+          {entry.detail ? <text fg={MUTED} wrapMode="word">{sanitizeTuiText(entry.detail)}</text> : null}
         </box>
       );
     }
@@ -676,7 +676,7 @@ export function renderEntry(
       <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
         <text fg={ERROR}>{fitTuiText(`▌ ${entry.text}${repeat}`, Math.max(1, maxWidth))}</text>
         {entry.detail ? (
-          <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text>
+          <text fg={MUTED} wrapMode="word">{sanitizeTuiText(entry.detail)}</text>
         ) : null}
       </box>
     );

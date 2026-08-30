@@ -50,14 +50,14 @@ type ShellContextSection = {
 
 function routeLabel(pathname: string): string {
   if (pathname.startsWith("/dashboard")) return "Operations center";
-  if (pathname.startsWith("/threads") || pathname.startsWith("/findings")) return "Thread console";
+  if (pathname.startsWith("/threads") || pathname.startsWith("/findings")) return "Findings workspace";
   if (pathname.startsWith("/runs") || pathname.startsWith("/scans")) return "Run dossier";
   return "Operations center";
 }
 
 function routePage(pathname: string): string {
   if (pathname.startsWith("/dashboard")) return "Operations";
-  if (pathname.startsWith("/threads") || pathname.startsWith("/findings")) return "Threads";
+  if (pathname.startsWith("/threads") || pathname.startsWith("/findings")) return "Findings";
   if (pathname.startsWith("/runs") || pathname.startsWith("/scans")) return "Runs";
   return "Control";
 }
@@ -143,29 +143,29 @@ function buildShellContext({
 
   if (pathname.startsWith("/threads") || pathname.startsWith("/findings")) {
     return {
-      title: "Thread console",
-      summary: "Review clustered issues, route agent work, and only touch the threads that survive automation.",
+      title: "Findings workspace",
+      summary: "Review deduplicated evidence, continue the few cases that need judgment, and keep execution in the scoped terminal chat.",
       sections: [
         {
-          label: "Inbox",
+          label: "Queue",
           items: [
-            { label: "Tracked threads", value: String(groups.length), meta: "deduped issue clusters across runs" },
-            { label: "New", value: String(newThreads), meta: "fresh threads awaiting first disposition" },
-            { label: "Human review", value: String(humanReview), meta: "operator sign-off required", tone: humanReview > 0 ? "warning" : "default" },
-            { label: "Agent review", value: String(agentReview), meta: "automation waiting on internal review" },
+            { label: "Finding families", value: String(groups.length), meta: "deduplicated observations across runs" },
+            { label: "New", value: String(newThreads), meta: "awaiting a first decision or investigation" },
+            { label: "Human review", value: String(humanReview), meta: "ready for operator disposition", tone: humanReview > 0 ? "warning" : "default" },
+            { label: "Agent review", value: String(agentReview), meta: "needs another evidence pass" },
           ],
         },
         {
-          label: "Workflow",
+          label: "Execution",
           items: [
-            { label: "In progress", value: String(activeThreads), meta: "threads with active worker movement", tone: activeThreads > 0 ? "success" : "default" },
-            { label: "Blocked", value: String(blockedThreads), meta: "needs access, context, or better proof", tone: blockedThreads > 0 ? "danger" : "default" },
+            { label: "In progress", value: String(activeThreads), meta: "families with active worker movement", tone: activeThreads > 0 ? "success" : "default" },
+            { label: "Blocked", value: String(blockedThreads), meta: "needs access, context, or stronger proof", tone: blockedThreads > 0 ? "danger" : "default" },
             { label: "Unassigned", value: String(unassigned), meta: "no explicit owner attached yet" },
-            { label: "Verified", value: String(verifiedThreads), meta: "consensus already landed on true positive" },
+            { label: "Verified", value: String(verifiedThreads), meta: "consensus supports a true positive" },
           ],
           note: latestIncident
             ? `Runtime pressure is visible elsewhere too: ${latestIncident.scanTarget} failed ${formatTime(latestIncident.timestamp)}.`
-            : "Use inbox and review first. The board is only a secondary workflow lens.",
+            : "Open a finding to copy a context-preserving console handoff.",
         },
       ],
     };
@@ -174,7 +174,7 @@ function buildShellContext({
   if (pathname.startsWith("/runs") || pathname.startsWith("/scans")) {
     return {
       title: "Run dossiers",
-      summary: "Inspect provenance by target, then drill into a selected execution and its output threads.",
+      summary: "Inspect provenance by target, then drill into a selected execution and its output findings.",
       sections: [
         {
           label: "Inventory",
@@ -217,9 +217,9 @@ function buildShellContext({
       {
         label: "Review",
         items: [
-          { label: "Human review", value: String(humanReview), meta: "threads waiting on operator sign-off", tone: humanReview > 0 ? "warning" : "default" },
+          { label: "Human review", value: String(humanReview), meta: "findings waiting on operator sign-off", tone: humanReview > 0 ? "warning" : "default" },
           { label: "Blocked", value: String(blockedThreads), meta: "access or context gap in execution", tone: blockedThreads > 0 ? "danger" : "default" },
-          { label: "Unassigned", value: String(unassigned), meta: "threads without a named owner" },
+          { label: "Unassigned", value: String(unassigned), meta: "findings without a named owner" },
           { label: "Targets", value: String(uniqueTargets), meta: "real target history in this workspace" },
         ],
         note: latestIncident
@@ -288,7 +288,7 @@ export function AppShell({
 
             <nav className="mt-6 flex flex-1 flex-col items-center gap-2">
               <RailNavItem to="/dashboard" label="Operations" icon={LayoutDashboard} />
-              <RailNavItem to="/threads" label="Threads" icon={ShieldAlert} badge={newFamilies} />
+              <RailNavItem to="/findings" label="Findings" icon={ShieldAlert} badge={newFamilies} />
               <RailNavItem to="/runs" label="Runs" icon={Radar} badge={activeRuns} />
               <RailNavItem to="/live" label="Live workflow" icon={Radio} />
             </nav>
@@ -379,9 +379,9 @@ export function AppShell({
                             icon={LayoutDashboard}
                           />
                           <SidebarNavItem
-                            to="/threads"
-                            label="Threads"
-                            meta="Review, evidence, disposition"
+                            to="/findings"
+                            label="Findings"
+                            meta="Evidence, chat handoff, disposition"
                             icon={ShieldAlert}
                             badge={newFamilies}
                           />
@@ -449,7 +449,7 @@ export function AppShell({
                       {latestIncident.scanTarget}: {latestIncident.headline}
                     </div>
                   ) : (
-                    <div className="text-sm text-muted-foreground">{dashboard?.groups.length ?? 0} threads tracked</div>
+                    <div className="text-sm text-muted-foreground">{dashboard?.groups.length ?? 0} finding families tracked</div>
                   )}
                 </div>
                 <Button variant="default" onClick={onOpenPalette}>

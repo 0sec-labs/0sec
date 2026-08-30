@@ -252,6 +252,8 @@ export interface PipelineReport {
   };
   findings: Finding[];
   warnings: Array<{ stage: string; message: string }>;
+  /** Primary research failed; report findings are partial and not a clean verdict. */
+  researchFailed?: boolean;
   /**
    * True when the run terminated early because the shared per-scan cost
    * ceiling (`--cost-ceiling` / 0SEC_COST_CEILING_USD) was reached —
@@ -1203,6 +1205,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   const emit: ScanListener = (opts.onEvent as ScanListener) ?? (() => {});
   const startTime = Date.now();
   const warnings: Array<{ stage: string; message: string }> = [];
+  let researchFailed = false;
   let emittedScanCompleted = false;
 
   if (opts.runId && opts.resumeScanId && opts.runId !== opts.resumeScanId) {
@@ -1652,6 +1655,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
           {
             ...(packageStaticTarget ? { noGitIgnore: true } : {}),
             ...(changedOnlyPaths ? { paths: changedOnlyPaths } : {}),
+            ...(changedOnlyPaths && opts.diffBase ? { diffBase: opts.diffBase } : {}),
             ...(reviewSubsystemPaths ? { paths: reviewSubsystemPaths } : {}),
           },
         );
@@ -2109,6 +2113,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        researchFailed = true;
         warnings.push({ stage: "research", message: `AI analysis failed: ${msg}` });
         logPipelineEvent("research", "warning", { message: `AI analysis failed: ${msg}` });
       }
@@ -2558,6 +2563,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       summary,
       findings: confirmedFindings,
       warnings,
+      ...(researchFailed ? { researchFailed: true } : {}),
       // Backwards-compat extras
       ...(costCeilingExceeded
         ? { costCeilingExceeded: true, exitReason: "cost_ceiling_exceeded" as const }
@@ -2582,10 +2588,13 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     // dashboard sees a fully-bracketed phase timeline.
     finishPhase();
 
-    emitPipelineScanCompleted(costCeilingExceeded ? "cost_exceeded" : "completed", {
-      findings: confirmedFindings.length,
-      summary: `${confirmedFindings.length} finding(s), ${semgrepFindings.length + npmAuditFindings.length} automated lead(s)`,
-    });
+    emitPipelineScanCompleted(
+      costCeilingExceeded ? "cost_exceeded" : researchFailed ? "failed" : "completed",
+      {
+        findings: confirmedFindings.length,
+        summary: `${confirmedFindings.length} finding(s), ${semgrepFindings.length + npmAuditFindings.length} automated lead(s)`,
+      },
+    );
 
     runState?.writeReport(report);
     return report;

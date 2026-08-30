@@ -11,6 +11,7 @@ import {
 } from "@0sec/core";
 import { z } from "zod";
 import { findingSchema, formatZodError } from "./schemas.js";
+import { loadFindingFocus } from "../finding-focus.js";
 
 type FixRuntimeType = Extract<RuntimeType, "api">;
 
@@ -19,7 +20,9 @@ const FIX_RUNTIMES: Record<FixRuntimeType, true> = {
 };
 
 interface FixOptions {
-  finding: string;
+  finding?: string;
+  findingId?: string;
+  dbPath?: string;
   verificationResult?: string;
   testCommand: string;
   runtime: string;
@@ -74,6 +77,22 @@ async function loadVerificationResult(path: string): Promise<Record<string, unkn
   }
   return parsed.data;
 }
+async function resolveFixFinding(opts: FixOptions): Promise<Finding> {
+  const findingPath = opts.finding?.trim();
+  const findingId = opts.findingId?.trim();
+  if (findingPath && findingId) {
+    throw new Error("Pass exactly one of --finding <path> or --finding-id <id>.");
+  }
+  if (!findingPath && !findingId) {
+    throw new Error("Pass one of --finding <path> or --finding-id <id>.");
+  }
+  if (opts.dbPath && !findingId) {
+    throw new Error("--db-path is only valid with --finding-id.");
+  }
+  return findingPath
+    ? loadFinding(findingPath)
+    : loadFindingFocus(findingId!, { dbPath: opts.dbPath }).finding;
+}
 
 function selectedRuntime(value: string): FixRuntimeType {
   const resolved = value === "auto" ? "api" : value;
@@ -123,7 +142,9 @@ export function registerFixCommand(program: Command): void {
     .command("fix")
     .description("Generate, source-retest, and optionally apply a scoped fix for one reproduced source finding")
     .argument("<repo>", "Clean local Git worktree containing the affected source file")
-    .requiredOption("--finding <path>", "Path to finding JSON with verificationSpec")
+    .option("--finding <path>", "Path to an external finding JSON with verificationSpec")
+    .option("--finding-id <id>", "Persisted finding ID (full ID or unique prefix)")
+    .option("--db-path <path>", "Database containing --finding-id")
     .option("--verification-result <path>", "Optional verification_result JSON from `0sec verify`; required when the finding does not already carry one")
     .requiredOption("--test-command <command>", "Explicit regression command to run in the isolated candidate worktree")
     .option("--runtime <runtime>", "Fix runtime: auto or api", "auto")
@@ -139,7 +160,7 @@ export function registerFixCommand(program: Command): void {
       const timeout = parsePositiveInteger(opts.timeout, "--timeout");
       const testTimeoutMs = parsePositiveInteger(opts.testTimeout, "--test-timeout");
       const maxAttempts = parsePositiveInteger(opts.maxAttempts, "--max-attempts");
-      const finding = await loadFinding(opts.finding);
+      const finding = await resolveFixFinding(opts);
       if (opts.verificationResult) {
         Object.assign(finding as unknown as Record<string, unknown>, {
           verification_result: await loadVerificationResult(opts.verificationResult),

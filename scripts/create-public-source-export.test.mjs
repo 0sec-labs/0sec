@@ -37,7 +37,6 @@ test("public source export contains build inputs and excludes private material",
       "scripts/bundle-cli.mjs",
       "LICENSE-MIT",
       "scripts/dist-package-lock.json",
-      "scripts/docker-contract.test.mjs",
       "scripts/runtime-lock.test.mjs",
       ".github/workflows/public-pr.yml",
       "scripts/ci-runner-bootstrap.sh",
@@ -85,7 +84,7 @@ test("public source export contains build inputs and excludes private material",
     const publicGitignore = await readFile(join(outputDir, ".gitignore"), "utf8");
     assert.doesNotMatch(
       publicGitignore,
-      /release-staging|marketing|positioning|dist-npm/i,
+      /release-staging|marketing|positioning/i,
       "public ignore rules must not preserve private release-planning paths",
     );
 

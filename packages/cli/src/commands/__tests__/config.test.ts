@@ -135,6 +135,22 @@ describe("config import", () => {
     expect(loadGlobalSettings(home)).toEqual(DEFAULT_SETTINGS);
   });
 
+  it("requires explicit approval before enabling unattended TUI lens evolution", () => {
+    const home = makeDir("cfg-home-");
+    const file = join(makeDir("cfg-in-"), "lens-evolution.json");
+    writeFileSync(file, JSON.stringify({
+      autoEvolveFinderLenses: true,
+      autoPromoteFinderLenses: true,
+    }));
+    const cap = capture();
+
+    runConfigImport(file, cap.deps({ homeDir: home, projectDir: makeDir("cfg-proj-"), scope: "global", yes: false }));
+    expect(process.exitCode).toBe(1);
+    expect(cap.err.join("\n")).toContain("autoEvolveFinderLenses: off -> on");
+    expect(cap.err.join("\n")).toContain("autoPromoteFinderLenses: off -> on");
+    expect(loadGlobalSettings(home)).toEqual(DEFAULT_SETTINGS);
+  });
+
   it("applies a security flip when --yes is passed and prints it", () => {
     const home = makeDir("cfg-home-");
     const file = join(makeDir("cfg-in-"), "danger.json");

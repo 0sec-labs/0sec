@@ -303,10 +303,16 @@ const TOOL_MAP: Record<string, AttackTechnique[]> = {
   prompt_layer_probe: chain("T1595"),
 
   // ── External scanners ──
+  // Per-scanner entries are kept (the run_* keys) even though the scanners are
+  // now one `run_scanner` tool: techniquesForEvent resolves a `run_scanner:<tool>`
+  // composite (or a recorded sub-tool) back to these, so per-scanner ATT&CK
+  // attribution survives the consolidation. Bare `run_scanner` maps to the
+  // generic active-scanning technique (same as scanner_tool_run).
   run_nmap: chain("T1046", "T1595.001", "T1595.002"),
   run_nuclei: chain("T1595.002", "T1595"),
   run_ffuf: chain("T1595.003", "T1595"),
   run_sqlmap: chain("T1190", "T1595.002"),
+  run_scanner: chain("T1595.002", "T1595"),
   scanner_tool_run: chain("T1595.002", "T1595"),
 
   // ── Local execution ──
@@ -425,6 +431,14 @@ export function techniquesForCategory(category: AttackCategory): AttackTechnique
  */
 export function techniquesForEvent(eventType: string, toolName?: string): AttackTechnique[] {
   if (toolName && TOOL_BEARING_EVENTS.has(eventType)) {
+    // `run_scanner:<sub>` (or just the sub name) resolves to the per-scanner
+    // entry so consolidating the four wrappers into one tool keeps per-scanner
+    // ATT&CK attribution: run_scanner:nmap -> run_nmap's chain.
+    if (toolName.startsWith("run_scanner:")) {
+      const sub = `run_${toolName.slice("run_scanner:".length)}`;
+      const bySub = TOOL_MAP[sub];
+      if (bySub) return bySub;
+    }
     const byTool = TOOL_MAP[toolName];
     if (byTool) return byTool;
   }

@@ -117,8 +117,8 @@ describe("findCommand", () => {
     expect(result.command).toBe("findings");
   });
 
-  it("recognises /launcher by alias home", () => {
-    const result = findCommand("/home");
+  it("recognises /run as the chat-owned engagement control alias", () => {
+    const result = findCommand("/run");
     expect(result.isSlash).toBe(true);
     expect(result.isKnown).toBe(true);
     expect(result.command).toBe("launcher");

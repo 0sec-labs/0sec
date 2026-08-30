@@ -39,6 +39,10 @@ import type { ScanReport } from "@0sec/shared";
 const agenticScanMock = vi.fn();
 const runPipelineMock = vi.fn();
 const createRuntimeMock = vi.fn();
+const loadAppsecFinderLensesMock = vi.fn(() => []);
+const runDeepReviewMock = vi.fn();
+const resolveOsecRunStorageMock = vi.fn(() => ({ runId: "test-run" }));
+const writeOsecRunReportMock = vi.fn();
 let eventBusListener:
   | { emit: (type: string, payload: unknown) => void }
   | null = null;
@@ -56,6 +60,16 @@ vi.mock("@0sec/core", () => ({
   runPipeline: runPipelineMock,
   createRuntime: createRuntimeMock,
   eventBus: eventBusMock,
+  loadAppsecFinderLenses: loadAppsecFinderLensesMock,
+}));
+
+vi.mock("../deep-review.js", () => ({
+  runDeepReview: runDeepReviewMock,
+}));
+
+vi.mock("@0sec/db", () => ({
+  resolveOsecRunStorage: resolveOsecRunStorageMock,
+  writeOsecRunReport: writeOsecRunReportMock,
 }));
 
 // `runUnified` calls `checkRuntimeAvailability` for terminal format. We
@@ -153,7 +167,10 @@ describe("runUnified — runtime gating", () => {
     agenticScanMock.mockReset();
     runPipelineMock.mockReset();
     createRuntimeMock.mockReset();
+    runDeepReviewMock.mockReset();
     eventBusListener = null;
+    resolveOsecRunStorageMock.mockClear();
+    writeOsecRunReportMock.mockClear();
     tracker = {};
     exitSpy = makeExitMock(tracker);
     errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -224,6 +241,70 @@ describe("runUnified — runtime gating", () => {
     });
     expect(createRuntimeMock).not.toHaveBeenCalled();
     expect(agenticScanMock).toHaveBeenCalledOnce();
+  });
+
+  it("routes a source engagement through the lens strategy inside the unified runner", async () => {
+    runDeepReviewMock.mockResolvedValueOnce({
+      exitCode: 0,
+      report: {
+        ...cleanReport({ target: "/repo", scanDepth: "deep" }),
+        findings: [],
+      },
+      result: { mode: "deep_review" },
+    });
+
+    await runUnified({
+      target: "/repo",
+      targetType: "source-code",
+      reviewStrategy: "lenses",
+      depth: "deep",
+      format: "json",
+      runtime: "auto",
+      timeout: 30000,
+      verbose: false,
+    });
+
+    expect(runDeepReviewMock).toHaveBeenCalledWith(expect.objectContaining({
+      target: "/repo",
+      runtime: "auto",
+      timeoutMs: 30000,
+    }));
+    expect(writeOsecRunReportMock).toHaveBeenCalledOnce();
+    expect(runPipelineMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a findings outcome to the hosting TUI instead of terminating its process", async () => {
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    const sessionUi = {
+      onEvent: vi.fn(),
+      setReport: vi.fn(),
+      waitForExit: vi.fn().mockResolvedValue(undefined),
+    };
+    try {
+      agenticScanMock.mockResolvedValueOnce(cleanReport({
+        summary: { ...emptySummary(), high: 1, totalFindings: 1 },
+      }));
+      await runUnified({
+        target: "https://example.com",
+        targetType: "url",
+        depth: "default",
+        format: "terminal",
+        runtime: "auto",
+        timeout: 30000,
+        verbose: false,
+        sessionUiFactory: async () => sessionUi,
+      });
+      expect(sessionUi.setReport).toHaveBeenCalledOnce();
+      expect(tracker.firstCode).toBeUndefined();
+    } finally {
+      if (stdoutDescriptor) Object.defineProperty(process.stdout, "isTTY", stdoutDescriptor);
+      else Reflect.deleteProperty(process.stdout, "isTTY");
+      if (stdinDescriptor) Object.defineProperty(process.stdin, "isTTY", stdinDescriptor);
+      else Reflect.deleteProperty(process.stdin, "isTTY");
+    }
   });
 
   it("skips the Codex CLI availability probe when direct ChatGPT Codex auth is configured", async () => {

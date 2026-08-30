@@ -81,6 +81,13 @@ describe("selectProfileLenses", () => {
     },
   );
 
+  it("uses the invocation snapshot for a default-profile review", () => {
+    const snapshot = tagged("newly-promoted");
+    const result = selectProfileLenses(undefined, SETS, snapshot);
+    expect(result.finderLenses).toBe(snapshot);
+    expect(result.finderLenses.map((lens) => lens.id)).toEqual(["newly-promoted"]);
+  });
+
   it("ships a non-empty default verify set (makeMultiLensVerifier requires ≥1)", () => {
     expect(defaultVerifyLenses.length).toBeGreaterThan(0);
     expect(defaultFinderLenses.length).toBeGreaterThan(0);
@@ -556,10 +563,11 @@ describe("runDeepReview — seedless lens-driven review", () => {
     ]);
   });
 
-  it("falls back to the default lens set for a non-onchain profile", async () => {
+  it("falls back to a fresh default lens snapshot for a non-onchain profile", async () => {
     await runDeepReview({ target: "/repo", profile: "linux-kernel" });
     const opts = runHuntScanMock.mock.calls[0]![0];
-    expect(opts.lenses).toBe(defaultFinderLenses);
+    expect(opts.lenses).toEqual(defaultFinderLenses);
+    expect(opts.lenses).not.toBe(defaultFinderLenses);
     expect((makeMultiLensVerifierMock.mock.calls[0] as unknown[])[0]).toBe(defaultVerifyLenses);
   });
 
@@ -581,13 +589,14 @@ describe("runDeepReview — seedless lens-driven review", () => {
     expect((makeMultiLensVerifierMock.mock.calls[0] as unknown[])[0]).toBe(defaultVerifyLenses);
   });
 
-  it("B3: default profile on a NATIVE (C) target keeps the full default finder set (memory-safety primary)", async () => {
+  it("B3: default profile on a NATIVE (C) target keeps the full invocation snapshot (memory-safety primary)", async () => {
     collectScopeFilesMock.mockReturnValue(["/proj/src/parser.c", "/proj/include/parser.h"]);
     countScopeFilesUpToMock.mockReturnValue(2);
     await runDeepReview({ target: "/proj" }); // default fall-through, native tree
     const opts = runHuntScanMock.mock.calls[0]![0];
-    expect(opts.lenses).toBe(defaultFinderLenses); // same reference — unchanged
-    expect((opts.lenses as { id: string }[]).map((l) => l.id)).toContain("memory-safety");
+    expect(opts.lenses).toEqual(defaultFinderLenses);
+    expect(opts.lenses).not.toBe(defaultFinderLenses);
+    expect((opts.lenses as { id: string }[]).map((lens) => lens.id)).toContain("memory-safety");
   });
 
   it("B3 REGRESSION: on-chain profiles are NOT stack-adjusted even on managed-looking files", async () => {

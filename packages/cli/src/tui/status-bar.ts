@@ -34,6 +34,7 @@ export type StatusSegmentKind =
   | "model"
   | "effort"
   | "mode"
+  | "evolution"
   | "cwd"
   | "branch"
   | "dirty"
@@ -42,7 +43,6 @@ export type StatusSegmentKind =
   | "context"
   | "meter"
   | "plan";
-
 /** Where the model name is surfaced. Mirrors `TuiSettings["modelDisplay"]`; the
  *  bar shows the model only for "statusbar" (and for `undefined`, the pre-setting
  *  default), and drops it for "message" (chat-screen draws it) and "off". */
@@ -61,6 +61,7 @@ export type StatusColorRole =
   | "model"
   | "effort"
   | "mode"
+  | "evolution"
   | "cwd"
   | "branch"
   | "dirty"
@@ -95,6 +96,8 @@ export interface StatusBarInput {
   /** Autonomy mode label already humanized, e.g. "Standard". */
   mode?: string;
   cwd?: string;
+  /** TUI-owned self-evolution state; omitted when the watcher is disabled. */
+  evolution?: string;
   /** Home directory, used to abbreviate cwd to a leading "~". */
   home?: string;
   branch?: string | null;
@@ -168,6 +171,7 @@ const PRIORITY: Record<StatusSegmentKind, number> = {
   meter: 6,
   branch: 7,
   mode: 8,
+  evolution: 8,
   model: 0,
 };
 
@@ -176,6 +180,7 @@ const ORDER: StatusSegmentKind[] = [
   "model",
   "effort",
   "mode",
+  "evolution",
   "cwd",
   "branch",
   "dirty",
@@ -196,6 +201,7 @@ const ICON: Record<StatusSegmentKind, string> = {
   model: "◆",
   effort: "◇",
   mode: "●",
+  evolution: "",
   cwd: "▸",
   branch: "⎇",
   dirty: "±",
@@ -211,6 +217,7 @@ const COLOR_ROLE: Record<StatusSegmentKind, StatusColorRole> = {
   model: "model",
   effort: "effort",
   mode: "mode",
+  evolution: "evolution",
   cwd: "cwd",
   branch: "branch",
   dirty: "dirty",
@@ -386,6 +393,9 @@ export function buildStatusSegments(input: StatusBarInput): StatusSegment[] {
 
   const mode = label(input.mode);
   if (mode) texts.set("mode", mode);
+
+  const evolution = label(input.evolution);
+  if (evolution) texts.set("evolution", evolution);
 
   const cwd = label(input.cwd);
   if (cwd) texts.set("cwd", abbreviateHomePath(cwd, input.home));

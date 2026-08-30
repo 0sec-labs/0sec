@@ -161,6 +161,7 @@ export type DashboardResponse = {
 };
 
 export type FindingFamilyResponse = {
+  consoleCommand: string;
   fingerprint: string;
   case: CaseSummary | null;
   latest: FindingRecord;

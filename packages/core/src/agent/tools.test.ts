@@ -187,20 +187,16 @@ describe("getToolsForRole", () => {
     process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
     for (const role of ["discovery", "attack"]) {
       const names = getToolsForRole(role, { allowScanners: true }).map((t) => t.name);
-      expect(names).toContain("run_sqlmap");
-      expect(names).toContain("run_nmap");
-      expect(names).toContain("run_ffuf");
-      expect(names).toContain("run_nuclei");
+      expect(names).toContain("run_scanner");
     }
   });
 
-  it("includes scanner wrappers in the audit/review everything-set only with allowScanners", () => {
+  it("includes the scanner tool in the audit/review everything-set only with allowScanners", () => {
     process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
     const off = getToolsForRole("audit").map((t) => t.name);
-    expect(off).not.toContain("run_sqlmap");
+    expect(off).not.toContain("run_scanner");
     const on = getToolsForRole("audit", { allowScanners: true }).map((t) => t.name);
-    expect(on).toContain("run_sqlmap");
-    expect(on).toContain("run_nuclei");
+    expect(on).toContain("run_scanner");
   });
 
   // ── Cloud-surface tools (0sec#925) — default OFF, opt-in ──
@@ -3034,17 +3030,17 @@ describe("ToolExecutor — structured scanner wrappers (0sec#555)", () => {
     return ctx;
   }
 
-  for (const tool of ["run_sqlmap", "run_nmap", "run_ffuf", "run_nuclei"]) {
-    it(`${tool} is hard-refused when allowScanners is unset`, async () => {
+  for (const tool of ["sqlmap", "nmap", "ffuf", "nuclei"]) {
+    it(`run_scanner ${tool} is hard-refused when allowScanners is unset`, async () => {
       const ctx = await makeCtx({ allowScanners: false });
       const ex = new ToolExecutor(ctx, null);
-      const args =
-        tool === "run_ffuf"
+      const extra =
+        tool === "ffuf"
           ? { url: "https://api.example.com/FUZZ", wordlist: "/tmp/w.txt" }
-          : tool === "run_nmap" || tool === "run_nuclei"
+          : tool === "nmap" || tool === "nuclei"
             ? { target: "api.example.com" }
             : { url: "https://api.example.com/?id=1" };
-      const result = await ex.execute({ name: tool, arguments: args });
+      const result = await ex.execute({ name: "run_scanner", arguments: { tool, ...extra } });
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/--allow-scanners/);
     });
@@ -3062,8 +3058,9 @@ describe("ToolExecutor — structured scanner wrappers (0sec#555)", () => {
     };
     const ex = new ToolExecutor(ctx, null);
     const result = await ex.execute({
-      name: "run_sqlmap",
-      arguments: { url: "https://api.example.com/?id=1" },
+      name: "run_scanner",
+      arguments: {
+        tool: "sqlmap", url: "https://api.example.com/?id=1" },
     });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/no engagement scope|deny-by-default/i);
@@ -3073,8 +3070,9 @@ describe("ToolExecutor — structured scanner wrappers (0sec#555)", () => {
     const ctx = await makeCtx({ allowScanners: true });
     const ex = new ToolExecutor(ctx, null);
     const result = await ex.execute({
-      name: "run_sqlmap",
-      arguments: { url: "https://evil.attacker.test/?id=1" },
+      name: "run_scanner",
+      arguments: {
+        tool: "sqlmap", url: "https://evil.attacker.test/?id=1" },
     });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/out-of-scope/);
@@ -3084,8 +3082,9 @@ describe("ToolExecutor — structured scanner wrappers (0sec#555)", () => {
     const ctx = await makeCtx({ allowScanners: true });
     const ex = new ToolExecutor(ctx, null);
     const result = await ex.execute({
-      name: "run_nmap",
-      arguments: { target: "evil.attacker.test" },
+      name: "run_scanner",
+      arguments: {
+        tool: "nmap", target: "evil.attacker.test" },
     });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/out-of-scope/);
@@ -3095,8 +3094,9 @@ describe("ToolExecutor — structured scanner wrappers (0sec#555)", () => {
     const ctx = await makeCtx({ allowScanners: true });
     const ex = new ToolExecutor(ctx, null);
     const result = await ex.execute({
-      name: "run_ffuf",
-      arguments: { url: "https://api.example.com/", wordlist: "/tmp/w.txt" },
+      name: "run_scanner",
+      arguments: {
+        tool: "ffuf", url: "https://api.example.com/", wordlist: "/tmp/w.txt" },
     });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/FUZZ/);
@@ -3111,8 +3111,9 @@ describe("ToolExecutor — structured scanner wrappers (0sec#555)", () => {
     const ctx = await makeCtx({ allowScanners: true });
     const ex = new ToolExecutor(ctx, null);
     const result = await ex.execute({
-      name: "run_sqlmap",
-      arguments: { url: "https://api.example.com/?id=1", timeout: 2 },
+      name: "run_scanner",
+      arguments: {
+        tool: "sqlmap", url: "https://api.example.com/?id=1", timeout: 2 },
     });
     expect(result.success).toBe(true);
     const output = result.output as { skipped?: boolean; result?: { tool: string } };

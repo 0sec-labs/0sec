@@ -29,7 +29,7 @@ const WORKFLOW_COLUMNS: Array<{
   {
     status: "backlog",
     label: "Backlog",
-    description: "New threads discovered by the pipeline.",
+    description: "New finding families discovered by the pipeline.",
   },
   {
     status: "todo",
@@ -122,10 +122,10 @@ export function FindingWorkflowBoard({
     <Card className="overflow-hidden">
       <CardHeader className="border-b border-border">
         <div>
-          <CardEyebrow>Thread board</CardEyebrow>
-          <CardTitle className="mt-2">Thread workflow board</CardTitle>
+          <CardEyebrow>Finding board</CardEyebrow>
+          <CardTitle className="mt-2">Finding workflow board</CardTitle>
           <CardDescription>
-            Use this as a secondary workflow view for threads that need intervention.
+            Use this secondary view only when the queue does not make the next action clear.
           </CardDescription>
         </div>
       </CardHeader>
@@ -218,7 +218,7 @@ function WorkflowColumn({
 
         {groups.length === 0 ? (
           <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-border/70 bg-background/70 px-4 py-8 text-center text-xs text-muted-foreground">
-            Drop a thread here.
+            Drop a finding family here.
           </div>
         ) : null}
       </div>

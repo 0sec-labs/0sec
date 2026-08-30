@@ -34,12 +34,11 @@
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
-0
+export PATH="$HOME/.0sec/bin:$PATH"
+0 --help
 ```
-The verified binary is installed to `~/.0sec/bin`. Prefer it when you want no
-Node/Bun dependency. The optional `0sec-cli` npm launcher downloads the matching
-verified release binary on first invocation when it is available on npm; use the
-installer above if the registry does not yet offer it.
+The verified binary is installed to `~/.0sec/bin` with no Node/Bun dependency.
+Add the `export` line to your shell profile to make `0` available in future shells.
 
 <p align="center">
   <img src="assets/0sec-demo.gif" alt="0sec quickstart — a scan from start to finish" width="820">
@@ -62,12 +61,12 @@ Most AI pentesting harnesses and tools stop at the web app layer to find and cha
 | Runtime / OS / kernel | container escape, privesc, 0-day hunt |
 | Compiled binaries | no source → [`0verse`](0verse/README.md) |
 
-## Commands
+## Automation and research adapters
 
 | Task | Commands |
 | --- | --- |
 | Pentest web / AI-LLM / MCP | `scan`, `eval`, `agent-assure` |
-| Review source / packages / kernel | `review`, `file-review`, `deep-review`, `audit` |
+| Review source / packages / kernel | `review`, `file-review`, `audit` |
 | Recon an attack surface | `recon`, `js-recon`, `npm-discovery`, `intel` |
 | Hunt a bug class / kernel variants | `hunt`, `kernel`, `cve` |
 | Work with evidence | `findings`, `history`, `resume`, `replay`, `verify`, `disclose` |
@@ -76,6 +75,15 @@ Most AI pentesting harnesses and tools stop at the web app layer to find and cha
 | Integrate | `mcp-server`, `console`, `tui`, `dashboard` |
 
 Run `0 --help` for the rest. Full docs: **[docs.0.security](https://docs.0.security)**.
+
+### Primary workflow
+
+Run `0` to open the primary OpenTUI chat. Type `/run` to open its engagement
+control pane, then enter a URL, a local source path, a git URL, or an explicit
+package target (`npm:`, `pypi:`, `cargo:`, `oci:`). The pane shows the resolved
+engagement before it runs it; deep source engagements use the validated
+finder-lens strategy. Specialized CLI commands remain available for automation
+and research, but they are not separate primary TUI modes.
 
 <p align="center">
   <img src="assets/demo-commands.gif" alt="0sec console command palette" width="820"><br/>

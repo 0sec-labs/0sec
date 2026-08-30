@@ -12,6 +12,17 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+### Added
+
+- `0sec lens-synth --watch --promote` now evolves additive appsec finder lenses
+  from curated, corpus-gated misses into a user-owned registry. Promotions and
+  rollbacks are hash-linked and hot-load only for future source engagements;
+  active engagements remain pinned.
+- `0` and `0sec tui` retain chat as the primary OpenTUI surface. Chat-owned
+  `/run` opens one explicit-target engagement pane rather than separate
+  scan/audit/review/deep-review launch modes; a deep source engagement uses the
+  current validated finder-lens strategy through the shared unified runner.
+
 ## [0.15.0] - 2026-08-30
 
 ### Added

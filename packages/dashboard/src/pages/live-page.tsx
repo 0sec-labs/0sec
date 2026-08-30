@@ -880,7 +880,7 @@ function HuntLane({
 
         <div className="mt-auto pt-2">
           <Button asChild variant="ghost" size="sm">
-            <NavLink to="/threads">Open thread console</NavLink>
+            <NavLink to="/findings">Open findings workspace</NavLink>
           </Button>
         </div>
       </CardContent>

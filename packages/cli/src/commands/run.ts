@@ -11,6 +11,8 @@ import type { CostBreakdownEntry } from "@0sec/core";
 import { formatAuditReport, formatReviewReport, formatReport, generatePdfReport } from "../formatters/index.js";
 import { buildShareUrl, checkRuntimeAvailability, getRuntimeAvailability } from "../utils.js";
 import { formatCrossValidatedLeads, type CrossValidatedLeadsSummary } from "./cross-validated-leads.js";
+import { resolveOsecRunStorage, writeOsecRunReport } from "@0sec/db";
+import { runDeepReview } from "./deep-review.js";
 
 interface ScanCompletedCost {
   cost_usd: number;
@@ -57,6 +59,11 @@ export interface RunOptions {
   format: OutputFormat;
   runtime: RuntimeMode;
   mode?: ScanMode;
+  /**
+   * Source review execution strategy. The primary control plane uses
+   * `lenses`, which is the validated self-evolving source-review path.
+   */
+  reviewStrategy?: "pipeline" | "lenses";
   timeout: number;
   verbose: boolean;
   dbPath?: string;
@@ -255,7 +262,8 @@ function toScanReport(report: any): ScanReport {
       durationMs: report.durationMs,
       summary: report.summary,
       findings: report.findings,
-      warnings: [],
+      warnings: report.warnings ?? [],
+      executionSuccessful: report.researchFailed ? false : undefined,
     };
   }
 
@@ -402,10 +410,37 @@ async function postFinalResultToCloud(report: unknown): Promise<void> {
         `[0sec cloud-sink] report POST ${url} returned ${res.status}: ${text.slice(0, 200)}\n`,
       );
     }
+
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[0sec cloud-sink] report POST ${url} failed: ${msg}\n`);
   }
+}
+/**
+ * A skipped lens review still needs a canonical terminal record so the unified
+ * session, formatter, and persistence paths do not fork around a missing
+ * report. Its nonzero runner exit code remains authoritative.
+ */
+function skippedLensReviewReport(target: string, message: string): ScanReport {
+  const now = new Date().toISOString();
+  return {
+    target,
+    scanDepth: "deep",
+    startedAt: now,
+    completedAt: now,
+    durationMs: 0,
+    summary: {
+      totalAttacks: 0,
+      totalFindings: 0,
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      info: 0,
+    },
+    findings: [],
+    warnings: [{ stage: "attack", message }],
+  };
 }
 
 export async function runUnified(opts: RunOptions): Promise<void> {
@@ -522,9 +557,8 @@ export async function runUnified(opts: RunOptions): Promise<void> {
         });
       } else {
         // Node fallback: plain stdout streaming (one tagged line per scan
-        // event). The full TUI is OpenTUI under Bun — install via
-        // `curl -fsSL .../install.sh | bash` (standalone binary) or
-        // `bun add -g 0sec-cli` to get it.
+        // event). The full TUI is OpenTUI under the standalone binary, installed
+        // with `curl -fsSL .../install.sh | bash`.
         const { renderScanStream } = await import("../ui/scan-stream.js");
         inkUI = renderScanStream({ version: VERSION, target, depth, mode });
       }
@@ -534,78 +568,115 @@ export async function runUnified(opts: RunOptions): Promise<void> {
   }
 
   try {
-    const report = opts.targetType === "url" || opts.targetType === "web-app"
-      ? await core.agenticScan({
-          config: {
-            target,
-            depth,
-            format,
-            runtime,
-            mode: opts.mode ?? "deep",
-            timeout,
-            verbose: opts.verbose,
-            apiKey: opts.apiKey,
-            model: opts.model,
-            repoPath: opts.repoPath,
-            auth: opts.auth,
-            apiSpecPath: opts.apiSpecPath,
-            race: opts.race,
-            egats: opts.egats,
-            costCeilingUsd: opts.costCeilingUsd,
-            scopeFile: opts.scopeFile,
-            rateLimit: opts.rateLimit,
-            allowScanners: opts.allowScanners,
-            attributionHeaders: opts.attributionHeaders,
-            attributionUaToken: opts.attributionUaToken,
-            engagementProfile: opts.engagementProfile,
-            wafEvasion: opts.wafEvasion,
-            dispatchMode: opts.dispatchMode,
-            httpAuditAllowedHosts: opts.httpAuditAllowedHosts,
-            httpAuditAllowedPaths: opts.httpAuditAllowedPaths,
-            httpAuditRateLimitRps: opts.httpAuditRateLimitRps,
-            httpAuditKillAfterSec: opts.httpAuditKillAfterSec,
-          },
-          dbPath: opts.dbPath,
-          onEvent: eventHandler,
-          getPendingUserMessages,
-          resumeScanId: opts.resumeScanId,
-        })
-      : await core.runPipeline({
+    let runnerExitCode = 0;
+    let report: unknown;
+
+    if (opts.targetType === "source-code" && opts.reviewStrategy === "lenses") {
+      eventHandler({
+        type: "stage:start",
+        stage: "source-analysis",
+        message: "capturing the validated finder-lens snapshot",
+      });
+      const outcome = await runDeepReview({
+        target,
+        profile: opts.reviewProfile,
+        subsystem: opts.subsystem,
+        models: opts.model ? [opts.model] : undefined,
+        runtime,
+        timeoutMs: timeout,
+        costCeilingUsd: opts.costCeilingUsd,
+        log: (message) => eventHandler({
+          type: "stage:start",
+          stage: "attack",
+          message,
+        }),
+      });
+      runnerExitCode = outcome.exitCode;
+      const lensReport = outcome.report ?? skippedLensReviewReport(
+        target,
+        typeof outcome.result === "object" && outcome.result !== null && "note" in outcome.result
+          ? String(outcome.result.note)
+          : `lens review ended with exit code ${outcome.exitCode}`,
+      );
+      report = lensReport;
+      writeOsecRunReport(
+        resolveOsecRunStorage({ ...(opts.dbPath ? { dbPath: opts.dbPath } : {}) }),
+        lensReport,
+      );
+      eventHandler({
+        type: "stage:end",
+        stage: "attack",
+        message: outcome.exitCode === 0
+          ? "validated finder-lens review completed"
+          : `validated finder-lens review ended with exit code ${outcome.exitCode}`,
+      });
+    } else if (opts.targetType === "url" || opts.targetType === "web-app") {
+      report = await core.agenticScan({
+        config: {
           target,
-          targetType: opts.targetType,
-          resumeScanId: opts.resumeScanId,
-          diffBase: opts.diffBase,
-          changedOnly: opts.changedOnly,
-          priorFindings: opts.priorFindings,
           depth,
           format,
           runtime,
-          onEvent: eventHandler,
-          dbPath: opts.dbPath,
+          mode: opts.mode ?? "deep",
+          timeout,
+          verbose: opts.verbose,
           apiKey: opts.apiKey,
           model: opts.model,
-          timeout,
-          packageVersion: opts.packageVersion,
-          // Hard per-scan cost ceiling. Dropped here historically, so
-          // `0sec review` / `0sec audit` resolved
-          // 0SEC_COST_CEILING_USD (e.g. the $3 0review ceiling) and then
-          // ran the whole pipeline UNCAPPED — prod 0review scans landed at
-          // $4.99 / $6.36. The agenticScan branch above already threads it.
+          repoPath: opts.repoPath,
+          auth: opts.auth,
+          apiSpecPath: opts.apiSpecPath,
+          race: opts.race,
+          egats: opts.egats,
           costCeilingUsd: opts.costCeilingUsd,
-          reviewProfile: opts.reviewProfile,
-          reviewPackageEcosystem: opts.reviewPackageEcosystem,
-          subsystem: opts.subsystem,
-          hypothesis: opts.hypothesis,
-          conversation: opts.conversation,
-          // External leads are prepended to the agent worklist. `seedOnly`
-          // skips static prioritisation when the operator explicitly trusts
-          // the configured producer.
-          seedFindings: opts.seedFindings,
-          seedOnly: opts.seedOnly,
-          npmDynamicDiscovery: opts.npmDynamicDiscovery,
-        } as any);
+          scopeFile: opts.scopeFile,
+          rateLimit: opts.rateLimit,
+          allowScanners: opts.allowScanners,
+          attributionHeaders: opts.attributionHeaders,
+          attributionUaToken: opts.attributionUaToken,
+          engagementProfile: opts.engagementProfile,
+          wafEvasion: opts.wafEvasion,
+          dispatchMode: opts.dispatchMode,
+          httpAuditAllowedHosts: opts.httpAuditAllowedHosts,
+          httpAuditAllowedPaths: opts.httpAuditAllowedPaths,
+          httpAuditRateLimitRps: opts.httpAuditRateLimitRps,
+          httpAuditKillAfterSec: opts.httpAuditKillAfterSec,
+        },
+        dbPath: opts.dbPath,
+        onEvent: eventHandler,
+        getPendingUserMessages,
+        resumeScanId: opts.resumeScanId,
+      });
+    } else {
+      report = await core.runPipeline({
+        target,
+        targetType: opts.targetType,
+        resumeScanId: opts.resumeScanId,
+        diffBase: opts.diffBase,
+        changedOnly: opts.changedOnly,
+        priorFindings: opts.priorFindings,
+        depth,
+        format,
+        runtime,
+        onEvent: eventHandler,
+        dbPath: opts.dbPath,
+        apiKey: opts.apiKey,
+        model: opts.model,
+        timeout,
+        packageVersion: opts.packageVersion,
+        costCeilingUsd: opts.costCeilingUsd,
+        reviewProfile: opts.reviewProfile,
+        reviewPackageEcosystem: opts.reviewPackageEcosystem,
+        subsystem: opts.subsystem,
+        hypothesis: opts.hypothesis,
+        conversation: opts.conversation,
+        seedFindings: opts.seedFindings,
+        seedOnly: opts.seedOnly,
+        npmDynamicDiscovery: opts.npmDynamicDiscovery,
+      });
+    }
 
     const reportAny = report as any;
+    const canonicalReport = toScanReport(report);
 
     if (opts.targetType !== "url" && opts.targetType !== "web-app") {
       await postFinalResultToCloud(reportAny);
@@ -664,7 +735,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
     }
     unsubscribeCost();
 
-    let exitCode = 0;
+    let exitCode = runnerExitCode;
     const estimatedCostUsd = getEstimatedCost(reportAny);
     const usage = getUsage(reportAny);
 
@@ -734,16 +805,21 @@ export async function runUnified(opts: RunOptions): Promise<void> {
     // Cost ceiling abort from the live scan path: exit code 4 so operators
     // (CI, schedulers, cloud watchers) can distinguish a clean budget abort
     // from a normal completion or failure.
-    if ((report as ScanReport).costCeilingExceeded && exitCode === 0) {
+    if (canonicalReport.costCeilingExceeded && exitCode === 0) {
       console.error(
         chalk.yellow(
-          `Scan aborted: cost ceiling exceeded. ${report.summary.totalFindings} partial finding(s) preserved.`,
+          `Scan aborted: cost ceiling exceeded. ${canonicalReport.summary.totalFindings} partial finding(s) preserved.`,
         ),
       );
       exitCode = 4;
     }
 
-    if (exitCode === 0 && (report.summary.critical > 0 || report.summary.high > 0)) {
+    if (reportAny.researchFailed && exitCode === 0) {
+      console.error(chalk.red("Review completed with partial static results because AI analysis failed."));
+      exitCode = 2;
+    }
+
+    if (exitCode === 0 && (canonicalReport.summary.critical > 0 || canonicalReport.summary.high > 0)) {
       exitCode = 1;
     }
 
@@ -753,9 +829,11 @@ export async function runUnified(opts: RunOptions): Promise<void> {
       exit_reason:
         exitCode === 4
           ? "cost_ceiling_exceeded"
-          : exitCode === 1
-            ? "findings"
-            : "completed",
+          : exitCode === 2
+            ? "error"
+            : exitCode === 1
+              ? "findings"
+              : "completed",
       target,
       targetType: getTargetType(reportAny, opts),
       runtime,
@@ -763,13 +841,13 @@ export async function runUnified(opts: RunOptions): Promise<void> {
       cost_usd: estimatedCostUsd,
       token_input: usage?.inputTokens,
       token_output: usage?.outputTokens,
-      finding_count: report.summary.totalFindings,
+      finding_count: canonicalReport.summary.totalFindings,
       estimatedCostUsd,
       usage,
-      summary: report.summary,
+      summary: canonicalReport.summary,
     });
 
-    if (exitCode !== 0) process.exit(exitCode);
+    if (exitCode !== 0 && !inkUI) process.exit(exitCode);
   } catch (err) {
     // Always release the cost-bus subscription so a long-lived
     // process (test runner, future REPL) doesn't leak sinks across

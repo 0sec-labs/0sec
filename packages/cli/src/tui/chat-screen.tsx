@@ -112,6 +112,10 @@ import {
   redactSecret,
   saveCredentials,
 } from "./credential-store.js";
+import {
+  connectionRecoveryForError,
+  type ConnectionRecovery,
+} from "./connection-recovery.js";
 import { VERSION } from "@0sec/shared";
 import {
   type TuiSettings,
@@ -411,6 +415,8 @@ function statusRoleColor(
       return theme.PRIMARY;
     case "mode":
       return modeColorFor(mode, theme);
+    case "evolution":
+      return theme.SUCCESS;
     case "cwd":
       return theme.INFO;
     case "branch":
@@ -456,13 +462,19 @@ export interface ChatScreenProps {
   onNavigate: (destination: ChatDestination, id?: string) => void;
   onExit: () => void;
   /**
+   * Opens the provider recovery screen after a recognized credential failure.
+   * Tool and target errors stay in the transcript instead of misrouting here.
+   */
+  onConnectionFailure?: (recovery: ConnectionRecovery) => void;
+  /**
    * A handle the coordinator populates with a function that submits an operator
    * message into the SAME composer-submit path a typed message takes (queue if a
-   * turn is in flight, otherwise send). Used by the finding-detail overlay's
-   * "Fix" action to route the fix intent through a normal agent turn without
-   * reaching into core tools. Null while the chat is unmounted.
+   * turn is in flight, otherwise send). Finding handoffs use this path so their
+   * evidence, approval gates, and transcript stay in one session.
    */
   submitHandle?: React.MutableRefObject<((text: string) => void) | null>;
+  /** Rebuild the live session after Connect saves a selected provider. */
+  reconnectHandle?: React.MutableRefObject<((providerId: string) => void) | null>;
   /**
    * The shell-level plugin-host manager, if the shell wired one. Its `current()`
    * host is handed to the console session so ENABLED marketplace plugins'
@@ -472,6 +484,8 @@ export interface ChatScreenProps {
    * live engagement. Absent → no plugin tools (the default).
    */
   pluginHostManager?: SessionPluginHostManager;
+  /** Compact status of the configured self-evolving finder-lens worker. */
+  evolutionStatus?: string;
 }
 
 
@@ -662,7 +676,19 @@ const STREAM_PRESENTATION_INTERVAL_MS = 33;
  * view can show anyway, and it bounds memory across a large child fleet. */
 const SUBAGENT_TRANSCRIPT_MAX = 300;
 
-export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle, pluginHostManager }: ChatScreenProps) {
+export function ChatScreen({
+  options,
+  onGoBack,
+  onNavigate,
+  onExit,
+  onConnectionFailure,
+  submitHandle,
+  reconnectHandle,
+  pluginHostManager,
+  evolutionStatus,
+}: ChatScreenProps) {
+  const connectionFailureRef = useRef(onConnectionFailure);
+  connectionFailureRef.current = onConnectionFailure;
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const entriesRef = useRef<ChatEntry[]>([]);
   entriesRef.current = entries;
@@ -1288,7 +1314,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         setEntries(entriesFromStoredMessages(resumeMessages));
       }
     } catch (error) {
-      setStartupError(error instanceof Error ? error.message : String(error));
+      const detail = error instanceof Error ? error.message : String(error);
+      setStartupError(detail);
+      const recovery = connectionRecoveryForError(detail);
+      if (recovery) connectionFailureRef.current?.(recovery);
     }
 
     return () => {
@@ -1344,6 +1373,68 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     setModelId(built.model);
     void previous.cleanup();
   }, [buildSession]);
+
+  const reconnectProvider = useCallback((providerId: string) => {
+    const provider = PROVIDERS.find((candidate) => candidate.id === providerId);
+    if (!provider) {
+      appendEntry({
+        kind: "error",
+        text: "provider reconnect failed",
+        detail: `Unknown provider '${providerId}'.`,
+        turn: turn.current,
+      });
+      return;
+    }
+    if (busyRef.current) {
+      appendEntry({
+        kind: "notice",
+        text: "provider saved; reconnect after the active turn finishes",
+        turn: turn.current,
+      });
+      return;
+    }
+
+    for (const envVar of provider.envVars) delete process.env[envVar];
+    process.env["0SEC_SELECTED_PROVIDER"] = provider.id;
+
+    const previous = sessionRef.current;
+    let built: { session: ConsoleSession; model: string };
+    try {
+      built = buildSession({
+        model: modelIdRef.current ?? options?.model ?? process.env["0SEC_MODEL"],
+        ...(previous ? { initialMessages: previous.messages } : {}),
+      });
+    } catch (error) {
+      appendEntry({
+        kind: "error",
+        text: `${provider.label} is not connected yet`,
+        detail: error instanceof Error ? error.message : String(error),
+        turn: turn.current,
+      });
+      return;
+    }
+
+    setSession(built.session);
+    setModelId(built.model);
+    setStartupError(null);
+    void previous?.cleanup();
+    appendEntry({
+      kind: "notice",
+      text: `Reconnected with ${provider.label}`,
+      detail: previous
+        ? `${previous.messages.length} prior message(s) carried into the new runtime.`
+        : "The provider is ready for a new conversation.",
+      turn: turn.current,
+    });
+  }, [appendEntry, buildSession, options?.model]);
+
+  useEffect(() => {
+    if (!reconnectHandle) return;
+    reconnectHandle.current = reconnectProvider;
+    return () => {
+      reconnectHandle.current = null;
+    };
+  }, [reconnectHandle, reconnectProvider]);
 
   useEffect(() => {
     const mgr = pluginHostManager;
@@ -2742,12 +2833,15 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           turn: currentTurn,
         });
       } else if (outcome.stopReason === "error") {
+        const detail = outcome.error ?? "The runtime reported an error but gave no message.";
         appendEntry({
           kind: "error",
           text: "turn failed",
-          detail: outcome.error ?? "The runtime reported an error but gave no message.",
+          detail,
           turn: currentTurn,
         });
+        const recovery = connectionRecoveryForError(detail);
+        if (recovery) onConnectionFailure?.(recovery);
       } else if (outcome.stopReason === "max_turn_tokens") {
         // Report the real numbers: "paused" plus a budget the operator can
         // see is far more actionable than a bare limit message.
@@ -2787,12 +2881,15 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         });
       }
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       appendEntry({
         kind: "error",
         text: "turn failed",
-        detail: error instanceof Error ? error.message : String(error),
+        detail,
         turn: currentTurn,
       });
+      const recovery = connectionRecoveryForError(detail);
+      if (recovery) onConnectionFailure?.(recovery);
       setTurnBudget(null);
     } finally {
       // Drop the controller before clearing `busy`, so Esc can never abort a
@@ -2880,6 +2977,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     busy,
     flushStreamPatches,
     queueStreamPatch,
+    onConnectionFailure,
     routeSlashCommand,
     session,
     settings.showTurnSummary,
@@ -3569,17 +3667,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // Parked messages are surfaced next to the working indicator, because that is
   // exactly where the operator is looking while they wait.
   const queueLabel = composerQueueLabel(queuedCount);
-  // The status bar is built from data the session actually reports: the
-  // resolved model id, the real git tree, and accumulated turn usage. No
-  // context percentage is produced, because no context-window size is
-  // available anywhere in the codebase and inventing one would be worse
-  // than omitting it.
-  // Built at every width now: the bottom bar is the only place this state
-  // appears, so a compact terminal still gets the degraded version rather
-  // than nothing (fitStatusSegments drops low-priority segments to fit).
+  // The header owns engagement posture: target, scope, session state, and the
+  // optional objective. Autonomy mode belongs beside model and workspace state
+  // in the bottom bar, where it is available without competing with the target.
   const statusSegments = buildStatusSegments({
     model: modelId ?? undefined,
     mode: modeLabel(mode),
+    evolution: evolutionStatus,
     cwd: process.cwd(),
     home: homedir(),
     branch: git?.isRepo ? git.branch ?? git.detachedSha : undefined,
@@ -3698,19 +3792,17 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // paddingX (folded into the sidebar layout), which an entry's own border must
   // live within. Shrinks to make room when a sidebar is shown.
   const transcriptWidth = sidebars.transcriptWidth;
-  // "0sec" is 4 cells; the mode label is right-sized to its own text. The
-  // OMP-style OBJECTIVE (the async "what am I working on" summary) sits at the
-  // TOP-RIGHT, just left of the mode, taking up to ~45% of the header when
-  // present; the engagement summary gets whatever remains.
-  const headerModeWidth = Math.min(10, Math.max(1, contentWidth - 8));
+  // "0sec" is 4 cells. The optional objective sits at the top-right; target,
+  // scope, and readiness take the remaining header cells. Autonomy mode lives
+  // in the bottom status bar rather than competing with engagement posture.
   const headerObjective = !compact && settings.showObjective ? objective.trim() : "";
   const headerObjectiveWidth = headerObjective
-    ? Math.max(0, Math.min(headerObjective.length, Math.floor((contentWidth - 4 - headerModeWidth) * 0.45)))
+    ? Math.max(0, Math.min(headerObjective.length, Math.floor((contentWidth - 4) * 0.45)))
     : 0;
-  const headerGapCells = headerObjectiveWidth > 0 ? 3 : 2;
+  const headerGapCells = headerObjectiveWidth > 0 ? 2 : 1;
   const headerEngagementWidth = Math.max(
     1,
-    contentWidth - 4 - headerModeWidth - headerObjectiveWidth - headerGapCells,
+    contentWidth - 4 - headerObjectiveWidth - headerGapCells,
   );
   // Relative ages need a clock, but the transcript must not repaint every
   // second just to age a label. Tick only while timestamps are enabled, and
@@ -4791,9 +4883,6 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
             <text fg={BRAND}>{fitTuiText(headerObjective, headerObjectiveWidth, { mode: "end" })}</text>
           </box>
         ) : null}
-        <box width={headerModeWidth} flexShrink={0} minWidth={0}>
-          <text fg={modeColor}>{fitTuiText(modeLabel(mode), headerModeWidth)}</text>
-        </box>
       </box>
 
       {empty && !reviewOpen ? (
@@ -4884,12 +4973,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
 
       {/*
         * The bottom bar is its own row BELOW the composer, not a second
-        * line inside it. The composer's placeholder already says "type to
-        * chat or / for commands"; repeating that verbatim underneath was
-        * pure noise. What goes here instead is state the operator cannot
-        * otherwise see — model, mode, working tree, counters — replaced by
-        * contextual keys only while an overlay is actually open, when the
-        * keys genuinely are the useful thing.
+        * line inside it. It carries environmental state the header does not:
+        * model, working tree, and counters. Autonomy mode is intentionally
+        * header-only; repeating it here made the idle screen noisy.
         */}
       {settings.showStatusBar ? (
         <box flexDirection="row" width="100%" minWidth={0} flexShrink={0} gap={statusGap}>

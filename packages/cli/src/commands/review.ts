@@ -287,6 +287,7 @@ export function registerReviewCommand(program: Command): void {
       }
 
       const branchFrom = opts.branchFrom as string | undefined;
+      const depth = (opts.depth as ScanDepth) ?? "default";
       await runUnified({
         target: repo,
         targetType: "source-code",
@@ -296,7 +297,8 @@ export function registerReviewCommand(program: Command): void {
         branchFromEntry: branchFrom !== undefined ? parseInt(branchFrom, 10) : undefined,
         diffBase: opts.diffBase as string | undefined,
         changedOnly: opts.changedOnly as boolean,
-        depth: (opts.depth as ScanDepth) ?? "default",
+        depth,
+        reviewStrategy: depth === "deep" ? "lenses" : "pipeline",
         format: (opts.format === "md" ? "markdown" : opts.format) as OutputFormat,
         runtime: (opts.runtime as RuntimeMode) ?? "auto",
         timeout: parseInt(opts.timeout as string, 10),

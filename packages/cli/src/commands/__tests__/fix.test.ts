@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { registerFixCommand } from "../fix.js";
 
 describe("fix command", () => {
-  it("requires an explicit regression command and exposes the reproduced-result bridge", () => {
+  it("accepts either an external artifact or a persisted finding id", () => {
     const program = new Command();
     registerFixCommand(program);
 
@@ -11,6 +11,8 @@ describe("fix command", () => {
     expect(fixCommand).toBeDefined();
     const help = fixCommand!.helpInformation();
     expect(help).toContain("--finding <path>");
+    expect(help).toContain("--finding-id <id>");
+    expect(help).toContain("--db-path <path>");
     expect(help).toContain("--verification-result <path>");
     expect(help).toContain("--test-command <command>");
     expect(help).toContain("--apply");

@@ -169,6 +169,16 @@ describe("buildStatusSegments", () => {
     ]);
   });
 
+  it("surfaces configured self-evolution after autonomy mode", () => {
+    const segments = buildStatusSegments({ model: "m", mode: "Standard", evolution: "evolve:auto" });
+    expect(kinds(segments)).toEqual(["model", "mode", "evolution"]);
+    expect(textOf(segments, "evolution")).toBe("evolve:auto");
+    expect(segments.find((segment) => segment.kind === "evolution")).toMatchObject({
+      colorRole: "evolution",
+      priority: 8,
+    });
+  });
+
   it("emits nothing for an empty input", () => {
     expect(buildStatusSegments({})).toEqual([]);
   });

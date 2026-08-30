@@ -16,7 +16,7 @@ import type { DashboardResponse, ScanRecord } from "@/types";
 
 type PaletteAction = {
   id: string;
-  group: "Actions" | "Pages" | "Threads" | "Runs";
+  group: "Actions" | "Pages" | "Findings" | "Runs";
   label: string;
   meta: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -25,7 +25,7 @@ type PaletteAction = {
   shortcut?: string;
 };
 
-const GROUPS: PaletteAction["group"][] = ["Actions", "Pages", "Threads", "Runs"];
+const GROUPS: PaletteAction["group"][] = ["Actions", "Pages", "Findings", "Runs"];
 
 export function CommandPalette({
   open,
@@ -71,13 +71,13 @@ export function CommandPalette({
   const items = useMemo<PaletteAction[]>(() => {
     const base: PaletteAction[] = [
       {
-        id: "page-threads",
+        id: "page-findings",
         group: "Pages",
-        label: "Open thread console",
-        meta: "Threads, review, evidence",
+        label: "Open findings workspace",
+        meta: "Evidence, chat handoff, disposition",
         icon: FileSearch,
-        keywords: ["threads console review evidence operator"],
-        run: () => navigate("/threads"),
+        keywords: ["findings families review evidence console handoff"],
+        run: () => navigate("/findings"),
       },
       {
         id: "page-control",
@@ -104,8 +104,8 @@ export function CommandPalette({
         {
           id: "triage-accept",
           group: "Actions",
-          label: "Accept selected thread",
-          meta: "Mark as accepted",
+          label: "Accept selected finding",
+          meta: "Mark the finding family as accepted",
           icon: ShieldCheck,
           keywords: ["accept finding triage"],
           shortcut: "Enter",
@@ -117,8 +117,8 @@ export function CommandPalette({
         {
           id: "triage-suppress",
           group: "Actions",
-          label: "Suppress selected thread",
-          meta: "Mark as suppressed",
+          label: "Suppress selected finding",
+          meta: "Suppress the finding family",
           icon: ShieldOff,
           keywords: ["suppress finding triage"],
           shortcut: "Shift+S",
@@ -145,12 +145,12 @@ export function CommandPalette({
     for (const group of dashboard?.groups.slice(0, 14) ?? []) {
       base.push({
         id: `finding-${group.fingerprint}`,
-        group: "Threads",
+        group: "Findings",
         label: group.latest.title,
         meta: `${group.latest.severity} · ${group.latest.triageStatus}`,
         icon: FileSearch,
         keywords: [group.latest.title, group.latest.category, group.latest.severity, group.latest.triageStatus],
-        run: () => navigate(`/threads/${group.fingerprint}`),
+        run: () => navigate(`/findings/${group.fingerprint}`),
       });
     }
 
@@ -204,7 +204,7 @@ export function CommandPalette({
             Mission command
           </DialogTitle>
           <DialogDescription className="pt-2 text-sm text-muted-foreground">
-            Search operations views, threads, runs, and control actions.
+            Search operations views, findings, runs, and control actions.
           </DialogDescription>
         </DialogHeader>
 
@@ -213,7 +213,7 @@ export function CommandPalette({
             autoFocus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Jump to a page, run, thread, or action"
+            placeholder="Jump to a page, run, finding, or action"
           />
         </div>
 

@@ -64,6 +64,20 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
+## This repository's dogfood lane
+
+0sec runs the same diff-aware review against its own trusted `main` delta in
+`.github/workflows/dogfood-review.yml`. The workflow starts only after
+`0sec: Main` succeeds on `main`; it never runs model-backed review against PR
+code or a fork. It builds `dist/0sec.js`, reviews `HEAD^..HEAD` with
+`--changed-only --format sarif`, uploads the SARIF to code scanning, and keeps a
+14-day evidence artifact.
+
+Set the repository secret `DOGFOOD_OPENAI_API_KEY` before enabling the lane.
+It uses direct OpenAI `gpt-5.6-luna` through the Responses API, with a hard
+`$2` per-run review ceiling. It produces findings only; it never invokes `fix`,
+`--apply`, or PR emission.
+
 ## See also
 
 - [White-Box Mode](/white-box-mode/) — what the source review does.

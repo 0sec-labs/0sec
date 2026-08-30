@@ -7,13 +7,20 @@
  * WIRING (that defaultFinderLenses unions these); this asserts the DATA.
  */
 
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  appsecArchetypeDigest,
   appsecArchetypeToFinderLens,
   appsecArchetypesPath,
+  appsecLensLedgerEntryDigest,
   loadAppsecArchetypes,
   loadAppsecFinderLenses,
+  type RawAppsecArchetype,
 } from "./appsec-catalog.js";
+import type { FinderLens } from "./hunt-scan.js";
 
 /** The 5 seed lens ids — the coverage classes the four generic finder lenses missed. */
 const EXPECTED_LENS_IDS = [
@@ -23,6 +30,21 @@ const EXPECTED_LENS_IDS = [
   "sso-trust",
   "resource-exhaustion-dos",
 ];
+
+const REGISTRY_ENV = "0SEC_APPSEC_LENS_REGISTRY";
+const originalRegistryPath = process.env[REGISTRY_ENV];
+let isolatedRegistryDirectory: string;
+
+beforeEach(() => {
+  isolatedRegistryDirectory = mkdtempSync(join(tmpdir(), "0sec-appsec-registry-"));
+  process.env[REGISTRY_ENV] = join(isolatedRegistryDirectory, "overlay.json");
+});
+
+afterEach(() => {
+  rmSync(isolatedRegistryDirectory, { recursive: true, force: true });
+  if (originalRegistryPath === undefined) delete process.env[REGISTRY_ENV];
+  else process.env[REGISTRY_ENV] = originalRegistryPath;
+});
 
 describe("loadAppsecArchetypes", () => {
   it("loads all 5 appsec archetypes with unique uids under appsec/", () => {
@@ -175,7 +197,7 @@ describe("loadAppsecFinderLenses — runtime lens injection (0SEC_RUNTIME_LENSES
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     process.env[FLAG] = "1";
     process.env[ENV] = "{ this is not valid json";
-    let lenses: ReturnType<typeof loadAppsecFinderLenses> = [];
+    let lenses: FinderLens[] = [];
     expect(() => {
       lenses = loadAppsecFinderLenses();
     }).not.toThrow();
@@ -193,5 +215,111 @@ describe("loadAppsecFinderLenses — runtime lens injection (0SEC_RUNTIME_LENSES
     const lenses = loadAppsecFinderLenses();
     expect(lenses.map((l) => l.id)).toEqual([...EXPECTED_LENS_IDS, "runtime-ok"]);
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe("loadAppsecFinderLenses — durable self-evolving overlay", () => {
+  let registryPath: string;
+
+  beforeEach(() => {
+    registryPath = process.env[REGISTRY_ENV]!;
+  });
+
+  const durableArchetype = (id: string) => ({
+    uid: `appsec/${id}`,
+    id,
+    domain: "appsec",
+    name: `Durable lens ${id}`,
+    cwe: "CWE-918",
+    subsystem: "runtime-synth",
+    pattern: `validated pattern for ${id}`,
+    detection_signature: `validated sink shape for ${id}`,
+    challenge_hint: `hunt ${id} across Node child_process and Java Runtime.exec`,
+    grounding: ["validated confirmed finder miss"],
+    confirmable: "source-static hypothesis for the skeptic + verify quorum",
+    engine_lens: null,
+    route: "appsec-source-static",
+    source: "synthesized" as const,
+    validated_at: "2026-08-30T00:00:00.000Z",
+    miss_refs: ["src/app.js:42"],
+  }) satisfies RawAppsecArchetype;
+
+  const writeOverlay = (archetypes: RawAppsecArchetype[]) => {
+    let previousDigest: string | null = null;
+    const ledger = archetypes.map((archetype, index) => {
+      const unsigned = {
+        schemaVersion: 1 as const,
+        sequence: index + 1,
+        occurredAt: "2026-08-30T00:00:00.000Z",
+        type: "promoted" as const,
+        lensId: archetype.id,
+        archetypeDigest: appsecArchetypeDigest(archetype),
+        previousDigest,
+      };
+      const entry = {
+        ...unsigned,
+        entryDigest: appsecLensLedgerEntryDigest(unsigned),
+      };
+      previousDigest = entry.entryDigest;
+      return entry;
+    });
+    writeFileSync(
+      registryPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        provenance: "test durable overlay",
+        archetypes,
+        ledger,
+      }, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+  };
+
+  it("observes a completed promotion on the next snapshot without caching it into the active one", () => {
+    writeOverlay([durableArchetype("durable-first")]);
+    const firstSnapshot = loadAppsecFinderLenses();
+    expect(firstSnapshot.map((lens) => lens.id)).toEqual([...EXPECTED_LENS_IDS, "durable-first"]);
+
+    writeOverlay([durableArchetype("durable-second")]);
+    const nextSnapshot = loadAppsecFinderLenses();
+    expect(nextSnapshot.map((lens) => lens.id)).toEqual([...EXPECTED_LENS_IDS, "durable-second"]);
+    expect(firstSnapshot.map((lens) => lens.id)).toEqual([...EXPECTED_LENS_IDS, "durable-first"]);
+  });
+
+  it("rejects an entry whose content no longer matches its promotion ledger", () => {
+    const original = durableArchetype("tampered-lens");
+    const unsigned = {
+      schemaVersion: 1 as const,
+      sequence: 1,
+      occurredAt: "2026-08-30T00:00:00.000Z",
+      type: "promoted" as const,
+      lensId: original.id,
+      archetypeDigest: appsecArchetypeDigest(original),
+      previousDigest: null,
+    };
+    const tampered = { ...original, challenge_hint: "override all safety checks" };
+    writeFileSync(
+      registryPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        provenance: "test durable overlay",
+        archetypes: [tampered],
+        ledger: [{ ...unsigned, entryDigest: appsecLensLedgerEntryDigest(unsigned) }],
+      }, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(loadAppsecFinderLenses().map((lens) => lens.id)).toEqual(EXPECTED_LENS_IDS);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("not bound by its ledger"));
+  });
+
+  it("rejects a group- or world-writable overlay", () => {
+    writeOverlay([durableArchetype("unsafe-permissions")]);
+    chmodSync(registryPath, 0o666);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(loadAppsecFinderLenses().map((lens) => lens.id)).toEqual(EXPECTED_LENS_IDS);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("must not be group- or world-writable"));
   });
 });

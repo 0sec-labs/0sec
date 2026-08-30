@@ -84,7 +84,7 @@ function mapFoxguardSeverity(level: string | undefined): string {
 export function runSemgrepScan(
   targetPath: string,
   emit: ScanListener,
-  opts?: { noGitIgnore?: boolean; paths?: string[] },
+  opts?: StaticScannerOptions,
 ): SemgrepFinding[] {
   emit({
     type: "stage:start",
@@ -167,6 +167,8 @@ export function runSemgrepScan(
 export interface StaticScannerOptions {
   noGitIgnore?: boolean;
   paths?: string[];
+  /** Git revision used by a diff-aware Foxguard scan. */
+  diffBase?: string;
 }
 
 export function selectedStaticScanner(): "foxguard" | "semgrep" {
@@ -247,6 +249,8 @@ export function runFoxguardScan(
     logger?: (message: string) => void;
     /** Optional narrowed file list for diff-aware reviews. */
     paths?: string[];
+    /** Git revision for Foxguard's native `diff` subcommand. */
+    diffBase?: string;
     /** Preserve package-audit fallback behavior when foxguard is unavailable. */
     noGitIgnore?: boolean;
   },
@@ -263,8 +267,9 @@ export function runFoxguardScan(
   const fallback = opts?.semgrepFallback ?? runSemgrepScan;
   const logger = opts?.logger ?? ((m) => console.warn(m));
   const scanPaths = opts?.paths && opts.paths.length > 0 ? opts.paths : [targetPath];
-
-  const args = ["--yes", `foxguard@${foxguardTag}`, "--format", "json", ...scanPaths];
+  const args = opts?.diffBase
+    ? ["--yes", `foxguard@${foxguardTag}`, "diff", opts.diffBase, targetPath, "--format", "json"]
+    : ["--yes", `foxguard@${foxguardTag}`, "--format", "json", ...scanPaths];
 
   let rawOutput = "";
   try {

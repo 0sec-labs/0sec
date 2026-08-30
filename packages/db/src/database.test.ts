@@ -38,6 +38,39 @@ function withTempDb(fn: (db: osecDB, cleanup: () => void) => void): void {
   }
 }
 
+describe("osecDB read-only open", () => {
+  it("reads an existing database without running the writer initialization path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "0sec-db-read-only-"));
+    const path = join(dir, "test.db");
+    const writer = new osecDB(path);
+    let reader: osecDB | undefined;
+    try {
+      const scanId = writer.createScan({
+        target: "https://example.com",
+        depth: "default",
+      } as Parameters<typeof writer.createScan>[0]);
+      writer.saveFinding(scanId, makeFinding({ id: "read-only-finding" }));
+
+      reader = new osecDB(path, { readOnly: true });
+      expect(reader.getFinding("read-only-finding")?.id).toBe("read-only-finding");
+    } finally {
+      reader?.close();
+      writer.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to create a missing database in read-only mode", () => {
+    const dir = mkdtempSync(join(tmpdir(), "0sec-db-read-only-"));
+    try {
+      expect(() => new osecDB(join(dir, "missing.db"), { readOnly: true }))
+        .toThrow("Database does not exist");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("osecDB listScansByTarget", () => {
   it("returns scans for the matching target ordered desc(startedAt)", () => {
     withTempDb((db) => {

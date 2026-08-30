@@ -22,7 +22,6 @@ export { registerVerifyCommand } from "./verify.js";
 export { registerExploitCommand } from "./exploit.js";
 export { registerHuntCommand } from "./hunt.js";
 export { registerRecencyHuntCommand } from "./recency-hunt.js";
-export { registerDeepReviewCommand } from "./deep-review.js";
 export { registerLensSynthCommand } from "./lens-synth.js";
 export { registerMemsafetyCommand } from "./memsafety.js";
 export { registerAssumptionHuntCommand } from "./assumption-hunt.js";

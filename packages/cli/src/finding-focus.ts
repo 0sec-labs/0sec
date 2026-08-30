@@ -8,6 +8,7 @@ import {
 } from "@0sec/db";
 import { findingSchema, formatZodError } from "./commands/schemas.js";
 
+
 export type FindingFocus = {
   finding: Finding;
   target: string | undefined;
@@ -18,6 +19,7 @@ type PersistedFindingRow = Record<string, unknown> & {
   id?: unknown;
   scanId?: unknown;
 };
+
 
 function parseJson(value: unknown): unknown {
   if (value == null) return undefined;
@@ -79,6 +81,7 @@ function findingFromRow(
   return parsed.data as Finding;
 }
 
+
 /**
  * Resolve a persisted finding once, including the scan target that anchors the
  * conversation. A full id wins; a prefix must be unique across the chosen DBs.
@@ -93,7 +96,7 @@ export function loadFindingFocus(id: string, options: { dbPath?: string } = {}):
       if (options.dbPath?.trim()) throw new Error(`Database does not exist: ${dbPath}`);
       continue;
     }
-    const db = new osecDB(dbPath);
+    const db = new osecDB(dbPath, { readOnly: true });
     try {
       const exact = db.getFinding(requestedId) as PersistedFindingRow | undefined;
       if (exact) {
@@ -129,7 +132,7 @@ export function loadFindingFocus(id: string, options: { dbPath?: string } = {}):
   }
 
   const [match] = matches;
-  const db = new osecDB(match!.dbPath);
+  const db = new osecDB(match!.dbPath, { readOnly: true });
   try {
     const reviewFields = db.getFindingReviewFields(
       typeof match!.row.id === "string" ? match!.row.id : "",

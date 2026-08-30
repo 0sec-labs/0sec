@@ -342,12 +342,28 @@ export interface TrustGraphEdgeInput {
   note?: string | null;
 }
 
+export type OsecDbOpenOptions = {
+  /**
+   * Open an existing database for reads without migrations, schema DDL, stale
+   * lock recovery, or directory creation. Use this for a second process
+   * inspecting a database owned by a live dashboard or worker.
+   */
+  readOnly?: boolean;
+};
+
 export class osecDB {
   private sqlite!: ShimmedDatabase;
   private db!: ReturnType<typeof createDrizzleFromShim<typeof schema>>;
 
-  constructor(dbPath?: string) {
+  constructor(dbPath?: string, options: OsecDbOpenOptions = {}) {
     const path = resolveOsecDbPath(dbPath);
+    if (options.readOnly) {
+      if (path !== ":memory:" && !existsSync(path)) {
+        throw new Error(`Database does not exist: ${path}`);
+      }
+      this.initializeReadOnlyDatabase(path);
+      return;
+    }
     if (path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     }
@@ -395,6 +411,12 @@ export class osecDB {
     this.sqlite.exec(SCHEMA_TABLES_SQL);
     this.migrate();
     this.sqlite.exec(SCHEMA_INDEXES_SQL);
+  }
+
+  private initializeReadOnlyDatabase(path: string): void {
+    this.sqlite = createShimmedDatabase(path);
+    this.sqlite.pragma("foreign_keys = ON");
+    this.db = createDrizzleFromShim(this.sqlite, { schema });
   }
 
   /**

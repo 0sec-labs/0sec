@@ -212,9 +212,9 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "launcher",
-    aliases: ["home"],
+    aliases: ["run", "home"],
     category: "navigation",
-    description: "Open the session launcher / home screen",
+    description: "Open the engagement control pane for the current chat",
     tuiOnly: true,
   },
   {

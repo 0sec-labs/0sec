@@ -6,8 +6,10 @@ import { CliRenderEvents, createCliRenderer, type CliRenderer } from "@opentui/c
 import { AppContext, createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { VERSION, type Finding, type FindingTriageStatus } from "@0sec/shared";
 import type { NativeRuntime, SourceFixResult, SourceFixStatus } from "@0sec/core";
+import { resolveEngagement } from "../engagement-plan.js";
 import { getRuntimeAvailability } from "../utils.js";
 import { buildFindingChatPrompt, loadFindingFocus } from "../finding-focus.js";
+import { runUnified } from "../commands/run.js";
 import { useTheme, type Theme } from "./theme-context.js";
 import { severityToneFor } from "./themes.js";
 import { fitTuiText, fitTuiUrl } from "./text.js";
@@ -29,12 +31,19 @@ import { createPluginService } from "./plugin-service.js";
 import { createSessionPluginHostManager, type SessionPluginHostManager } from "./session-plugin-host.js";
 import { TOOL_DEFINITIONS } from "@0sec/core";
 import { ConnectScreen } from "./connect-screen.js";
+import type { ConnectionRecovery } from "./connection-recovery.js";
 import { UsageScreen } from "./usage-screen.js";
 import { FindingDetailScreen } from "./finding-detail-screen.js";
 import { copyToClipboard, defaultSpawn, defaultWhich } from "./clipboard.js";
 import { createSessionCloseGate } from "./session-close-gate.js";
 import { installTuiOutputGuard } from "./output-guard.js";
 import { appendFeedback, submitFeedback } from "./feedback.js";
+import {
+  createTuiLensEvolutionController,
+  tuiLensEvolutionStatusLabel,
+  type TuiLensEvolutionController,
+  type TuiLensEvolutionStatus,
+} from "./lens-evolution.js";
 import {
   applySessionEvent,
   applySessionReport,
@@ -54,19 +63,15 @@ import {
   suspendProcessPresentationStreamBridge,
 } from "../presentation/process-output.js";
 
-type HomeAction = "scan" | "audit" | "review" | "tui" | "doctor" | "replay" | "history" | "findings";
+type HomeAction = "run" | "tui" | "doctor" | "replay" | "history" | "findings";
 type LaunchRuntime = "auto" | "api" | "claude" | "codex" | "gemini";
 type LaunchDepth = "quick" | "default" | "deep";
-type LaunchScanMode = "auto" | "probe" | "deep" | "mcp" | "web";
-type LaunchEcosystem = "npm" | "pypi" | "cargo" | "oci";
 
 export interface HomeSelection {
   action: HomeAction;
   target?: string;
   runtime?: LaunchRuntime;
   depth?: LaunchDepth;
-  mode?: LaunchScanMode;
-  ecosystem?: LaunchEcosystem;
 }
 
 interface HistorySelection {
@@ -85,7 +90,7 @@ type ConsoleRoute =
   | { type: "settings" }
   | { type: "herd" }
   | { type: "market" }
-  | { type: "connect" }
+  | { type: "connect"; recovery?: ConnectionRecovery }
   | { type: "models"; chatOptions?: ChatScreenOptions }
   | { type: "resume"; chatOptions?: ChatScreenOptions }
   | { type: "usage"; chatOptions?: ChatScreenOptions }
@@ -163,27 +168,9 @@ interface ShellNav {
   openFindingDetail: (findingId?: string, finding?: Finding, chatOptions?: ChatScreenOptions) => void;
 }
 
-interface HomeOption {
-  value: HomeAction;
-  label: string;
-  hint: string;
-}
-
-const HOME_OPTIONS: HomeOption[] = [
-  { value: "scan", label: "Scan a target", hint: "Web, API, or MCP target" },
-  { value: "audit", label: "Audit a package", hint: "Registry package triage" },
-  { value: "review", label: "Review a codebase", hint: "Source review and agent analysis" },
-  { value: "tui", label: "Open mission control", hint: "Runs, findings, incidents" },
-  { value: "doctor", label: "Check runtimes", hint: "Verify model access" },
-  { value: "replay", label: "Replay last scan", hint: "Animated playback" },
-  { value: "history", label: "View history", hint: "Recent results and artifacts" },
-  { value: "findings", label: "Browse findings", hint: "Grouped findings and triage context" },
-];
 
 const RUNTIME_OPTIONS: LaunchRuntime[] = ["auto", "api", "claude", "codex", "gemini"];
 const DEPTH_OPTIONS: LaunchDepth[] = ["quick", "default", "deep"];
-const SCAN_MODE_OPTIONS: LaunchScanMode[] = ["auto", "web", "probe", "deep", "mcp"];
-const ECOSYSTEM_OPTIONS: LaunchEcosystem[] = ["npm", "pypi", "cargo", "oci"];
 
 function appendTuiTrace(record: Record<string, unknown>): void {
   const file = process.env["0SEC_TRACE_TUI_EVENTS"] ?? process.env["0SEC_TRACE_TUI_RENDER"];
@@ -658,9 +645,6 @@ interface PaletteCommand {
   action: () => void;
 }
 
-function isImmediateAction(value: HomeAction): boolean {
-  return value === "tui" || value === "doctor" || value === "replay" || value === "history" || value === "findings";
-}
 
 function formatDuration(ms?: number | null): string {
   if (!ms || ms <= 0) return "-";
@@ -817,9 +801,9 @@ function createShellCommands(shell?: ShellNav): PaletteCommand[] {
     },
     {
       id: "nav-launcher",
-      title: "Open task launcher",
-      category: "Navigate",
-      description: "Choose a structured scan, audit, or review",
+      title: "Run engagement",
+      category: "Engagement",
+      description: "Open the chat-owned control pane for one explicit target",
       keybind: "7",
       action: shell.openLauncher,
     },
@@ -1867,90 +1851,82 @@ function ShellFrame({
   );
 }
 
-function HomeScreen({ onResolve, onExit, shell }: { onResolve: (selection: HomeSelection) => void; onExit: () => void; shell?: ShellNav }) {
+function HomeScreen({
+  onResolve,
+  onExit,
+  shell,
+  evolutionStatus,
+}: {
+  onResolve: (selection: HomeSelection) => void;
+  onExit: () => void;
+  shell?: ShellNav;
+  evolutionStatus?: TuiLensEvolutionStatus;
+}) {
   const theme = useTheme();
-  const [phase, setPhase] = useState<"menu" | "compose">("menu");
-  const [selected, setSelected] = useState(0);
-  const [action, setAction] = useState<HomeAction>("scan");
   const [inputValue, setInputValue] = useState("");
   const [focusIndex, setFocusIndex] = useState(0);
   const [runtime, setRuntime] = useState<LaunchRuntime>("auto");
-  const [depth, setDepth] = useState<LaunchDepth>("default");
-  const [scanMode, setScanMode] = useState<LaunchScanMode>("auto");
-  const [ecosystem, setEcosystem] = useState<LaunchEcosystem>("npm");
+  const [depth, setDepth] = useState<LaunchDepth>("deep");
+  const [notice, setNotice] = useState<string | null>(null);
   const { width, height } = useTerminalDimensions();
   const homeContentWidth = Math.max(1, width - SHELL_HORIZONTAL_PADDING * 2);
   const homePanelContentWidth = Math.max(0, homeContentWidth - PANEL_HORIZONTAL_CHROME);
   const homeRowContentWidth = Math.max(0, homePanelContentWidth - 2);
-  // Both phases render a bordered box whose rows are fixed by its contents:
-  // two rows per option/field, plus a hint row while composing. Yoga shrinks
-  // a box that wants more rows than the column has and then paints the
-  // box's own bottom border through its last row, which is how the menu
-  // turned into `-/clear--------/new-`. Take only the rows the frame can
-  // actually spare, and window the list so the cursor stays on screen.
-  const homeBodyRows = Math.max(2, height - getShellChromeHeight(width) - 2);
-
-  const palette = usePaletteController(HOME_OPTIONS.map((option, index) => ({
-    id: option.value,
-    title: option.label,
-    category: index < 3 ? "Run" : "System",
-    description: option.hint,
-    keybind: option.value === "tui" ? "tui" : undefined,
-    suggested: index < 5,
-    action: () => {
-      if (isImmediateAction(option.value)) {
-        onResolve({ action: option.value });
-        return;
-      }
-      setAction(option.value);
-      setInputValue("");
-      setFocusIndex(0);
-      setRuntime("auto");
-      setDepth("default");
-      setScanMode("auto");
-      setEcosystem("npm");
-      setPhase("compose");
-    },
-  })));
-
-  const composeFields = useMemo(() => {
-    const fields: Array<{ key: string; label: string; value: string; editable?: boolean }> = [
-      {
-        key: "target",
-        label: action === "scan"
-          ? "Target URL (e.g. app.example.com)"
-          : action === "audit"
-            ? "Package name (e.g. express)"
-            : "Repo path or URL (e.g. ./my-project)",
-        value: inputValue,
-        editable: true,
-      },
-      { key: "runtime", label: "Runtime", value: runtime },
-      { key: "depth", label: "Depth", value: depth },
-    ];
-    if (action === "scan") fields.push({ key: "mode", label: "Mode", value: scanMode });
-    if (action === "audit") fields.push({ key: "ecosystem", label: "Ecosystem", value: ecosystem });
-    return fields;
-  }, [action, depth, ecosystem, inputValue, runtime, scanMode]);
-
-  const adjustFocusedOption = (delta: 1 | -1) => {
-    const field = composeFields[focusIndex]?.key;
-    if (field === "runtime") setRuntime((current) => cycleChoice(RUNTIME_OPTIONS, current, delta));
-    if (field === "depth") setDepth((current) => cycleChoice(DEPTH_OPTIONS, current, delta));
-    if (field === "mode") setScanMode((current) => cycleChoice(SCAN_MODE_OPTIONS, current, delta));
-    if (field === "ecosystem") setEcosystem((current) => cycleChoice(ECOSYSTEM_OPTIONS, current, delta));
-  };
+  const resolution = inputValue.trim() ? resolveEngagement(inputValue) : undefined;
+  const planText = !resolution
+    ? "Enter a URL, source path, git URL, or ecosystem-prefixed package."
+    : resolution.ok
+      ? resolution.plan.label
+      : resolution.message;
+  const planTone = resolution?.ok ? theme.SUCCESS : resolution ? theme.WARNING : theme.MUTED;
 
   const submitLaunch = () => {
-    if (!inputValue.trim()) return;
+    if (!resolution) {
+      setNotice("Enter an engagement target first.");
+      return;
+    }
+    if (!resolution.ok) {
+      setNotice(resolution.message);
+      return;
+    }
+    setNotice(null);
     onResolve({
-      action,
+      action: "run",
       target: inputValue.trim(),
       runtime,
       depth,
-      mode: scanMode,
-      ecosystem,
     });
+  };
+
+  const palette = usePaletteController([
+    {
+      id: "run-engagement",
+      title: "Run engagement",
+      category: "Engagement",
+      description: "Submit the resolved target through the single control-plane runner",
+      keybind: "enter",
+      suggested: true,
+      action: submitLaunch,
+    },
+    ...createShellCommands(shell),
+  ]);
+
+  const fields = useMemo(() => [
+    {
+      key: "target",
+      label: "Target",
+      value: inputValue,
+      help: "URL · path · source: · npm: · pypi: · cargo: · oci:",
+      editable: true,
+    },
+    { key: "runtime", label: "Runtime", value: runtime, help: "left/right" },
+    { key: "depth", label: "Depth", value: depth, help: "left/right" },
+  ], [depth, inputValue, runtime]);
+
+  const adjustFocusedOption = (delta: 1 | -1) => {
+    const field = fields[focusIndex]?.key;
+    if (field === "runtime") setRuntime((current) => cycleChoice(RUNTIME_OPTIONS, current, delta));
+    if (field === "depth") setDepth((current) => cycleChoice(DEPTH_OPTIONS, current, delta));
   };
 
   useKeyboard((key) => {
@@ -1959,51 +1935,17 @@ function HomeScreen({ onResolve, onExit, shell }: { onResolve: (selection: HomeS
       return;
     }
     if (palette.handlePaletteKey(key)) return;
-
     if (key.name === "escape") {
-      if (phase === "compose") {
-        setPhase("menu");
-        setInputValue("");
-        setFocusIndex(0);
-        return;
-      }
-      shell?.goBack();
+      if (shell?.canGoBack) shell.goBack();
+      else onExit();
       return;
     }
-
-    if (phase === "menu") {
-      if (key.name === "up") {
-        setSelected((current) => Math.max(0, current - 1));
-        return;
-      }
-      if (key.name === "down") {
-        setSelected((current) => Math.min(HOME_OPTIONS.length - 1, current + 1));
-        return;
-      }
-      if (key.name === "return") {
-        const nextAction = HOME_OPTIONS[selected].value;
-        if (isImmediateAction(nextAction)) {
-          onResolve({ action: nextAction });
-          return;
-        }
-        setAction(nextAction);
-        setInputValue("");
-        setFocusIndex(0);
-        setRuntime("auto");
-        setDepth("default");
-        setScanMode("auto");
-        setEcosystem("npm");
-        setPhase("compose");
-      }
-      return;
-    }
-
     if (key.name === "up") {
       setFocusIndex((current) => Math.max(0, current - 1));
       return;
     }
     if (key.name === "down" || key.name === "tab") {
-      setFocusIndex((current) => Math.min(composeFields.length - 1, current + 1));
+      setFocusIndex((current) => Math.min(fields.length - 1, current + 1));
       return;
     }
     if (key.name === "left") {
@@ -2018,85 +1960,57 @@ function HomeScreen({ onResolve, onExit, shell }: { onResolve: (selection: HomeS
       submitLaunch();
       return;
     }
-    if (key.name === "backspace") {
-      if (composeFields[focusIndex]?.key === "target") {
-        setInputValue((current) => current.slice(0, -1));
-      }
+    if (key.name === "backspace" && fields[focusIndex]?.key === "target") {
+      setInputValue((current) => current.slice(0, -1));
       return;
     }
-    if (composeFields[focusIndex]?.key === "target" && key.sequence && !key.ctrl && !key.meta && key.name !== "return") {
+    if (fields[focusIndex]?.key === "target" && key.sequence && !key.ctrl && !key.meta && key.name !== "return") {
       setInputValue((current) => current + key.sequence);
     }
   });
 
-  const visibleOptionCount = Math.max(1, Math.min(HOME_OPTIONS.length, Math.floor(homeBodyRows / 2)));
-  const optionWindowStart = Math.max(
-    0,
-    Math.min(selected - visibleOptionCount + 1, HOME_OPTIONS.length - visibleOptionCount),
-  );
-  // The compose panel spends one of its rows on the key hint under the fields.
-  const visibleFieldCount = Math.max(1, Math.min(composeFields.length, Math.floor((homeBodyRows - 1) / 2)));
-  const fieldWindowStart = Math.max(
-    0,
-    Math.min(focusIndex - visibleFieldCount + 1, composeFields.length - visibleFieldCount),
-  );
+  const visibleFieldCount = Math.max(1, Math.min(fields.length, Math.floor((Math.max(2, height - getShellChromeHeight(width) - 2) - 1) / 2)));
+  const fieldWindowStart = Math.max(0, Math.min(focusIndex - visibleFieldCount + 1, fields.length - visibleFieldCount));
 
   return (
-    <ShellFrame view="launcher">
-      {palette.paletteOpen ? <PaletteOverlay title="Console commands" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
+    <ShellFrame
+      view="engagement control"
+      status={evolutionStatus ? <text fg={planTone}>{fitTuiText(evolutionStatus.message, Math.max(1, Math.floor(homeContentWidth * 0.42)))}</text> : undefined}
+    >
+      {palette.paletteOpen ? <PaletteOverlay title="Control plane" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
       <box flexDirection="column" width="100%" minWidth={0}>
-        {phase === "menu" ? (
-          <box flexDirection="column" width="100%" minWidth={0} height={visibleOptionCount * 2 + 2} flexShrink={0} border borderColor={theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} paddingY={0}>
-            {HOME_OPTIONS.slice(optionWindowStart, optionWindowStart + visibleOptionCount).map((option, windowIndex) => {
-              const index = optionWindowStart + windowIndex;
-              const active = index === selected;
-              return (
-                <box key={option.value} flexDirection="row" width="100%" minWidth={0}>
-                  <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
-                  <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-                    <text fg={active ? theme.TEXT : "#CCCCCC"}>{fitTuiText(active ? option.label.toUpperCase() : option.label, homeRowContentWidth)}</text>
-                    <text fg={active ? theme.ACCENT : theme.MUTED}>{fitTuiText(option.hint, homeRowContentWidth)}</text>
-                  </box>
-                </box>
-              );
-            })}
-          </box>
-        ) : (
-          <box flexDirection="column" width="100%" minWidth={0} height={visibleFieldCount * 2 + 3} flexShrink={0} border borderColor={theme.MUTED} backgroundColor={theme.PANEL} paddingX={1} paddingY={0}>
-            {composeFields.slice(fieldWindowStart, fieldWindowStart + visibleFieldCount).map((field, windowIndex) => {
-              const fieldIndex = fieldWindowStart + windowIndex;
-              const active = fieldIndex === focusIndex;
-              const fieldHelp = field.editable ? "type" : "left/right";
-              const cursorWidth = active && field.editable ? 1 : 0;
-              const fieldHelpWidth = Math.min(fieldHelp.length, Math.floor(homeRowContentWidth / 3));
-              const fieldGapWidth = fieldHelpWidth > 0 ? 1 : 0;
-              const fieldValueWidth = Math.max(0, homeRowContentWidth - fieldHelpWidth - cursorWidth - fieldGapWidth);
-              return (
-                <box key={field.key} flexDirection="row" width="100%" minWidth={0}>
-                  <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
-                  <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-                    <text fg={active ? theme.TEXT : theme.MUTED}>{fitTuiText(field.label, homeRowContentWidth)}</text>
-                    <box flexDirection="row" width={homeRowContentWidth} minWidth={0} gap={fieldGapWidth}>
-                      <box flexDirection="row" width={fieldValueWidth + cursorWidth} flexShrink={0} minWidth={0}>
-                        <box width={fieldValueWidth} flexShrink={0} minWidth={0}>
-                          <text fg={field.value ? (active ? theme.TEXT : "#CCCCCC") : theme.MUTED}>{fitTuiText(field.value || "", fieldValueWidth, { mode: field.key === "target" ? "middle" : "end" })}</text>
-                        </box>
-                        {active && field.editable ? <text width={1} flexShrink={0} fg={theme.INFO}>█</text> : null}
+        <box flexDirection="column" width="100%" minWidth={0} height={visibleFieldCount * 2 + 6} flexShrink={0} border borderColor={theme.MUTED} backgroundColor={theme.PANEL} paddingX={1} paddingY={0}>
+          {fields.slice(fieldWindowStart, fieldWindowStart + visibleFieldCount).map((field, windowIndex) => {
+            const fieldIndex = fieldWindowStart + windowIndex;
+            const active = fieldIndex === focusIndex;
+            const cursorWidth = active && field.editable ? 1 : 0;
+            const fieldHelpWidth = Math.min(field.help.length, Math.floor(homeRowContentWidth / 2));
+            const fieldGapWidth = fieldHelpWidth > 0 ? 1 : 0;
+            const fieldValueWidth = Math.max(0, homeRowContentWidth - fieldHelpWidth - cursorWidth - fieldGapWidth);
+            return (
+              <box key={field.key} flexDirection="row" width="100%" minWidth={0}>
+                <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
+                <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
+                  <text fg={active ? theme.TEXT : theme.MUTED}>{fitTuiText(field.label, homeRowContentWidth)}</text>
+                  <box flexDirection="row" width={homeRowContentWidth} minWidth={0} gap={fieldGapWidth}>
+                    <box flexDirection="row" width={fieldValueWidth + cursorWidth} flexShrink={0} minWidth={0}>
+                      <box width={fieldValueWidth} flexShrink={0} minWidth={0}>
+                        <text fg={field.value ? (active ? theme.TEXT : "#CCCCCC") : theme.MUTED}>{fitTuiText(field.value, fieldValueWidth, { mode: field.key === "target" ? "middle" : "end" })}</text>
                       </box>
-                      {fieldHelpWidth > 0 ? (
-                        <box width={fieldHelpWidth} flexShrink={0} minWidth={0} alignItems="flex-end">
-                          <text fg={active ? theme.ACCENT : theme.MUTED}>{fitTuiText(fieldHelp, fieldHelpWidth)}</text>
-                        </box>
-                      ) : null}
+                      {active && field.editable ? <text width={1} flexShrink={0} fg={theme.INFO}>█</text> : null}
+                    </box>
+                    <box width={fieldHelpWidth} flexShrink={0} minWidth={0} alignItems="flex-end">
+                      <text fg={active ? theme.ACCENT : theme.MUTED}>{fitTuiText(field.help, fieldHelpWidth)}</text>
                     </box>
                   </box>
                 </box>
-              );
-            })}
-            <text fg={theme.MUTED}>{fitTuiText("enter launch · esc back · ctrl+p commands · up/down focus", homePanelContentWidth)}</text>
-          </box>
-        )}
-        <FooterBar hint="esc back · ctrl+p commands · ctrl+c exit" />
+              </box>
+            );
+          })}
+          <text fg={planTone}>{fitTuiText(planText, homePanelContentWidth)}</text>
+          {notice ? <text fg={theme.WARNING}>{fitTuiText(notice, homePanelContentWidth)}</text> : <text fg={theme.MUTED}>{fitTuiText("One engagement path · enter run · ctrl+p workspace", homePanelContentWidth)}</text>}
+        </box>
+        <FooterBar hint="enter run · ctrl+p workspace · ctrl+c exit" status={evolutionStatus ? tuiLensEvolutionStatusLabel(evolutionStatus) : undefined} />
       </box>
     </ShellFrame>
   );
@@ -4045,9 +3959,21 @@ function MarketRoute({ onExit, shell, pluginHostManager }: { onExit: () => void;
  * the provider list (or, in the input sub-step, is part of a pasted key), so a
  * second `useKeyboard` would fight it.
  */
-function ConnectRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) {
+function ConnectRoute({
+  onExit,
+  shell,
+  recovery,
+  onConnected,
+}: {
+  onExit: () => void;
+  shell?: ShellNav;
+  recovery?: ConnectionRecovery;
+  onConnected?: (providerId: string) => void;
+}) {
   return (
     <ConnectScreen
+      recovery={recovery}
+      onConnected={onConnected}
       onBack={() => leaveCurrentScreen(shell, onExit)}
       onExit={onExit}
       frame={({ body, hint }) => (
@@ -4174,22 +4100,38 @@ type AppMode =
   | { type: "console"; initialRoute: ConsoleRoute; onResolve?: (selection: HomeSelection) => void; onExit: () => void }
   | { type: "session"; initialState: SessionState; subscribe: (listener: (state: SessionState) => void) => () => void; queueUserMessage?: (text: string) => void; onExit: () => void };
 
-function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: ConsoleRoute; onResolve?: (selection: HomeSelection) => void; onExit: () => void }) {
+function ConsoleApp({
+  initialRoute,
+  onResolve,
+  onExit,
+  lensEvolution,
+}: {
+  initialRoute: ConsoleRoute;
+  onResolve?: (selection: HomeSelection) => void;
+  onExit: () => void;
+  lensEvolution?: TuiLensEvolutionController;
+}) {
   const rootRoute: ConsoleRoute = initialRoute.type === "chat" ? initialRoute : { type: "chat" };
   const hasChatRoot = initialRoute.type === "chat";
   const [routes, setRoutes] = useState<ConsoleRoute[]>(() =>
     hasChatRoot ? [initialRoute] : [rootRoute, initialRoute],
   );
   const [routeIndex, setRouteIndex] = useState(() => hasChatRoot ? 0 : 1);
+  const [lensEvolutionState, setLensEvolutionState] = useState<TuiLensEvolutionStatus | undefined>(
+    () => lensEvolution?.getStatus(),
+  );
+  useEffect(() => {
+    if (!lensEvolution) {
+      setLensEvolutionState(undefined);
+      return;
+    }
+    setLensEvolutionState(lensEvolution.getStatus());
+    return lensEvolution.subscribe(setLensEvolutionState);
+  }, [lensEvolution]);
 
-  // The chat is the console's persistent base layer (see the render at the end
-  // of ConsoleApp). Its options live here rather than being read off the nav
-  // stack, so returning to chat from a screen never resets the model or target
-  // the operator was using. `chatGeneration` is the chat's remount key: it is
-  // bumped ONLY when the model picker applies a DIFFERENT model, because a model
-  // switch is the one action that must rebuild the chat's session. Every other
-  // navigation keeps the generation, so the transcript, scroll and composer
-  // survive the round trip untouched.
+  // Chat is the persistent primary surface. Control panes are OpenTUI overlays
+  // opened from chat, while these options preserve the active chat session
+  // across those pane transitions.
   const initialChatOptions = initialRoute.type === "chat" ? initialRoute.options : undefined;
   const [chatOptions, setChatOptions] = useState<ChatScreenOptions | undefined>(initialChatOptions);
   const [chatGeneration, setChatGeneration] = useState(0);
@@ -4228,6 +4170,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
   // an overlay (the finding-detail "Fix" action) can route a request through a
   // normal chat turn without importing the chat's internals or core tools.
   const chatSubmitRef = useRef<((text: string) => void) | null>(null);
+  const chatReconnectRef = useRef<((providerId: string) => void) | null>(null);
 
   const navigate = (route: ConsoleRoute) => {
     setRoutes((current) => {
@@ -4273,11 +4216,18 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
 
   const launchSelection = async (selection: HomeSelection) => {
     if (!selection.target) return;
-    const mode = selection.action === "audit" ? "audit" : selection.action === "review" ? "review" : "scan";
-    const depth = selection.depth ?? "default";
+    const resolution = resolveEngagement(selection.target);
+    if (!resolution.ok) return;
+    const plan = resolution.plan;
+    const mode: SessionMode = plan.kind === "package"
+      ? "audit"
+      : plan.kind === "source"
+        ? "review"
+        : "scan";
+    const depth = selection.depth ?? "deep";
     const runtime = selection.runtime ?? "auto";
     const availability = await getRuntimeAvailability();
-    let state = createInitialSessionState(selection.target, depth, mode, {
+    let state = createInitialSessionState(plan.target, depth, mode, {
       runtime,
       apiProviderLabel: availability.apiRuntime.providerLabel,
       apiConfigured: availability.apiRuntime.configured,
@@ -4303,7 +4253,6 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
       },
     });
 
-    const { runUnified } = await import("../commands/run.js");
     const previousStartupLogSetting = process.env["0SEC_SUPPRESS_PROVIDER_STARTUP_LOG"];
     const previousNativeTracePath = process.env["0SEC_TRACE_NATIVE_RESPONSES"];
     const previousTuiTracePath = process.env["0SEC_TRACE_TUI_EVENTS"];
@@ -4312,7 +4261,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     process.env["0SEC_TRACE_TUI_EVENTS"] = `/tmp/0sec-tui-events-${Date.now()}.ndjson`;
     appendTuiTrace({
       kind: "session-start",
-      target: selection.target,
+      target: plan.target,
       mode,
       runtime,
       depth,
@@ -4320,25 +4269,15 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     });
     try {
       await runUnified({
-        target: selection.target,
-        targetType: selection.action === "review"
-          ? "source-code"
-          : selection.action === "audit"
-            ? selection.ecosystem === "pypi"
-              ? "pypi-package"
-              : selection.ecosystem === "cargo"
-                ? "cargo-package"
-                : selection.ecosystem === "oci"
-                  ? "oci-image"
-                  : "npm-package"
-            : "url",
-        mode: selection.action === "scan" && selection.mode && selection.mode !== "auto" ? selection.mode : undefined,
+        target: plan.target,
+        targetType: plan.targetType,
+        reviewStrategy: plan.kind === "source" && depth === "deep" ? plan.reviewStrategy : "pipeline",
+        reviewPackageEcosystem: plan.ecosystem,
         depth,
         format: "terminal",
         runtime,
-        timeout: selection.action === "scan" ? 30000 : 600000,
+        timeout: plan.kind === "web" ? 30000 : 600000,
         verbose: false,
-        packageVersion: undefined,
         sessionUiFactory: async () => ({
           onEvent: (event) => {
             if (sessionGate.closed) return;
@@ -4397,29 +4336,23 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     }
   };
 
+  // The chat remains mounted beneath OpenTUI control panes, preserving the
+  // operator's conversation while the same chat dispatches engagement work.
   const overlayActive = currentRoute.type !== "chat";
-
-  // The chat screen is mounted ONCE and kept mounted for the entire life of the
-  // console; every other screen renders as a full-screen overlay ON TOP of it
-  // instead of replacing it. Navigating away therefore never unmounts the chat
-  // and never destroys its ConsoleSession, transcript, scroll or composer — Esc
-  // from any screen just drops the overlay and reveals the exact same chat.
-  //
-  // OpenTUI dispatches keys to EVERY mounted `useKeyboard` handler globally —
-  // there is no focus scoping — so a chat left mounted under an overlay would
-  // still eat the operator's keystrokes and fight the screen on top. The cure is
-  // to hand the chat subtree an AppContext whose `keyHandler` is null while an
-  // overlay is up: `useKeyboard` (and `usePaste`) then subscribe to nothing and
-  // the chat goes deaf without unmounting. The overlay renders OUTSIDE that
-  // provider, keeps the real handler, and is the only screen hearing keys.
   const appContext = useContext(AppContext);
+  const evolutionStatus = lensEvolutionState
+    ? tuiLensEvolutionStatusLabel(lensEvolutionState)
+    : undefined;
   const baseChat = (
     <AppContext.Provider value={overlayActive ? { ...appContext, keyHandler: null } : appContext}>
       <ChatScreen
         key={`chat-${chatGeneration}`}
         options={chatOptions}
         submitHandle={chatSubmitRef}
+        reconnectHandle={chatReconnectRef}
+        onConnectionFailure={(recovery) => navigate({ type: "connect", recovery })}
         pluginHostManager={pluginHostManager ?? undefined}
+        evolutionStatus={evolutionStatus}
         onGoBack={shell.goBack}
         onNavigate={(destination, id) => {
           // `herd` is not in `ChatDestination` yet (chat-screen owns that union
@@ -4530,7 +4463,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
           return;
         }
         void launchSelection(selection);
-      }} onExit={onExit} shell={shell} />
+      }} onExit={onExit} shell={shell} evolutionStatus={lensEvolutionState} />
     );
   } else if (currentRoute.type === "ops") {
     overlay = <OpsScreen dbPath={currentRoute.dbPath} refreshMs={currentRoute.refreshMs} onExit={onExit} shell={shell} />;
@@ -4555,7 +4488,17 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
   } else if (currentRoute.type === "market") {
     overlay = <MarketRoute onExit={onExit} shell={shell} pluginHostManager={pluginHostManager ?? undefined} />;
   } else if (currentRoute.type === "connect") {
-    overlay = <ConnectRoute onExit={onExit} shell={shell} />;
+    overlay = (
+      <ConnectRoute
+        recovery={currentRoute.recovery}
+        onConnected={(providerId) => {
+          chatReconnectRef.current?.(providerId);
+          leaveCurrentScreen(shell, onExit);
+        }}
+        onExit={onExit}
+        shell={shell}
+      />
+    );
   } else if (currentRoute.type === "usage") {
     overlay = <UsageRoute chatOptions={currentRoute.chatOptions} onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "finding") {
@@ -4600,14 +4543,20 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
   );
 }
 
-function UnifiedApp({ mode }: { mode: AppMode }) {
-  if (mode.type === "home") return <HomeScreen onResolve={mode.onResolve} onExit={mode.onExit} />;
+function UnifiedApp({
+  mode,
+  lensEvolution,
+}: {
+  mode: AppMode;
+  lensEvolution?: TuiLensEvolutionController;
+}) {
+  if (mode.type === "home") return <HomeScreen onResolve={mode.onResolve} onExit={mode.onExit} evolutionStatus={lensEvolution?.getStatus()} />;
   if (mode.type === "ops") return <OpsScreen dbPath={mode.dbPath} refreshMs={mode.refreshMs} onExit={mode.onExit} />;
   if (mode.type === "doctor") return <DoctorScreen onExit={mode.onExit} />;
   if (mode.type === "history") return <HistoryScreen dbPath={mode.dbPath} limit={mode.limit} onResolve={mode.onResolve} onExit={mode.onExit} />;
   if (mode.type === "findings") return <FindingsScreen options={mode.options} onExit={mode.onExit} />;
   if (mode.type === "replay") return <ReplayScreen dbPath={mode.dbPath} scanId={mode.scanId} onExit={mode.onExit} />;
-  if (mode.type === "console") return <ConsoleApp initialRoute={mode.initialRoute} onResolve={mode.onResolve} onExit={mode.onExit} />;
+  if (mode.type === "console") return <ConsoleApp initialRoute={mode.initialRoute} onResolve={mode.onResolve} onExit={mode.onExit} lensEvolution={lensEvolution} />;
 
   const [state, setState] = useState(mode.initialState);
   useEffect(() => mode.subscribe(setState), [mode]);
@@ -4653,11 +4602,13 @@ async function mountApp(mode: AppMode): Promise<void> {
   // overprint the framebuffer and desynchronize its differential repaint.
   const outputGuard = installTuiOutputGuard();
   const root = createRoot(renderer);
+  const lensEvolution = createTuiLensEvolutionController();
   await new Promise<void>((resolve) => {
     let closed = false;
     const close = () => {
       if (closed) return;
       closed = true;
+      lensEvolution.stop();
       mode.onExit?.();
       if (traceRender) {
         const stats = renderer.getStats();
@@ -4699,7 +4650,7 @@ async function mountApp(mode: AppMode): Promise<void> {
     try {
       root.render(
         <TuiErrorBoundary onQuit={close}>
-          <UnifiedApp mode={{ ...mode, onExit: close } as AppMode} />
+          <UnifiedApp mode={{ ...mode, onExit: close } as AppMode} lensEvolution={lensEvolution} />
         </TuiErrorBoundary>,
       );
     } catch (error) {
@@ -4707,6 +4658,7 @@ async function mountApp(mode: AppMode): Promise<void> {
       // below and anything after it must reach the real terminal.
       outputGuard.restore();
       resumeProcessPresentationStreamBridge();
+      lensEvolution.stop();
       appendTuiCrash({
         source: "mountApp.render",
         error: serializeError(error),

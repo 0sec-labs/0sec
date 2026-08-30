@@ -10,7 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LensProbe, LensSynthesisModel } from "@0sec/core";
-import { parseMissInputFile, runLensSynthCommand } from "../lens-synth.js";
+import {
+  parseMissInputFile,
+  runLensSynthCommand,
+  watchLensSynthCommand,
+} from "../lens-synth.js";
 
 const GOOD_CONTENT = {
   id: "ssrf-url-fetch",
@@ -100,6 +104,53 @@ describe("runLensSynthCommand", () => {
     expect(reg.archetypes).toHaveLength(2);
     expect(reg.archetypes[1].source).toBe("synthesized");
     expect(reg.archetypes[1].miss_refs).toEqual(["app.py:7"]);
+  });
+});
+
+describe("watchLensSynthCommand", () => {
+  it("watches content revisions without rerunning an unchanged miss input", async () => {
+    const controller = new AbortController();
+    const results: unknown[] = [];
+    let sleeps = 0;
+
+    await watchLensSynthCommand(
+      { missInput: missInputPath, registry: registryPath, pollIntervalMs: 100 },
+      {
+        model: toolModel,
+        probe: cleanProbe,
+        signal: controller.signal,
+        onResult: (result) => { results.push(result); },
+        sleep: async () => {
+          sleeps++;
+          if (sleeps === 1) {
+            writeFileSync(
+              missInputPath,
+              JSON.stringify({
+                misses: {
+                  confirmedMisses: [{
+                    classHint: "SSRF (CWE-918)",
+                    sinkPattern: "requests.get(user_url)",
+                    file: "app.py",
+                    line: 7,
+                    whyMissed: "new curated evidence revision",
+                  }],
+                },
+                corpus: {
+                  positives: [{ id: "pos", path: "/x/pos" }],
+                  negativeControls: [{ id: "n1", path: "/x/n1" }],
+                },
+              }),
+              "utf8",
+            );
+          } else {
+            controller.abort();
+          }
+        },
+      },
+    );
+
+    expect(results).toHaveLength(2);
+    expect(sleeps).toBe(2);
   });
 });
 

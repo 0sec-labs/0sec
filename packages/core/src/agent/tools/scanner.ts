@@ -18,65 +18,45 @@ export const scannerToolDefinitions: Record<string, ToolDefinition> = {
   // --allow-scanners (ctx.allowScanners). See getToolsForRole + SCANNER_TOOL_NAMES.
   // They build a safe argv (no shell concat), enforce scope + rate-limit +
   // wallclock, and return PARSED structured output (no raw blobs).
-  run_sqlmap: {
-    name: "run_sqlmap",
+  // One consolidated scanner VERB (tool-curation): sqlmap/nmap/ffuf/nuclei behind
+  // `tool`, instead of four top-level wrappers. Each still builds a safe argv,
+  // enforces scope+rate-limit+wallclock, and returns PARSED structured output;
+  // the ATT&CK layer keys off `tool` (see mitre.ts) so per-scanner attribution
+  // is preserved. Args below are grouped by which scanner uses them.
+  run_scanner: {
+    name: "run_scanner",
     description:
-      "Run sqlmap against an in-scope URL and return a STRUCTURED result (confirmed DBMS, injection points, enumerated databases/tables, dumped columns) — not raw output. Engagement-gated: only available when the scan was started with --allow-scanners. Use for authorized SQLi testing on CTF/internal/pentest targets. Always non-interactive; never escalates to OS/file shells.",
+      "Run an external scanner and return a STRUCTURED result (not raw output). Set `tool`: 'sqlmap' (SQLi → confirmed DBMS, injection points, enumerated dbs/tables), 'nmap' (→ open ports/services/versions), 'ffuf' (content/path fuzz with a FUZZ keyword → hits), 'nuclei' (templates → findings). Engagement-gated: only available when the scan was started with --allow-scanners. Non-interactive; never escalates to OS/file shells.",
     parameters: {
-      url: { type: "string", description: "Target URL (in-scope), e.g. http://host/item?id=1" },
-      data: { type: "string", description: "POST body to test (implies POST), e.g. 'user=a&pass=b'" },
-      level: { type: "number", description: "sqlmap --level 1-5 (default 1)" },
-      risk: { type: "number", description: "sqlmap --risk 1-3 (default 1)" },
-      technique: { type: "string", description: "Restrict techniques, letters from BEUSTQ" },
-      dbms: { type: "string", description: "DBMS hint, e.g. mysql, postgresql" },
-      enumerate_dbs: { type: "boolean", description: "Pass --dbs to enumerate databases" },
-      dump: { type: "boolean", description: "Pass --dump to dump tables/columns once injectable" },
-      threads: { type: "number", description: "Concurrent requests 1-10 (default 1)" },
-      timeout: { type: "number", description: "Requested wallclock seconds (clamped to ceiling)" },
+      tool: { type: "string", description: "Which scanner to run.", enum: ["sqlmap", "nmap", "ffuf", "nuclei"] },
+      // sqlmap + ffuf
+      url: { type: "string", description: "sqlmap/ffuf: target URL (in-scope). ffuf needs a FUZZ keyword, e.g. http://host/FUZZ." },
+      // sqlmap
+      data: { type: "string", description: "sqlmap: POST body (implies POST)." },
+      level: { type: "number", description: "sqlmap --level 1-5 (default 1)." },
+      risk: { type: "number", description: "sqlmap --risk 1-3 (default 1)." },
+      technique: { type: "string", description: "sqlmap: restrict techniques, letters from BEUSTQ." },
+      dbms: { type: "string", description: "sqlmap: DBMS hint, e.g. mysql, postgresql." },
+      enumerate_dbs: { type: "boolean", description: "sqlmap: --dbs to enumerate databases." },
+      dump: { type: "boolean", description: "sqlmap: --dump tables/columns once injectable." },
+      // nmap + nuclei
+      target: { type: "string", description: "nmap/nuclei: target host/IP or URL (in-scope)." },
+      // nmap
+      ports: { type: "string", description: "nmap: port spec e.g. '22,80,443' or '1-1024'." },
+      service_detection: { type: "boolean", description: "nmap: -sV service/version detection." },
+      top_ports: { type: "number", description: "nmap: scan the N most common ports." },
+      skip_ping: { type: "boolean", description: "nmap: skip host discovery (-Pn, default true)." },
+      // ffuf
+      wordlist: { type: "string", description: "ffuf: path to a wordlist on the runner." },
+      match_status: { type: "string", description: "ffuf: status allowlist e.g. '200,204,301,302,403'." },
+      // nuclei
+      severity: { type: "string", description: "nuclei: severity allowlist e.g. 'critical,high,medium'." },
+      tags: { type: "string", description: "nuclei: template tag allowlist e.g. 'cve,rce'." },
+      // shared
+      threads: { type: "number", description: "sqlmap 1-10 / ffuf 1-50 concurrent requests." },
+      timeout: { type: "number", description: "Requested wallclock seconds (clamped to ceiling)." },
     },
-    required: ["url"],
-  },
-
-  run_nmap: {
-    name: "run_nmap",
-    description:
-      "Run nmap against an in-scope host and return a STRUCTURED port table (open ports, services, versions) — not raw output. Engagement-gated: only available with --allow-scanners. NSE scripts are not enabled.",
-    parameters: {
-      target: { type: "string", description: "Target host or IP (in-scope)" },
-      ports: { type: "string", description: "Port spec e.g. '22,80,443' or '1-1024'" },
-      service_detection: { type: "boolean", description: "Enable -sV service/version detection" },
-      top_ports: { type: "number", description: "Scan the N most common ports (--top-ports)" },
-      skip_ping: { type: "boolean", description: "Skip host discovery (-Pn). Default true." },
-      timeout: { type: "number", description: "Requested wallclock seconds (clamped to ceiling)" },
-    },
-    required: ["target"],
-  },
-
-  run_ffuf: {
-    name: "run_ffuf",
-    description:
-      "Run ffuf content/path fuzzing against an in-scope URL (with a FUZZ keyword) and return STRUCTURED hits (path/input, status, length). Engagement-gated: only available with --allow-scanners.",
-    parameters: {
-      url: { type: "string", description: "Target URL with FUZZ keyword, e.g. http://host/FUZZ" },
-      wordlist: { type: "string", description: "Path to a wordlist file on the runner" },
-      match_status: { type: "string", description: "Status allowlist e.g. '200,204,301,302,403'" },
-      threads: { type: "number", description: "Concurrent requests 1-50 (default 10)" },
-      timeout: { type: "number", description: "Requested wallclock seconds (clamped to ceiling)" },
-    },
-    required: ["url", "wordlist"],
-  },
-
-  run_nuclei: {
-    name: "run_nuclei",
-    description:
-      "Run nuclei template-driven scanning against an in-scope target and return STRUCTURED findings (template id, severity, matched-at). Engagement-gated: only available with --allow-scanners.",
-    parameters: {
-      target: { type: "string", description: "Target URL/host (in-scope)" },
-      severity: { type: "string", description: "Severity allowlist e.g. 'critical,high,medium'" },
-      tags: { type: "string", description: "Template tag allowlist e.g. 'cve,rce'" },
-      timeout: { type: "number", description: "Requested wallclock seconds (clamped to ceiling)" },
-    },
-    required: ["target"],
+    required: ["tool"],
   },
 };
 
@@ -87,20 +67,12 @@ export const scannerToolDefinitions: Record<string, ToolDefinition> = {
  * default (0sec#217). Kept as a module constant so both the role tool sets
  * and the `allEnabledTools` (audit/review) path filter on the same source.
  */
-export const SCANNER_TOOL_NAMES: ReadonlyArray<string> = [
-  "run_sqlmap",
-  "run_nmap",
-  "run_ffuf",
-  "run_nuclei",
-];
+export const SCANNER_TOOL_NAMES: ReadonlyArray<string> = ["run_scanner"];
 
 // Tool-name → ToolExecutor handler-method name (0sec#614). Co-located with
 // this domain's definitions so a new tool adds its route here, not in a
 // shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
 // executor instance in agent/tools.ts (handler bodies stay private methods).
 export const scannerDispatch: Record<string, string> = {
-  run_sqlmap: "runSqlmap",
-  run_nmap: "runNmap",
-  run_ffuf: "runFfuf",
-  run_nuclei: "runNuclei",
+  run_scanner: "runScanner",
 };

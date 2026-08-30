@@ -125,6 +125,16 @@ export interface TuiSettings {
   /** Let the model add tools to its own session (off by default). */
   allowModelSelfExtension: boolean;
   /**
+   * Start the TUI-owned lens-synthesis watcher against the curated inbox. This
+   * can invoke a model after an inbox revision, so it remains off by default.
+   */
+  autoEvolveFinderLenses: boolean;
+  /**
+   * Permit the TUI watcher to persist a corpus-validated finder lens. Without
+   * this separate gate it still evaluates revisions but remains dry-run only.
+   */
+  autoPromoteFinderLenses: boolean;
+  /**
    * Per-turn "in→out tok" line under each answer. Consumed by chat-screen's
    * per-message footer (wired by the coordinator); this module only declares it.
    */
@@ -435,6 +445,24 @@ const DEFS: readonly TuiSettingDef[] = [
     group: "Security",
   },
   {
+    key: "autoEvolveFinderLenses",
+    label: "Auto-evolve finder lenses",
+    description:
+      "Start the TUI watcher for ~/.0sec/lens-synthesis/miss-input.json (or OSEC_TUI_LENS_SYNTH_INPUT) so each new curated revision can invoke the configured model.",
+    kind: "boolean",
+    default: false,
+    group: "Security",
+  },
+  {
+    key: "autoPromoteFinderLenses",
+    label: "Auto-promote validated lenses",
+    description:
+      "Permit the TUI watcher to persist a candidate only after its positive and negative-control corpus gate passes, otherwise automatic evaluation stays dry-run.",
+    kind: "boolean",
+    default: false,
+    group: "Security",
+  },
+  {
     key: "showTokenUsage",
     label: "Token usage",
     description: 'Per-turn "in→out tok" line under each answer.',
@@ -531,6 +559,8 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   transcriptDetail: "expanded",
   theme: DEFAULT_THEME_NAME,
   allowModelSelfExtension: false,
+  autoEvolveFinderLenses: false,
+  autoPromoteFinderLenses: false,
   showTokenUsage: false,
   showCost: false,
   showContextMeter: false,
@@ -752,6 +782,8 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     transcriptDetail: enumAt(raw, "transcriptDetail"),
     theme: themeAt(raw),
     allowModelSelfExtension: booleanAt(raw, "allowModelSelfExtension"),
+    autoEvolveFinderLenses: booleanAt(raw, "autoEvolveFinderLenses"),
+    autoPromoteFinderLenses: booleanAt(raw, "autoPromoteFinderLenses"),
     showTokenUsage: booleanAt(raw, "showTokenUsage"),
     showCost: booleanAt(raw, "showCost"),
     showContextMeter: booleanAt(raw, "showContextMeter"),

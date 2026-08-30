@@ -341,18 +341,18 @@ function ScanDetail({
           <CardHeader>
             <div>
               <CardEyebrow>Run output</CardEyebrow>
-              <CardTitle className="mt-2">Threads in this run</CardTitle>
-              <CardDescription>Deduplicated issue threads produced by the selected run.</CardDescription>
+              <CardTitle className="mt-2">Finding families in this run</CardTitle>
+              <CardDescription>Deduplicated finding families produced by the selected run.</CardDescription>
             </div>
           </CardHeader>
           <CardContent>
             {findings.groups.length === 0 ? (
-              <CardEmpty>No threads recorded for this run.</CardEmpty>
+              <CardEmpty>No finding families recorded for this run.</CardEmpty>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead>Thread</TableHead>
+                    <TableHead>Finding</TableHead>
                     <TableHead>Category</TableHead>
                     <TableHead>Count</TableHead>
                     <TableHead className="w-[12rem]">Posture</TableHead>
