@@ -12,14 +12,11 @@ export function reduceActiveSubagents(
   prev: Record<string, SubagentLifecyclePayload>,
   event: SubagentLifecyclePayload,
 ): Record<string, SubagentLifecyclePayload> {
-  if (event.status === "completed" || event.status === "failed") {
-    // Terminal state — remove from active set. The existing
-    // onToolResult handler creates the final result card.
-    const { [event.agent_id]: _removed, ...next } = prev;
-    return next;
-  }
-
-  // queued or running — upsert (new object so React detects change)
+  // Always upsert — a finished agent PARKS in the roster (kept with its terminal
+  // completed/failed status) instead of vanishing, so the operator can still see
+  // it and drill into its retained transcript. This mirrors Oh My Pi, where an
+  // agent that finishes a task parks rather than dies. New object so React
+  // detects the change.
   return { ...prev, [event.agent_id]: event };
 }
 

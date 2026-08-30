@@ -152,18 +152,19 @@ describe("reduceActiveSubagents", () => {
     expect(result.a1?.turns).toBe(2);
   });
 
-  it("removes agent on completed", () => {
+  it("parks a completed agent in the roster (does not remove it)", () => {
     const state = { a1: rEvent, a2: { ...rEvent, agent_id: "a2", task: "XSS probe" } };
     const result = reduceActiveSubagents(state, cEvent);
-    expect(Object.keys(result)).toHaveLength(1);
-    expect(result.a1).toBeUndefined();
+    expect(Object.keys(result)).toHaveLength(2);
+    expect(result.a1?.status).toBe("completed");
     expect(result.a2).toBeDefined();
   });
 
-  it("removes agent on failed", () => {
+  it("keeps a failed agent in the roster with its terminal status", () => {
     const state = { a1: rEvent };
     const result = reduceActiveSubagents(state, fEvent);
-    expect(Object.keys(result)).toHaveLength(0);
+    expect(Object.keys(result)).toHaveLength(1);
+    expect(result.a1?.status).toBe("failed");
   });
 
   it("upserts a second agent alongside the first", () => {
