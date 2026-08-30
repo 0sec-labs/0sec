@@ -13,6 +13,7 @@ import type {
   RuntimeConfig,
 } from "../runtime/types.js";
 import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "../agent/tools.js";
+import type { McpHost } from "../agent/mcp-host.js";
 import { toNativeToolDef, toNativeExtensionToolDef } from "../agent/native-tooldef.js";
 import type { osecDB } from "@0sec/db";
 import { TOOL_DISPATCH } from "../agent/tools/dispatch.js";
@@ -537,6 +538,13 @@ export interface ConsoleSessionConfig {
    * boundaries, which is the loader's turn-boundary safety contract.
    */
   pluginHost?: PluginHost;
+  /**
+   * A connected MCP client host (external tool servers). The CALLER constructs
+   * it and connects its servers (async) before building the session; the console
+   * advertises its discovered tools at turn boundaries, routes `mcp__` calls to
+   * it via the executor, and closes it on cleanup. Absent = no MCP tools.
+   */
+  mcpHost?: McpHost;
 }
 
 /** A live console session: persistent history + a `send()` per operator line. */
@@ -1660,6 +1668,11 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     (toolContext as ToolContext & { selfExtension?: SelfExtensionRegistry }).selfExtension =
       selfExtension;
   }
+  if (config.mcpHost) {
+    // Same cast pattern: the executor's _dispatch resolves mcp__ tool calls to
+    // THIS session's connected host.
+    (toolContext as ToolContext & { mcpHost?: McpHost }).mcpHost = config.mcpHost;
+  }
 
   // The real dispatcher over the real registry. `db = null` → no persistence
   // this pass (findings live in `toolContext.findings` for the session). When
@@ -1729,6 +1742,17 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       Object.assign(ro, gm.readOnly);
     }
 
+    if (config.mcpHost) {
+      // External MCP-server tools. Each defaults to network-capable (MCP tools
+      // reach out of process — the danger-by-omission floor from the mcp-client
+      // paper), so they go through the same scope/approval gate as bash. Their
+      // mcp__ name means the native loop fences their results as untrusted.
+      for (const def of config.mcpHost.registeredTools()) {
+        extras.push(toNativeToolDef(def));
+        net[def.name] = true;
+      }
+    }
+
     networkCapableTools = net;
     localScopeTools = loc;
     readOnlyTools = ro;
@@ -1739,7 +1763,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   // `refreshInjectedTools` is never called, so `nativeTools` stays exactly
   // `baseNativeTools` and the gate maps stay plain copies of the module consts —
   // byte-for-byte the pre-feature behaviour.
-  const injectableToolsPresent = selfExtensionEnabled || config.pluginHost !== undefined;
+  const injectableToolsPresent = selfExtensionEnabled || config.pluginHost !== undefined || config.mcpHost !== undefined;
 
   // `nativeTools` is a `let`: the base (built-in) portion is captured in
   // `baseNativeTools`, and the union of injected tools is refreshed at each turn
@@ -2733,8 +2757,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       messages.length = 0;
     },
     send,
-    cleanup: () => {
+    cleanup: async () => {
       objectiveService.dispose();
+      await config.mcpHost?.closeAll();
       return executor.cleanup();
     },
   };
