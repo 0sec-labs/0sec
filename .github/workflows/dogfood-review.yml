@@ -34,8 +34,8 @@ jobs:
       0SEC_CHATGPT_ACCESS_TOKEN: ""
       0SEC_CHATGPT_OAUTH_REFRESH_TOKEN: ""
       0SEC_CHATGPT_ACCOUNT_ID: ""
-      0SEC_CHATGPT_AUTH_FILE: "${{ runner.temp }}/0sec-dogfood-no-auth.json"
-      0SEC_CODEX_AUTH_JSON_PATH: "${{ runner.temp }}/0sec-dogfood-no-auth.json"
+      0SEC_CHATGPT_AUTH_FILE: "/tmp/0sec-dogfood-no-auth-${{ github.run_id }}.json"
+      0SEC_CODEX_AUTH_JSON_PATH: "/tmp/0sec-dogfood-no-auth-${{ github.run_id }}.json"
       0SEC_SELECTED_PROVIDER: openai
       0SEC_MODEL: gpt-5.6-luna
       DOGFOOD_MODEL: gpt-5.6-luna
