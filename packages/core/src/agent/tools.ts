@@ -8403,6 +8403,12 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     && (featureFlags.pythonExec || name !== "python_exec")
     // 0verse execution is opt-in and path-confined by the executor.
     && (featureFlags.zeroverse || !BINARY_TOOL_NAMES.includes(name as (typeof BINARY_TOOL_NAMES)[number]))
+    // web_search / pty_session are feature-gated everywhere else (networkTools
+    // honors their flags), but leaked into the audit/review "everything" set
+    // because this filter forgot them — inflating the default console from 38 to
+    // 40 advertised tools. Gate them here too so the count matches the flags.
+    && (featureFlags.webSearch || name !== "web_search")
+    && (featureFlags.ptySession || name !== "pty_session")
     // `write_todos` is a dispatchable ALIAS of `update_todos` — keep it out of
     // the audit/review "everything" set so only one plan tool is advertised.
     && name !== "write_todos"
