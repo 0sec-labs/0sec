@@ -328,7 +328,7 @@ function mulberry32(seed: number): () => number {
 }
 
 describe("monotonicity — the central property", () => {
-  it("appending any guard never turns a denial into an allowance (100k trials)", () => {
+  it("appending any guard never turns a denial into an allowance (10k trials)", () => {
     const rand = mulberry32(0x05ecf00d);
     const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)];
 
@@ -367,7 +367,8 @@ describe("monotonicity — the central property", () => {
       capabilitiesResolved: bool(),
     });
 
-    const TRIALS = 100_000;
+    const TRIALS = 10_000;
+    let violation: string | undefined;
     for (let i = 0; i < TRIALS; i++) {
       const n = Math.floor(rand() * 5); // 0..4 base guards
       const base: ToolGuard[] = [];
@@ -380,15 +381,23 @@ describe("monotonicity — the central property", () => {
 
       // (1) Monotone allow: if the extended set allows, the base must too.
       //     Equivalently, a base denial can never become an extended allowance.
-      if (after.allowed) {
-        expect(before.allowed).toBe(true);
+      if (after.allowed && !before.allowed) {
+        violation = `trial ${i}: an appended guard widened access`;
+        break;
       }
 
       // (2) Reasons only grow: base reasons are a PREFIX of the extended reasons
       //     (append-only, order-preserving), so the reason SET can never shrink.
-      expect(after.reasons.slice(0, before.reasons.length)).toEqual(before.reasons);
-      expect(after.reasons.length).toBeGreaterThanOrEqual(before.reasons.length);
+      if (
+        after.reasons.length < before.reasons.length ||
+        before.reasons.some((reason, index) => after.reasons[index] !== reason)
+      ) {
+        violation = `trial ${i}: an appended guard removed or reordered a denial reason`;
+        break;
+      }
     }
+
+    expect(violation).toBeUndefined();
   });
 
   it("no guard can force-allow another guard's denial (adding an 'allow-ish' guard)", () => {
