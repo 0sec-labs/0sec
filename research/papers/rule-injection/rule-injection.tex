@@ -1,0 +1,380 @@
+% 0sec: Just-in-Time Rule Injection design note
+% Compile: pdflatex rule-injection.tex && pdflatex rule-injection.tex
+
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{xcolor}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black,
+}
+
+\title{Just-in-Time Rule Injection for Autonomous Security Agents}
+
+\author{
+  0sec Labs \\
+  \texttt{github.com/0sec-labs/0sec}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Autonomous security agents accumulate guidance through several channels: a
+static system prompt, model-pulled skills, and dynamically injected
+methodology documents. All of these operate at the granularity of a
+\emph{topic} --- a vulnerability class, a full technique, a target profile ---
+and all of them are assembled either before generation begins or at a
+coarse reflection checkpoint. None of them delivers a small, atomic
+\emph{do this / do not do that} correction at the precise moment the agent is
+about to take a specific wrong action. We survey the design space of
+agent rule systems, including Oh My Pi's Time-Traveling Stream Rules (TTSR),
+which is unique in triggering on a regular-expression or structural match
+against the \emph{live output stream} and injecting mid-generation. We then
+document the design decision for a rule-injection layer in 0sec that sits on
+top of its existing dynamic playbooks and just-in-time (JIT) skills. The 0sec
+layer keeps the key TTSR insight --- match the action, not just the aftermath
+--- but adapts it to a turn-based native-API loop: a pure, LLM-free
+\texttt{selectRules} function fires on the \emph{tool input} (the command or
+diff about to run), scoped by phase, language, file glob, and tool, and injects
+a one-line rule at the post-dispatch reflection checkpoint. We give the rule
+schema, the selection logic, the injection and telemetry plumbing, five seed
+security rules, and the rationale for why this belongs beside --- not inside ---
+the playbook and skill layers.
+\end{abstract}
+
+\section{Introduction and Motivation}
+
+A capable security agent already knows a great deal in the abstract. What it
+lacks, repeatedly and expensively, is the right small reminder at the right
+small moment: rotate your headers before you retry against a WAF; keep a
+\texttt{Session} so the authenticated cookie survives the next request; do not
+dump the whole credentials table when a single row proves the finding. Each of
+these is one sentence. Each is worthless five turns early and five turns late.
+And each is tied not to a topic the agent is thinking about, but to a concrete
+\emph{action} the agent is about to emit --- a shell command, a code diff, an
+HTTP request.
+
+0sec today injects guidance through two dynamic mechanisms and one static one,
+described in Section~\ref{sec:gap}. All three deliver large documents keyed to a
+topic. This note argues for, and specifies, a fourth mechanism at the opposite
+end of the granularity axis: atomic, action-triggered rules. The contribution
+is a design decision, not a benchmark. We (i) locate the idea in the prior art,
+(ii) identify the specific gap in 0sec's current stack, and (iii) fix the schema,
+selection function, injection point, telemetry, and controls precisely enough to
+implement without further design work.
+
+\section{Background: Oh My Pi's Time-Traveling Stream Rules}
+\label{sec:ttsr}
+
+Oh My Pi (OMP) introduces \emph{Time-Traveling Stream Rules}
+(TTSR)~\cite{omp,ompttsr,ompwiki}, the closest prior art to what we propose and
+the source of its central idea. A TTSR rule is an object with the fields:
+\texttt{name}; \texttt{condition}, a regular expression evaluated over the output
+stream; \texttt{astCondition}, an ast-grep structural pattern for matching code;
+\texttt{globs}, a path scope; \texttt{interruptMode} and \texttt{repeatMode},
+which govern firing behavior; and \texttt{text}, the content injected on a match.
+
+The distinguishing property is \emph{when} matching runs. Rules are evaluated on
+every streaming \texttt{message\_update} inside the agent session, not at request
+assembly. Three matchers cooperate: \texttt{checkDelta()} runs the regex over the
+buffered text and thinking as it streams; \texttt{checkSnapshot()} and
+\texttt{checkAstSnapshot()} run the regex and ast-grep patterns over the
+reconstructed source of an in-progress edit or write. When a rule matches and its
+mode allows interruption, the agent \emph{aborts mid-token}, waits roughly
+50\,ms, and retries generation from the same point --- now with the rule injected
+as a
+\texttt{<system-interrupt reason="rule\_violation" rule="\{name\}" path="\{path\}">}
+block (a \texttt{<system-reminder ...>} variant is used for non-interrupting
+matches against tool source). That abort-and-retry-from-the-same-position is the
+``time travel'': the model re-generates the offending span having already been
+told what is wrong with it, before the bad token ever reaches a tool.
+
+Two further properties matter for our design. Injections survive context
+compaction, because each is persisted as a hidden \texttt{ttsr-injection} custom
+message rather than living only in the transient stream. And the whole subsystem
+is gated: \texttt{ttsr.enabled} toggles it, \texttt{ttsr.disabledRules} and
+\texttt{ttsr.builtinRules} select the active set, and any rule can opt out of
+interruption with \texttt{interruptMode: never}. The user-facing signal is a
+single amber ``Injecting rule: \guillemotright{}\,name'' banner in the TUI. OMP
+keeps this stream-triggered layer distinct from \emph{static} context rules,
+which are loaded into the system prompt from \texttt{.omp/rules/},
+\texttt{AGENTS.md}, \texttt{.clinerules}, and \texttt{.cursorrules}.
+
+\section{Prior Art in Agent Rule Systems}
+\label{sec:priorart}
+
+Most coding-agent rule systems share an architecture: rules are authored as
+files with some metadata, selected by a coarse trigger, and merged into the
+prompt at \emph{request-assembly} time --- before the model generates. Cursor's
+\texttt{.cursor/rules} uses \texttt{.mdc} files whose frontmatter carries
+\texttt{description}, \texttt{globs}, and \texttt{alwaysApply}, yielding four
+rule types: Always, Auto-Attached (by glob), Agent-Requested (the model decides
+from the description), and Manual~\cite{cursorrules}. Claude Code loads
+\texttt{CLAUDE.md} plus \texttt{@import} references. OpenCode reads
+\texttt{instructions} and \texttt{AGENTS.md}. Continue's \texttt{.continue/rules}
+selects by glob.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+System & Trigger & Injection time & Granularity \\
+\midrule
+Cursor \texttt{.cursor/rules} & glob / description / always & request assembly & file/topic \\
+Claude Code \texttt{CLAUDE.md} & always (+ \texttt{@import}) & request assembly & project \\
+OpenCode \texttt{AGENTS.md} & always & request assembly & project \\
+Continue \texttt{.continue/rules} & glob & request assembly & file \\
+OMP TTSR & regex / AST on live stream & mid-generation & span/action \\
+\textbf{0sec rules (proposed)} & regex on tool input & post-dispatch turn & action \\
+\bottomrule
+\end{tabular}
+\caption{Trigger, injection time, and granularity across agent rule systems.
+Everyone except OMP triggers on globs, file-in-context, or a model decision from
+a description, and injects before generation. OMP is unique in triggering on a
+match against the live output stream and injecting mid-generation. 0sec's
+proposed layer keeps the action-level trigger but moves it to the tool input at a
+turn boundary.}
+\end{table}
+
+The common axis is clear from the table. Cursor, Claude Code, OpenCode, and
+Continue all trigger on \emph{globs}, on \emph{file-in-context}, or on a
+\emph{model decision from a description}, and all inject at request-assembly
+time. OMP alone triggers on a live-stream match and injects mid-generation.
+
+Underneath every one of these systems is the same economy that motivates the
+tool-search tool~\cite{toolsearch}: context is scarce and expensive, so
+guidance should be disclosed progressively rather than loaded all at once. A
+single always-on ruleset bloats the prompt, dilutes attention, and pays for
+rules that never apply. The rule mechanisms above are, in effect, progressive
+disclosure of rules --- surface a rule only when its trigger says it is relevant.
+0sec's design takes the same principle to the finest grain: surface one line only
+at the moment its specific action is imminent.
+
+\section{0sec Today, and the Gap}
+\label{sec:gap}
+
+0sec has two JIT-ish dynamic layers. Both trigger identically: a
+\texttt{matchCount >= 2} threshold of regex hits over roughly the twenty most
+recent tool-result strings.
+
+\paragraph{Dynamic playbooks.} In
+\texttt{packages/core/src/agent/playbooks.ts}, a \texttt{PLAYBOOKS} map holds
+per-vulnerability-class methodology. \texttt{detectPlaybooks()} scores the recent
+tool results, \texttt{buildPlaybookInjection()} renders the winning playbook, and
+\texttt{native-loop.ts} injects it at the 30\% turn-budget checkpoint. A playbook
+is roughly 3.6k tokens, emits \texttt{playbook\_injected} telemetry, and is gated
+by the \texttt{dynamicPlaybooks} feature flag.
+
+\paragraph{JIT skills.} In \texttt{packages/core/src/agent/skills/}, each
+\texttt{SkillDefinition} carries \texttt{\{id, name, description, triggers}
+(a regex array)\texttt{, estimated\_tokens, content\}}. Skills are surfaced to the
+model through \texttt{list\_skills}/\texttt{load\_skill} and pulled on demand by
+the model itself, gated by the \texttt{jitSkills} feature flag.
+
+Both mechanisms deliver \emph{large methodology documents}. Playbooks are keyed
+to a vulnerability class; skills are full methods the model chooses to read. The
+static system prompt is larger still. What none of the three provides is a
+\emph{small atomic do/don't rule delivered at the moment of the offending
+action}, scoped by file glob, language, specific tool, and phase, and --- the
+decisive point --- triggered on the tool \emph{input} (the command or diff about
+to execute) rather than on tool results after the fact. That is the gap.
+
+\section{The 0sec Design}
+\label{sec:design}
+
+We adopt the TTSR insight --- correct the action, not the aftermath --- but
+adapt it to 0sec's execution model. 0sec's agent loop is turn-based over a native
+API; it does not stream into an interruptible token buffer the way OMP does.
+A mid-token abort-and-retry is therefore a v2 concern (Section~\ref{sec:future}).
+The v1 design triggers on tool input and injects at the existing turn boundary.
+
+\subsection{Rule format}
+
+Rules live in \texttt{packages/core/src/agent/rules/*.yaml}. Each rule is atomic:
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+  \item \texttt{id} --- stable identifier, used in telemetry and \texttt{disabledRules}.
+  \item \texttt{name} --- short human label for the TUI banner.
+  \item \texttt{severity} --- \texttt{hint} (silent inject) or \texttt{warn} (inject plus amber TUI line).
+  \item \texttt{trigger} --- the narrowing conjunction: \texttt{phase: [recon|exploit|report]}, \texttt{lang: [...]}, \texttt{tool: [...]}, \texttt{glob: [...]}, \texttt{regex: [...]}.
+  \item \texttt{rule} --- a one-line DO/DON'T string, the injected payload.
+  \item \texttt{repeat} --- \texttt{once-per-scan}, \texttt{on-change}, or \texttt{always}.
+\end{itemize}
+
+\subsection{Selection logic}
+
+Selection is a \emph{pure function}, \texttt{selectRules(context)}, with no LLM
+call. Its context is
+\texttt{\{phase, editedPath, toolName, toolInput, recentToolResultTexts\}}. It
+filters the rule set as a cascade of cheap conjunctions:
+
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+  \item \textbf{phase} --- drop rules whose \texttt{phase} does not include the current phase.
+  \item \textbf{lang / glob} --- match \texttt{glob} against \texttt{editedPath}; drop on mismatch.
+  \item \textbf{tool} --- drop rules whose \texttt{tool} does not include \texttt{toolName}.
+  \item \textbf{regex} --- run \texttt{trigger.regex} over \texttt{toolInput} --- the command or diff about to run.
+\end{enumerate}
+
+The key insight is in the last step: matching the \emph{input} means the rule
+fires on the action the agent is about to take, not merely on what came back.
+Unlike the playbook/skill \texttt{matchCount >= 2} heuristic over results, a
+\emph{single} regex hit is sufficient here, because the preceding phase, glob, and
+tool filters have already narrowed the candidate set to rules that are relevant
+by construction. A lone match at that point is signal, not noise.
+
+\subsection{Injection point}
+
+Rules inject at the \emph{post-tool-dispatch, pre-next-turn} point in
+\texttt{native-loop.ts} --- the same reflection checkpoint that already hosts
+playbook injection. This is deliberately \emph{not} a mid-token abort: 0sec's
+loop is turn-based, so the natural seam is the turn boundary. The payload matches
+the codebase's existing convention, reusing the reminder block shape rather than
+inventing a new one:
+
+\begin{quote}\ttfamily
+<system-reminder reason="rule" rule="\{id\}" path="\{path\}">\{rule\}</system-reminder>
+\end{quote}
+
+Compaction survival reuses the mechanism playbooks already rely on: a
+\texttt{messagesContainText(marker)} check re-injects the rule if compaction has
+dropped it from the working context, so a fired rule does not silently vanish
+across a summarization boundary.
+
+\subsection{Telemetry and controls}
+
+Every firing emits \texttt{onEvent("rule\_injected", \{turn, ruleId, phase,
+trigger, reason\})} and a corresponding \texttt{logEvent} to the database,
+exactly paralleling the existing \texttt{playbook\_injected} path. For
+\texttt{warn}-severity rules the TUI prints the amber ``Injecting rule:
+\guillemotright{}\,name'' line, mirroring OMP's UX; \texttt{hint} rules inject
+silently.
+
+Controls follow the established feature-flag pattern. A master flag,
+\texttt{features.ruleInjection}, defaults \textbf{OFF}. \texttt{rules.disabledRules}
+suppresses named rules and \texttt{rules.builtinRules} selects the active builtin
+set, matching the \texttt{ttsr.disabledRules}/\texttt{ttsr.builtinRules} shape from
+OMP and the flag conventions already used by \texttt{dynamicPlaybooks} and
+\texttt{jitSkills}.
+
+\subsection{Why a fourth layer}
+
+The three layers already present and the one proposed occupy distinct points on
+the granularity axis, and that is precisely why the new layer earns its place
+rather than folding into an existing one:
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+  \item \textbf{Playbooks} --- vulnerability-class methodology; target-level; large document; triggered on results.
+  \item \textbf{Skills} --- a full method; model-pulled on demand; large document.
+  \item \textbf{Rules} --- atomic ``you are about to do this specific thing wrong, right now''; action-triggered on tool input; roughly one line.
+\end{itemize}
+
+A rule is not a small playbook, and a playbook is not a verbose rule. They
+trigger on different signals (input vs.\ results), at different grains (a line
+vs.\ a document), for different purposes (correct an action vs.\ teach a class).
+Collapsing them would either bloat every action-level correction into a document
+or dilute methodology into fragments.
+
+\section{Seed Rules}
+\label{sec:seed}
+
+We seed the builtin set with five rules drawn from recurring, expensive mistakes
+observed in security-agent runs. Each is one line; each is scoped so it fires
+only when its specific action is imminent.
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{py-exploit-session} --- when a Python exploit issues sequential
+  authenticated requests, use a \texttt{requests.Session} so cookie/auth state
+  carries across calls instead of being dropped each request.
+  \item \textbf{waf-rotate-headers} --- on a 403 or WAF block, rotate the
+  User-Agent and headers before retrying rather than hammering the same
+  fingerprint.
+  \item \textbf{shell-injection-safe-poc} --- build proof-of-concept subprocess
+  calls with an argv list, not \texttt{shell=True}, so the PoC does not itself
+  introduce shell injection.
+  \item \textbf{minimal-proof-no-exfil} --- extract the minimal, non-PII proof
+  that demonstrates the finding; do not dump entire credential or user tables.
+  \item \textbf{idor-body-and-path} --- when testing IDOR, change the identifier
+  in \emph{both} the URL path and the request body, and confirm the response is
+  the same resource, i.e.\ that an access boundary was actually crossed.
+\end{enumerate}
+
+\section{Decision}
+\label{sec:decision}
+
+We will add a rule-injection layer to 0sec as specified in
+Section~\ref{sec:design}: YAML rule files under
+\texttt{packages/core/src/agent/rules/}, a pure LLM-free \texttt{selectRules}
+function triggering on tool input through a phase\,$\rightarrow$\,lang/glob\,$\rightarrow$\,tool\,$\rightarrow$\,regex
+cascade, injection at the post-dispatch reflection checkpoint in
+\texttt{native-loop.ts} using the existing \texttt{<system-reminder>} convention,
+compaction survival via the \texttt{messagesContainText} re-inject trick,
+\texttt{rule\_injected} telemetry paralleling \texttt{playbook\_injected}, and the
+five seed rules of Section~\ref{sec:seed}. The layer ships behind
+\texttt{features.ruleInjection}, defaulting OFF, and is complementary to --- not a
+replacement for --- dynamic playbooks and JIT skills. We deliberately adopt
+TTSR's action-level trigger while declining its mid-token abort mechanism, whose
+cost is not justified by 0sec's turn-based loop at v1.
+
+\section{Limitations and Future Work}
+\label{sec:future}
+
+The v1 design has two structural limits, both inherited from the decision to
+trigger at the turn boundary rather than mid-generation. First, a rule fires
+\emph{after} the offending tool has been dispatched: the correction lands before
+the \emph{next} turn, so a genuinely destructive first action is not prevented,
+only flagged and corrected forward. A v2 pre-execution interception hook --- run
+\texttt{selectRules} against a proposed tool call before dispatch, and block or
+rewrite on a match --- would close this window and bring 0sec closer to TTSR's
+prevent-before-emit guarantee. Second, v1 matches only regexes over the tool
+input string; it cannot reason about code structure. Adding \emph{AST triggers}
+in the spirit of TTSR's \texttt{astCondition}/\texttt{checkAstSnapshot()} would
+let rules match structural patterns in a proposed diff (e.g.\ a
+\texttt{subprocess} call with \texttt{shell=True} regardless of formatting)
+rather than brittle text patterns. Both are deferred to keep v1 a pure,
+side-effect-free selection function that is cheap to test and safe to ship OFF by
+default.
+
+\begin{thebibliography}{9}
+
+\bibitem{omp}
+Oh My Pi.
+\newblock \url{https://github.com/can1357/oh-my-pi}.
+
+\bibitem{ompttsr}
+Oh My Pi X --- TTSR Injection Lifecycle.
+\newblock \url{https://github.com/rohreid/oh-my-pi-x/blob/main/docs/ttsr-injection-lifecycle.md}.
+
+\bibitem{ompwiki}
+Oh My Pi --- System Prompts (DeepWiki).
+\newblock \url{https://deepwiki.com/can1357/oh-my-pi/4.4-system-prompts}.
+
+\bibitem{cursorrules}
+Cursor --- Rules for AI.
+\newblock \url{https://docs.cursor.com/context/rules}.
+
+\bibitem{toolsearch}
+Anthropic --- Tool Search Tool.
+\newblock \url{https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool}.
+
+\end{thebibliography}
+
+\end{document}
