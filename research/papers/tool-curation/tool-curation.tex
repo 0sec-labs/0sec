@@ -1,0 +1,424 @@
+% Compile: pdflatex tool-curation.tex && pdflatex tool-curation.tex
+
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{xcolor}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black,
+}
+
+\title{Tool Curation for Security Agents}
+
+\author{
+  0sec Labs \\
+  \texttt{github.com/0sec-labs/0sec}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+0sec registers 56 model-facing tools, and its default interactive console
+advertises roughly 40 of them to the model in a single reasoning context. Both
+Anthropic's own guidance and independent benchmarks place reliable tool
+selection at roughly 10--20 always-loaded tools, with accuracy degrading
+non-linearly past 30--50 and token cost accruing on every turn. The lean
+non-console lanes of 0sec (discovery, attack, verify, report, subagents) already
+sit inside the safe band; the audit-default console path is the outlier, and a
+flag-filter bug inflates its advertised count further. This paper audits the
+model-facing tool surface against current tool-use accuracy guidance, documents
+the redundancy in the registry that consolidates into namespaced high-level
+verbs, and commits to a plan: fix the flag bug now, consolidate redundant
+families, hold each reasoning context to 10--20 tools via per-phase loadouts,
+and add a deferred \texttt{list\_tools} / \texttt{load\_tool} front door for the
+long tail while keeping the 3--5 hottest tools always-on. Every repository claim
+is anchored to a \texttt{packages/<path>:<line>} reference; external claims cite
+a URL. This is a research and decision log dated 2026-08-30.
+\end{abstract}
+
+\section{The problem: what the model actually sees}
+
+\subsection{The registry}
+
+\texttt{TOOL\_REGISTRY\_ORDER} in \texttt{packages/core/src/agent/tools/index.ts}
+enumerates \textbf{56} tool names, assembled from per-domain definition modules
+(recon, findings, system, access-control, exploit, intel, skills, scanner,
+detections, cloud, orchestrator, oast, python, binary, ask-operator, todos). The
+split into per-domain files is deliberate --- it lets parallel feature PRs edit
+disjoint files --- but it also makes the total surface easy to grow without
+anyone watching the aggregate count.
+
+\subsection{The console default path}
+
+The interactive console picks \texttt{audit} as its default role:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{packages/cli/src/commands/console.ts:164} ---
+  \texttt{let role: ConsoleRole = "audit";}
+  \item \texttt{packages/core/src/console/turn-engine.ts:1670} ---
+  \texttt{getToolsForRole(role, \{ allowScanners: config.allowScanners \})},
+  with \textbf{no \texttt{hasScope}} passed.
+\end{itemize}
+
+That matters because of how \texttt{getToolsForRole} resolves \texttt{audit}:
+
+\begin{quote}
+\ttfamily
+// packages/core/src/agent/tools.ts (roleTools map)\\
+audit:\ \ opts?.hasScope ? scopedSourceTools : allEnabledTools,\\
+review: opts?.hasScope ? scopedSourceTools : allEnabledTools,
+\end{quote}
+
+Without \texttt{hasScope}, \texttt{audit} falls through to
+\texttt{allEnabledTools} --- the ``everything the flags permit'' set --- rather
+than the tight \texttt{scopedSourceTools} set intended for a scoped source audit.
+Net effect: \textbf{$\sim$40 tool schemas advertised to the model on every
+console turn.}
+
+\subsection{The lean lanes are fine}
+
+For contrast, the non-console lanes are already disciplined:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+Lane / role & Tools advertised & Source \\
+\midrule
+discovery & 16 (\texttt{networkTools}) & \texttt{tools.ts:8421} \\
+attack & 16 (\texttt{networkTools}) & \texttt{tools.ts:8422} \\
+verify & 16 (no scope) -- 20 (with scope: \texttt{+fileTools}) & \texttt{tools.ts:8424} \\
+report & 3 & report role set \\
+subagents & 6 --- \texttt{["bash","save\_finding","done"]} + \texttt{report\_status} + \texttt{send\_message} + \texttt{check\_messages} & hardcoded \\
+\textbf{console (audit default)} & \textbf{$\sim$40 (\texttt{allEnabledTools})} & \texttt{console.ts:164} + \texttt{turn-engine.ts:1670} \\
+\bottomrule
+\end{tabular}
+\caption{Tools advertised per lane. The engine already knows how to hand a loop a curated set; the console is the one context that opted into the firehose.}
+\label{tab:lanes}
+\end{table}
+
+The engine already knows how to hand a loop a curated set --- the kernel-verify
+loop is the extreme case, a single allowlisted tool (\texttt{kernel\_run}). The
+console is the one context that opted into the firehose.
+
+\subsection{The flag-filter bug (40 vs 38)}
+
+\texttt{allEnabledTools} (\texttt{packages/core/src/agent/tools.ts:8382-8414})
+is a big \texttt{Object.keys(TOOL\_DEFINITIONS).filter(...)} that correctly gates
+many families behind their feature flags:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{list\_skills} / \texttt{load\_skill} behind \texttt{jitSkills}
+  \item \texttt{use\_loot} behind \texttt{lootLedger}
+  \item \texttt{plan} behind \texttt{agentPlan}
+  \item scanner wrappers behind \texttt{allowScanners} / \texttt{SCANNER\_TOOL\_NAMES}
+  \item cloud tools behind \texttt{cloudSurface}
+  \item \texttt{start\_scan} behind \texttt{agentFanout}
+  \item OAST tools behind \texttt{oastCollaborator}
+  \item \texttt{python\_exec} behind \texttt{pythonExec}
+  \item 0verse binary tools behind \texttt{zeroverse}
+  \item \texttt{write\_todos} and \texttt{self\_extend} excluded outright
+\end{itemize}
+
+What it does \textbf{not} do is filter \texttt{web\_search} and
+\texttt{pty\_session} by their default-OFF flags. Both are default-off
+capabilities, but because they have no exclusion clause in this filter they leak
+into \texttt{allEnabledTools} regardless. So the console shows \textbf{40 tools
+when it should show 38}. This is a straightforward one-clause fix (add the two
+flag checks, matching the existing pattern for \texttt{python\_exec}) and it is
+the cheapest win in this whole document.
+
+\section{The evidence: why 30--50 tools is the wrong number}
+
+\subsection{Anthropic's own guidance}
+
+Anthropic's tool-search documentation states that tool-selection accuracy
+degrades once an agent is presented with more than roughly \textbf{30--50 tools},
+and recommends switching to a tool-search / deferred-loading approach at
+\textbf{$\geq$10 tools or $\sim$10K tokens of tool definitions}
+\citep{anthropic-toolsearch,anthropic-sdk-toolsearch}.
+
+The cost is not only accuracy. Tool schemas are re-sent on \textbf{every} turn,
+so they are a standing tax on the context window. Anthropic's figures: a setup
+wiring in $\sim$5 MCP servers can spend on the order of \textbf{55K tokens on
+tool definitions before any work happens}, and tool search cuts that by
+\textbf{{>}85\%} by loading only the definitions the model actually needs.
+
+Anthropic's ``Writing effective tools for AI agents''
+\citep{anthropic-writingtools} is blunt about the direction: \textit{``more tools
+don't always lead to better outcomes.''} Its recommendations map directly onto
+our plan --- consolidate overlapping operations into a smaller number of
+\textbf{high-level verbs}, \textbf{namespace} related tools, and return
+\textbf{token-efficient responses}.
+
+\subsection{Independent benchmarks show non-linear collapse}
+
+This is not a soft ``gets a bit worse'' curve. Independent measurements show the
+failure is non-linear:
+
+\begin{itemize}[leftmargin=*]
+  \item The Berkeley Function-Calling Leaderboard (BFCL) style measurements show
+  accuracy falling from $\sim$\textbf{43\% to $\sim$2\%} as the available tool
+  count grew from \textbf{4 to 51} \citep{anthropic-advancedtooluse}.
+  \item The ``over-tooled agent'' write-up \citep{overtooled} documents the same
+  shape and the token-tax dynamic.
+  \item Retrieval-based tool selection (load only the relevant subset per task)
+  has been shown to roughly \textbf{triple accuracy while halving token usage}
+  versus loading everything \citep{arxiv-retrieval}.
+\end{itemize}
+
+The consistent finding across sources: the model does not degrade gracefully when
+handed a large flat tool menu --- it collapses, and it pays for the privilege in
+tokens.
+
+\subsection{The safe zone}
+
+Synthesizing the above, the practical safe zone for \textit{always-loaded} tools
+is roughly \textbf{10--20}. Beyond that, the recommendation is not ``prune to 20
+and stop'' but ``keep the hot set small and put the long tail behind a discovery
+layer.'' Our lean lanes (16--20) already sit inside this band; the console (40)
+does not.
+
+\section{Our redundancy: what consolidates}
+
+An audit of the 56-tool registry surfaces several families where multiple tools
+express one concept. Collapsing these into namespaced verbs both shrinks the
+count and makes selection easier (fewer near-synonyms for the model to
+disambiguate).
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lccl}
+\toprule
+Redundant set & Count & Consolidation & Notes \\
+\midrule
+\texttt{bash} + \texttt{run\_command} & 2 & keep one primitive & \texttt{run\_command} is $\approx$ \texttt{bash} with an allow-list; policy flag, not a separate verb \\
+\texttt{plan} + \texttt{update\_todos} + \texttt{write\_todos} & 3 & one planning tool & \texttt{write\_todos} is already a dispatchable \textbf{alias} of \texttt{update\_todos} (excluded at \texttt{tools.ts}) \\
+\texttt{run\_sqlmap} / \texttt{run\_nmap} / \texttt{run\_ffuf} / \texttt{run\_nuclei} & 4 & \texttt{run\_scanner(\{ tool, args \})} & one dispatch verb; wrappers differ only by binary \\
+\texttt{intel\_*} (5 verbs) & 5 & \texttt{intel(\{ action \})} & five actions collapse to one namespaced verb with an \texttt{action} discriminator \\
+\texttt{discover\_api\_surface} & 1 & fold into \texttt{surface\_sweep} & \texttt{discover\_api\_surface} is a strict subset of \texttt{surface\_sweep} \\
+\texttt{spawn\_agent} / \texttt{spawn\_agents} / \texttt{spawn\_persistent\_agent} & 3 & one spawn verb & three variants; parameterize lifetime/fan-out \\
+\bottomrule
+\end{tabular}
+\caption{Redundant tool families and their namespaced-verb consolidations.}
+\label{tab:redundancy}
+\end{table}
+
+None of these consolidations removes capability --- they remove \textit{surface}.
+The scanner and intel collapses in particular convert a fan of near-identical
+schemas into a single verb with a discriminated argument, which is exactly the
+``high-level verbs + namespace'' pattern Anthropic recommends.
+
+\section{The pattern we already have: JIT skills}
+
+0sec already ships progressive disclosure --- for methodology, not for tools. The
+JIT-skills feature (\texttt{packages/core/src/agent/tools/skills.ts}, gated by the
+\texttt{jitSkills} flag) exposes two tools:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{list\_skills} --- enumerate available methodology guides
+  \item \texttt{load\_skill} --- \textit{``Load a skill's methodology guide into
+  your working context. Use list\_skills first to see what's available.''}
+  (\texttt{skills.ts:28})
+\end{itemize}
+
+The model discovers and pulls in methodology on demand instead of carrying every
+guide in the base prompt. This is the same shape as tool search: a cheap index
+tool plus an on-demand loader, keeping the base context small.
+
+\textbf{There is no equivalent \texttt{list\_tools} / \texttt{load\_tool} layer
+for tools yet.} The long tail of tools (scanners, cloud, OAST, intel, binary) is
+either always-on or gated by a static feature flag --- there is no mechanism for
+the model to pull a rarely-used tool into context for one task and drop it after.
+Building that layer, mirroring JIT skills, is the structural fix for the long
+tail.
+
+\section{The plan}
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Fix the flag-filter bug.} Add \texttt{web\_search} and
+  \texttt{pty\_session} flag checks to the \texttt{allEnabledTools} filter
+  (\texttt{tools.ts:8382-8414}) so the console honors their default-OFF flags.
+  Immediate, low-risk, 40 $\rightarrow$ 38.
+  \item \textbf{Target $\sim$10--20 always-loaded tools per reasoning context.}
+  Adopt the safe-zone band as an explicit budget for any single model context,
+  and treat the console-audit default ($\sim$40) as a bug to be paid down, not a
+  baseline.
+  \item \textbf{Consolidate the scanner / intel / spawn families into namespaced
+  verb tools} (Section 3): \texttt{run\_scanner(\{tool,args\})},
+  \texttt{intel(\{action\})}, one spawn verb, one planning tool, fold
+  \texttt{discover\_api\_surface} into \texttt{surface\_sweep}, and pick a single
+  shell primitive.
+  \item \textbf{Per-phase loadouts.} Extend the discipline the engine already
+  applies per role --- recon / exploit / triage / report each get a curated
+  static set sized to the band. 0sec already has per-role sets
+  (\texttt{networkTools}, \texttt{fileTools}, the report set); this formalizes and
+  completes that.
+  \item \textbf{Deferred loading front door.} Add \texttt{list\_tools} /
+  \texttt{load\_tool}, mirroring JIT skills, for the long tail (scanners, cloud,
+  OAST, intel, binary). Keep the \textbf{3--5 hottest tools always-on} (e.g. a
+  shell primitive, \texttt{http\_request}, \texttt{save\_finding},
+  \texttt{read\_file}) so the common path never pays a load round-trip.
+  \item \textbf{Invest in tool descriptions.} Write descriptions with
+  task-matching keywords so both the model and any retrieval layer can select
+  correctly. Per Anthropic's writing-tools guidance, description quality is a
+  first-class lever, not a nicety.
+\end{enumerate}
+
+\subsection{Tradeoffs}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Deferred loading (step 5) costs a round-trip.}
+  \texttt{list\_tools} $\rightarrow$ \texttt{load\_tool} $\rightarrow$ use is one
+  extra hop before the model can act with a cold tool. That is acceptable for the
+  long tail (rarely-used tools) but not for the hot path --- hence the always-on
+  core.
+  \item \textbf{Per-phase static loadouts (step 4) avoid the round-trip} at the
+  cost of some up-front curation and the risk of a phase occasionally needing a
+  tool outside its set. The two mechanisms are complementary: static loadouts for
+  the predictable hot set of each phase, deferred loading for the unpredictable
+  long tail. Most phases should need the loader rarely.
+  \item \textbf{Consolidation (step 3) trades explicitness for surface.} A single
+  \texttt{run\_scanner(\{tool\})} is one more argument for the model to get right
+  than four named wrappers --- but it is four fewer schemas to disambiguate, and
+  the disambiguation cost dominates at our scale.
+\end{itemize}
+
+\section{Target per-context tool counts}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+Context & Today & Target & Mechanism \\
+\midrule
+console (audit default) & $\sim$40 (\texttt{allEnabledTools}, incl. 2-tool bug) & $\sim$15--18 & flag fix + per-phase loadout + deferred long tail \\
+discovery / attack & 16 (\texttt{networkTools}) & $\sim$12--16 & already in band; trim via consolidation \\
+verify & 16--20 & $\sim$12--16 & already in band \\
+report & 3 & 3 & unchanged \\
+subagents & 6 (hardcoded) & 6 & unchanged \\
+kernel-verify & 1 (\texttt{kernel\_run}) & 1 & reference for single-tool discipline \\
+always-on core (new) & n/a & 3--5 & shell + \texttt{http\_request} + \texttt{save\_finding} + \texttt{read\_file} \\
+\bottomrule
+\end{tabular}
+\caption{Target per-context tool counts. Every context lands inside the 10--20 band, and the largest offender (console) comes down by roughly half.}
+\label{tab:targets}
+\end{table}
+
+Every context lands inside the 10--20 band, and the largest offender (console)
+comes down by roughly half.
+
+\section{Decision}
+
+We will:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Fix the \texttt{web\_search} / \texttt{pty\_session} flag-filter
+  bug} in \texttt{allEnabledTools} (\texttt{tools.ts:8382-8414}) so the console
+  honors default-OFF flags. This is the immediate, isolated first change.
+  \item \textbf{Hold every reasoning context to $\sim$10--20 always-loaded
+  tools}, adopting the safe-zone band as an explicit design budget.
+  \item \textbf{Consolidate the redundant scanner / intel / spawn / todo / shell
+  families into namespaced verb tools} per Section 3, removing surface without
+  removing capability.
+  \item \textbf{Build a \texttt{list\_tools} / \texttt{load\_tool}
+  deferred-loading layer for the long tail}, mirroring the existing JIT-skills
+  pattern, while keeping a 3--5 tool always-on core so the common path never pays
+  a load round-trip.
+  \item \textbf{Complete per-phase loadouts} so recon / exploit / triage / report
+  each carry a curated static set, extending the per-role discipline the engine
+  already has.
+\end{enumerate}
+
+\textbf{Why.} Both Anthropic's guidance and independent benchmarks agree that a
+large flat tool menu degrades selection accuracy non-linearly (BFCL 43\%
+$\rightarrow$ 2\% from 4 $\rightarrow$ 51 tools) and taxes the context on every
+turn, while retrieval-based selection roughly triples accuracy at half the tokens.
+Our lean lanes already prove the discipline works inside our own codebase; the
+console default is the outlier. We already own the exact progressive-disclosure
+pattern (JIT skills) needed to extend that discipline to the long tail. The
+changes are ordered cheapest-first (bug fix) to most-structural (deferred
+loading) so each ships and pays off independently.
+
+\section{Open questions}
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Where is the always-on / deferred line?} We propose a 3--5 tool
+  always-on core, but the exact membership (does \texttt{search\_files} belong on
+  the hot path? \texttt{query\_findings}?) needs per-phase telemetry on tool-call
+  frequency before we hardcode it.
+  \item \textbf{Static loadout vs. deferred loader as the primary mechanism.}
+  Per-phase static sets avoid round-trips but risk a phase missing a tool it
+  occasionally needs. How often does a phase reach outside its set in practice? If
+  it's frequent, the loader should lead; if rare, static loadouts should.
+  \item \textbf{Retrieval quality for \texttt{load\_tool}.} If \texttt{list\_tools}
+  returns a ranked/filtered subset rather than the full menu, we need a selection
+  signal (keyword match on descriptions, embedding retrieval, or phase heuristics).
+  Which is worth the complexity at 56 tools --- is a flat \texttt{list\_tools}
+  enough until the registry is much larger?
+  \item \textbf{Consolidation vs. observability.} Collapsing
+  \texttt{run\_sqlmap}/\texttt{run\_nmap}/\ldots into
+  \texttt{run\_scanner(\{tool\})} changes how tool usage shows up in telemetry and
+  audit logs. Do our dashboards and finding provenance depend on the per-wrapper
+  tool names? If so, the discriminator must be preserved in the event stream.
+  \item \textbf{Should the console stop defaulting to \texttt{audit}?} The bug is
+  that audit-without-scope resolves to \texttt{allEnabledTools}. Even after the
+  loadout work, is \texttt{audit} the right console default, or should the console
+  default to a purpose-built interactive loadout instead of a source-audit role?
+  \item \textbf{Argument-error rate after consolidation.} Namespaced verbs move
+  complexity from tool-selection into argument-selection. We should measure
+  malformed-argument / rejected-call rates before and after consolidation to
+  confirm the trade is net-positive (cf. the kernel-verify discipline of rejecting
+  malformed submissions without spending a budget slot).
+\end{enumerate}
+
+\begin{thebibliography}{99}
+
+\bibitem{anthropic-toolsearch}
+Anthropic. \textit{Tool search tool}. Claude Platform Documentation.
+\url{https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool}
+
+\bibitem{anthropic-sdk-toolsearch}
+Anthropic. \textit{Tool search (Agent SDK)}. Claude Code Documentation.
+\url{https://code.claude.com/docs/en/agent-sdk/tool-search}
+
+\bibitem{anthropic-writingtools}
+Anthropic. \textit{Writing effective tools for AI agents}. Anthropic Engineering.
+\url{https://www.anthropic.com/engineering/writing-tools-for-agents}
+
+\bibitem{anthropic-advancedtooluse}
+Anthropic. \textit{Advanced tool use}. Anthropic Engineering.
+\url{https://www.anthropic.com/engineering/advanced-tool-use}
+
+\bibitem{overtooled}
+T. Pan. \textit{The over-tooled agent problem}. 2026.
+\url{https://tianpan.co/blog/2026-04-19-over-tooled-agent-problem}
+
+\bibitem{arxiv-retrieval}
+Retrieval-based tool selection for large tool libraries. arXiv:2605.18857.
+\url{https://arxiv.org/abs/2605.18857}
+
+\end{thebibliography}
+
+\end{document}

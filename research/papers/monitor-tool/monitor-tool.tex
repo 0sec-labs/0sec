@@ -1,0 +1,506 @@
+% Compile: pdflatex monitor-tool.tex && pdflatex monitor-tool.tex
+
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{xcolor}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black,
+}
+
+\title{The Monitor Tool: Supervising Long-Running Processes}
+
+\author{
+  0sec Labs \\
+  \texttt{github.com/0sec-labs/0sec}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+0sec's agent can run commands, but it cannot \textit{supervise} a process that
+outlives a single tool call. Every execution primitive shipped today is built
+around ``run to completion within a timeout, then hand back the whole output,'' a
+model that breaks the moment the agent must stand up a dev server and then attack
+it, drive a long scanner that emits findings incrementally, watch a fuzzer for
+the first crash marker, or kick off a build and continue working. This paper
+specifies a dedicated \texttt{monitor} tool that makes long-running supervision a
+first-class, structured capability. We audit the current execution surface and
+show that a background-run + poll/tail + wait-until primitive is net-new; we
+study prior art (Oh My Pi's \texttt{hub} process family, whose structured
+ready-gate is the model to follow, and Claude Code's Monitor tool, whose lack of
+structured readiness is the instructive weakness); and we propose a single
+namespaced \texttt{monitor} tool with an \texttt{op} discriminator and three
+deliberate tightenings for a security agent: \texttt{args[]} instead of a shell
+string, a structured validated ready-gate, and signal-first cursor-bounded
+reporting. Every repository claim is anchored to a
+\texttt{packages/<path>:<line>} reference.
+\end{abstract}
+
+\section{Problem}
+
+0sec's agent can run commands, but it cannot \textit{supervise} a process that
+outlives a single tool call. Every execution primitive we ship today is built
+around ``run to completion within a timeout, then hand back the whole output.''
+That model breaks the moment the agent needs to:
+
+\begin{itemize}[leftmargin=*]
+  \item Stand up a \textbf{dev server / target under test} and then attack it
+  (the server must stay up across many subsequent tool calls).
+  \item Drive a \textbf{long scanner} --- \texttt{nuclei}, \texttt{nmap},
+  \texttt{ffuf}, \texttt{gobuster}, \texttt{sqlmap} --- that legitimately runs for
+  minutes and emits findings incrementally.
+  \item Run a \textbf{fuzzer} and watch for the first crash/finding marker, then
+  stop it.
+  \item Kick off a \textbf{build} or install step and continue working while it
+  compiles, coming back only when it finishes (or fails).
+\end{itemize}
+
+Right now the agent fakes all of this with \texttt{bash} timeouts and shell
+plumbing. This doc specifies a dedicated \texttt{monitor} tool that makes
+long-running supervision a first-class, structured capability.
+
+\section{The gap in the current tool surface}
+
+We audited every execution-capable tool in the engine. None of them background a
+process and let the agent poll, tail, or wait on it.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{\texttt{bash}}
+  (\texttt{packages/core/src/agent/tools/system.ts:104}) runs a shell command
+  with a \textbf{timeout only} --- default 30s, max 120s
+  (\texttt{system.ts:110}). It spawns the command in a \textbf{detached process
+  group purely so the timeout can kill the whole tree}, not so it can be left
+  running. There is no handle, no polling, no tail. When the call returns, the
+  process is dead.
+  \item \textbf{\texttt{run\_command}} (registered at
+  \texttt{packages/core/src/agent/tools/index.ts:79}, defined in
+  \texttt{system.ts:78}) is the read-only analysis variant: a restricted command
+  surface (``No shell operators like \texttt{;}, \texttt{\&\&}, \texttt{<},
+  \texttt{>}, \texttt{\$}'', \texttt{system.ts:80}) with the same
+  run-to-completion-within-a-timeout contract. Also not a supervisor.
+  \item \textbf{\texttt{pty\_session}} (\texttt{index.ts:96}) is the closest
+  existing primitive: a \textit{persistent interactive terminal} with create /
+  send / read / close / list operations. But it is \textbf{interactive-shell
+  oriented} --- it models a human at a TTY, not a managed daemon with readiness
+  and lifecycle --- and it is gated behind the \texttt{ptySession} feature flag,
+  \textbf{default OFF}.
+  \item \textbf{\texttt{python\_exec}} (\texttt{index.ts:117}) is a persistent
+  kernel, but it is \textbf{compute-only} (a Python REPL state), not a process
+  supervisor, and is also \textbf{default OFF}.
+  \item \textbf{\texttt{spawn\_persistent\_agent}} (\texttt{index.ts:88}) is an
+  \textbf{agent} lifecycle --- a long-lived \textit{reasoning} worker --- not an
+  OS-process monitor.
+\end{itemize}
+
+So a background-run + poll/tail + wait-until primitive is \textbf{net-new}.
+Nothing in the registry composes into it without gluing shell hacks together
+inside \texttt{bash}.
+
+\section{Prior art}
+
+\subsection{The model to follow --- Oh My Pi's \texttt{hub} process family}
+
+Oh My Pi ships exactly the primitive we want, and its shape is worth copying
+closely. See the \texttt{hub} tool docs \citep{omp-hub}. The \texttt{hub} process
+family exposes: \texttt{start}, \texttt{ps}, \texttt{logs}, \texttt{stop},
+\texttt{restart}, \texttt{describe}, \texttt{send}, \texttt{wait}.
+
+The standout primitive is the \textbf{ready-gate on \texttt{start}}. Instead of
+returning as soon as the process is spawned, \texttt{start} accepts a
+\texttt{ready} condition and returns \textit{only once that condition is met}:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{ready.log} --- a \textbf{regex} matched against the process's
+  output.
+  \item \texttt{ready.port} --- a TCP port (1--65535) that must accept a
+  connection.
+  \item \texttt{ready.host} --- host for the port probe.
+  \item \texttt{ready.timeout} --- default 30s, capped at 1h.
+\end{itemize}
+
+If both \texttt{log} and \texttt{port} are supplied, the gate is an \textbf{AND}:
+the process is ``ready'' only when the log line has appeared \textit{and} the port
+is accepting. This is the difference between ``I launched a server'' and ``the
+server is actually serving.''
+
+Its \texttt{logs} operation is equally well-shaped:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{grep} --- regex filter over the buffered output.
+  \item \texttt{lines} --- tail N lines.
+  \item \texttt{follow} --- stream until the log advances or the process exits.
+  \item \texttt{cursor} --- a \textbf{byte offset to resume from}, so repeated
+  polls never re-emit output the agent has already seen. Each call returns a
+  \textbf{new cursor}.
+  \item \texttt{timeout} --- default 30s, max 3600s.
+\end{itemize}
+
+\texttt{send} writes to a running process: \texttt{text} (to stdin), \texttt{keys}
+(named keys like \texttt{ENTER} / \texttt{CTRL\_C}), or a \texttt{signal}.
+
+\texttt{wait} \textbf{races} three outcomes --- process exit, an output-pattern
+regex match, and a timeout --- and also supports a \textbf{wait-for-all} mode
+across several processes. Critically, \texttt{wait} must \textbf{track process
+identity across auto-restart}: if a supervised process crashes and is restarted, a
+pending \texttt{wait} on the \textit{old} process must not be spuriously satisfied
+by the \textit{replacement}. Identity is per incarnation, not per name.
+
+\subsection{The contrast --- Claude Code's Monitor tool}
+
+Claude Code has a Monitor tool \citep{cc-monitor} that runs a shell command in the
+background and \textbf{streams stdout as event notifications}, with lines batched
+within a $\sim$200ms window. Its parameters are \texttt{command},
+\texttt{description}, \texttt{timeout\_ms} (default 300000, cap 3600000), and
+\texttt{persistent}.
+
+The instructive weakness: Monitor has \textbf{no structured readiness or wait
+condition}. To express ``wait until the server prints \texttt{Listening}'' you
+encode a \texttt{while} loop \textit{inside the command string} --- polling
+\texttt{curl} or grepping a log in shell. That works, but it pushes the control
+logic into a fragile, injection-prone shell one-liner that the agent has to author
+correctly every time. Claude Code's background \texttt{Bash}
+(\texttt{run\_in\_background}) is even thinner: detach and notify \textbf{once} on
+completion.
+
+The lesson from both: streaming and backgrounding are necessary but not
+sufficient. The \textbf{structured ready-gate and structured wait} are what turn
+``a process is running'' into ``a condition the agent can reason about.''
+
+\section{Proposed spec}
+
+A single namespaced \texttt{monitor} tool with an \texttt{op} discriminator,
+mirroring \texttt{hub} but tightened for a security tool. Operations:
+\texttt{start}, \texttt{logs}, \texttt{wait}, \texttt{stop}, \texttt{restart},
+\texttt{ps}, \texttt{send}.
+
+\subsection{\texttt{start}}
+
+Launch and supervise a process, blocking until ready (or the ready-gate times
+out).
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+field & type & notes \\
+\midrule
+\texttt{name} & string, 1--48 chars & stable handle used by every other op \\
+\texttt{application} & string & the executable --- \textbf{not} a shell string \\
+\texttt{args} & string[] & argv vector, passed directly to exec \\
+\texttt{env} & object & extra environment variables \\
+\texttt{cwd} & string & working directory \\
+\texttt{ready.log} & regex & output line that marks readiness \\
+\texttt{ready.port} & 1--65535 & TCP port that must accept \\
+\texttt{ready.host} & string & host for the port probe \\
+\texttt{ready.timeout\_s} & number & default 30, cap 3600 \\
+\texttt{restart} & enum & \texttt{no} \textbar\ \texttt{on-failure} \textbar\ \texttt{always} \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{start} operation fields.}
+\label{tab:start}
+\end{table}
+
+\texttt{start} blocks until the ready condition is satisfied. When both
+\texttt{ready.log} and \texttt{ready.port} are given, semantics are \textbf{AND}
+--- both must hold. No \texttt{command} shell string is ever accepted (see
+rationale below).
+
+\subsection{\texttt{logs}}
+
+Pull filtered, cursor-bounded output from a supervised process.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+field & type & notes \\
+\midrule
+\texttt{name} & string & which process \\
+\texttt{grep} & regex & filter output lines \\
+\texttt{tail} / \texttt{lines} & number & last N lines \\
+\texttt{follow} & bool & stream until advancement or exit \\
+\texttt{cursor} & number & byte offset to resume from (no re-emit) \\
+\texttt{timeout\_s} & number & default 30, cap 3600 \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{logs} operation fields.}
+\label{tab:logs}
+\end{table}
+
+Returns: filtered lines \textbf{plus a new cursor}.
+
+\subsection{\texttt{wait}}
+
+Race process outcomes until one resolves.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+field & type & notes \\
+\midrule
+\texttt{name} / \texttt{names} & string / string[] & one or many processes \\
+\texttt{for} & enum & \texttt{exit} \textbar\ \texttt{ready} \\
+\texttt{pattern} & regex & output pattern to wait for \\
+\texttt{timeout\_s} & number & cap 3600 \\
+\texttt{mode} & enum & \texttt{any} \textbar\ \texttt{all} \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{wait} operation fields.}
+\label{tab:wait}
+\end{table}
+
+\texttt{wait} resolves on the first of: matching process \textbf{exit},
+\texttt{pattern} match in output, or \texttt{timeout}. \texttt{mode: all} requires
+every named process to resolve. Process identity is tracked per incarnation, so an
+auto-restart never spuriously satisfies a \texttt{wait} bound to the crashed
+process.
+
+\subsection{\texttt{send}}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+field & type & notes \\
+\midrule
+\texttt{name} & string & which process \\
+\texttt{text} & string & write to stdin \\
+\texttt{keys} & string[] & named keys: \texttt{ENTER}, \texttt{CTRL\_C}, \ldots \\
+\texttt{signal} & string & POSIX signal \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{send} operation fields.}
+\label{tab:send}
+\end{table}
+
+\subsection{\texttt{stop} / \texttt{restart} / \texttt{ps}}
+
+\texttt{stop} terminates (graceful signal, then kill). \texttt{restart} cycles a
+process, preserving its name and config. \texttt{ps} lists supervised processes
+with state, pid/incarnation, uptime, and last exit code.
+
+\section{How it reports back to the model}
+
+Reporting is where a security-tool monitor should differ from a generic one. The
+output has to be \textbf{compact, cursor-bounded, and signal-first}.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{\texttt{start}} returns a compact \textbf{readiness verdict}:
+  \texttt{\{ status: ready | timeout | exited, elapsed, matched \}} where
+  \texttt{matched} is the log line and/or the port that satisfied the gate. On
+  \texttt{exited} it includes the exit code --- a server that dies during boot is
+  a common and important case.
+  \item \textbf{\texttt{logs} / \texttt{wait}} return \textbf{only} the filtered,
+  cursor-bounded output plus a structured status:
+  \texttt{\{ status, matched\_pattern, cursor, exit\_code \}}. Output is truncated
+  to a \textbf{token budget ($\sim$25K)} with an explicit
+  \texttt{"more at cursor: N"} marker so the agent can page rather than blow its
+  context on a chatty scanner.
+  \item If streaming (\texttt{follow}), lines are \textbf{event-batched
+  ($\sim$200ms)} --- the same batching window Claude Code's Monitor uses --- so
+  the agent isn't interrupted per line.
+  \item \textbf{Security-specific reporting rules:}
+  \begin{itemize}[leftmargin=*]
+    \item Surface the \textbf{matched ready-regex line / found marker verbatim}.
+    For a scanner, the line that matched is very often \textit{the finding itself}
+    (\texttt{[high] SQL injection at \ldots}), so it must not be summarized away.
+    \item \textbf{Always return the exit code.} A non-zero exit from
+    \texttt{nuclei}, \texttt{nmap}, or a fuzzer is signal, not noise --- it
+    distinguishes ``scan completed clean'' from ``scan crashed / target killed the
+    connection.''
+  \end{itemize}
+\end{itemize}
+
+\section{Rationale}
+
+\subsection{Why a structured ready-gate beats a bash \texttt{while} loop}
+
+Encoding readiness as a shell loop
+(\texttt{until curl -s localhost:8080; do sleep 1; done}) has four failure modes
+that a structured gate eliminates:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Correctness is the model's problem, every time.} The agent has to
+  re-author the polling logic --- the right endpoint, the right sleep, the right
+  exit condition --- on each launch. A structured \texttt{ready} object is
+  declarative and validated once.
+  \item \textbf{No composite conditions.} ``Log says ready AND port is open'' is
+  awkward in shell but a one-line AND in the gate. Servers routinely print
+  ``listening'' \textit{before} the socket is actually accepting; the AND is what
+  closes that race.
+  \item \textbf{No clean verdict.} A \texttt{while} loop that times out just\ldots
+  stops. The agent gets ambiguous output and has to infer what happened. The gate
+  returns a discrete \texttt{ready | timeout | exited} with the matched evidence.
+  \item \textbf{The ``server died during boot'' case is invisible} to a naive
+  poll loop --- it keeps polling a dead pid until timeout. The gate watches
+  process exit \textit{and} the readiness condition together and reports
+  \texttt{exited} with the code immediately.
+\end{enumerate}
+
+This is the same design instinct behind the engine's kernel-verify loop: prefer a
+\textbf{validated, structured contract} over trusting free-form model output to
+get the plumbing right (see \texttt{packages/core/src/agent/CLAUDE.md},
+``Structured output --- validate every submission'').
+
+\subsection{Why \texttt{args[]} (no shell) matters for a security tool}
+
+\texttt{start} deliberately takes \texttt{application} + \texttt{args[]} and
+\textbf{refuses a shell command string}. This is not ergonomics --- it's a
+security boundary:
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{No shell injection surface.} The agent is often building command
+  lines from \textit{attacker-influenced data} it just scraped off a target --- a
+  discovered hostname, a reflected parameter, a filename from a directory listing.
+  If any of that flows into a shell string, a \texttt{; rm -rf} or \texttt{\$(\ldots)}
+  in the target's response becomes command execution on \textit{our} host. An
+  argv vector is passed straight to \texttt{exec} with no shell interpretation, so
+  a malicious value is just an inert argument.
+  \item \textbf{Auditability.} \texttt{\{ application: "nuclei", args: ["-u", url,
+  "-t", tpl] \}} is trivially inspectable, allowlistable, and loggable per token.
+  A shell string is opaque until parsed.
+  \item \textbf{Consistency with the existing posture.} \texttt{run\_command}
+  already bans shell operators for exactly this reason (\texttt{system.ts:80}).
+  The monitor should be \textit{stricter} than \texttt{bash}, not looser, because
+  it runs things that live longer and touch the network.
+\end{itemize}
+
+\subsection{How it composes with the rest of the engine}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{\texttt{spawn\_persistent\_agent}} is the reasoning half;
+  \texttt{monitor} is the process half. The intended pattern: a persistent agent
+  owns a workflow (``attack this app''), uses \texttt{monitor.start} to bring the
+  target up with a ready-gate, then uses \texttt{monitor.logs}/\texttt{wait} to
+  observe it while it attacks --- the process outlives any single agent turn,
+  which is precisely what \texttt{bash} cannot do.
+  \item \textbf{The existing scanner wrappers} (\texttt{tools/scanner.ts},
+  \texttt{recon.ts}, \texttt{detections.ts}) are run-to-completion abstractions.
+  \texttt{monitor} is the substrate for the \textit{long-tail} cases they can't
+  cover: a \texttt{ffuf}/\texttt{nuclei} run the agent wants to watch incrementally
+  and cut short on first finding, or a fuzzer left running while other work
+  proceeds. Over time the noisier wrappers could be re-expressed on top of
+  \texttt{monitor} rather than each re-implementing timeout/tail logic.
+  \item \textbf{\texttt{pty\_session}} stays the tool for genuinely
+  \textit{interactive} TTY work (a \texttt{msfconsole}, an SSH session, anything
+  that needs a real terminal). \texttt{monitor} is for \textbf{managed daemons and
+  batch jobs} where readiness and exit codes matter more than terminal semantics.
+  They are complementary, not overlapping.
+\end{itemize}
+
+\section{Integration notes}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Zod-validate then reject.} 0sec tools validate their payload
+  against an explicit Zod schema and \textbf{reject on mismatch before any side
+  effect} --- \texttt{kernel\_run} is the reference implementation
+  (\texttt{packages/core/src/agent/tools/kernel-run.ts}; see
+  \texttt{kernelRunArgsSchema} / \texttt{validateKernelRunArgs}). The
+  \texttt{monitor} schema must be the single source of truth for its payload:
+  bound \texttt{name} (1--48), enum \texttt{op}/\texttt{restart}/\texttt{for}/\texttt{mode},
+  port range 1--65535, and the \texttt{timeout\_s} caps (30 default / 3600 max).
+  \texttt{.strip()} unknown top-level keys --- in particular, reject any
+  \texttt{command}/\texttt{shell} key so a model can't smuggle a shell string past
+  the \texttt{args[]} contract. A rejection should be fed back as an
+  \texttt{is\_error} tool\_result so the model self-corrects, matching the
+  kernel-run pattern.
+  \item \textbf{Registration.} Add \texttt{"monitor"} to
+  \texttt{TOOL\_REGISTRY\_ORDER} (\texttt{packages/core/src/agent/tools/index.ts:66})
+  and a corresponding \texttt{DOMAIN\_DEFINITIONS} entry, then a dispatch route in
+  \texttt{packages/core/src/agent/tools/dispatch.ts} (per-tool handler, not a
+  shared chokepoint --- see the dispatch-table note at \texttt{dispatch.ts:2}).
+  Implementation belongs in a new \texttt{tools/monitor.ts} alongside the other
+  execution tools.
+  \item \textbf{Gate it like \texttt{bash}.} \texttt{monitor} is network- and
+  exec-capable --- it spawns arbitrary processes that bind ports and reach the
+  network --- so it must sit behind the \textbf{same role/permission gating and
+  feature flagging as \texttt{bash}/\texttt{run\_command}}, not be enabled for
+  read-only audit roles. Given the persistence and network reach, defaulting the
+  flag \textbf{OFF} (as \texttt{pty\_session} and \texttt{python\_exec} are) is the
+  conservative starting point.
+  \item \textbf{Lifecycle hygiene.} Supervised processes must be tracked in a
+  registry that is torn down on scan completion / agent shutdown, so a crashed or
+  forgotten dev server never leaks past the run. Enforce a cap on concurrent
+  supervised processes.
+\end{itemize}
+
+\section{Decision}
+
+Build a single namespaced \texttt{monitor} tool with ops
+\texttt{start / logs / wait / stop / restart / ps / send}, modeled on Oh My Pi's
+\texttt{hub} family, with three deliberate tightenings for a security agent:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{\texttt{args[]}, never a shell string}, to remove the injection
+  surface when launching processes from attacker-influenced data.
+  \item \textbf{A structured, validated ready-gate} (log-regex AND TCP port,
+  capped timeout) instead of agent-authored shell poll loops.
+  \item \textbf{Signal-first, cursor-bounded reporting} --- verbatim matched
+  lines, always-present exit codes, $\sim$25K-token truncation with ``more at
+  cursor.''
+\end{enumerate}
+
+Register it in \texttt{TOOL\_REGISTRY\_ORDER} + \texttt{dispatch.ts},
+Zod-validate the payload with reject-on-mismatch (kernel-run pattern), and gate it
+like \texttt{bash} with the feature flag defaulting OFF.
+
+\section{Open questions}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Log retention \& spill-to-disk.} How much per-process output do we
+  buffer in memory before spilling to a file, and where does that file live
+  relative to the scan workspace? Chatty fuzzers can produce GBs.
+  \item \textbf{Concurrent-process cap.} What is the right ceiling, and is it
+  per-scan or global? A fan-out of \texttt{spawn\_agents} could each want their own
+  supervised target.
+  \item \textbf{Restart policy vs. \texttt{wait} identity semantics.} With
+  \texttt{restart: always}, a \texttt{wait for: exit} may never resolve. Do we
+  surface incarnation count, and does \texttt{wait} observe restarts as events?
+  \item \textbf{Port-probe scope.} Do we allow \texttt{ready.host} to be
+  non-loopback (probe a remote target's port), or restrict readiness probing to
+  localhost-bound processes we launched?
+  \item \textbf{Interaction with \texttt{bash} timeouts.} Should \texttt{bash}
+  gain a ``hand this off to monitor'' escape hatch when a command exceeds its 120s
+  cap (\texttt{system.ts:110}), or do we keep the two surfaces strictly separate?
+  \item \textbf{Output redaction.} Since matched lines are surfaced verbatim and
+  may contain secrets the scanner extracted, do we apply the engine's existing
+  secret-scrubbing before returning \texttt{logs}/\texttt{wait} output?
+\end{itemize}
+
+\begin{thebibliography}{99}
+
+\bibitem{omp-hub}
+Oh My Pi. \textit{The \texttt{hub} tool}. Project documentation.
+\url{https://github.com/can1357/oh-my-pi/blob/main/docs/tools/hub.md}
+
+\bibitem{cc-monitor}
+tkou15. \textit{Claude Code Monitor tool} (write-up). Zenn.
+\url{https://zenn.dev/tkou15/articles/claude-code-monitor}
+
+\end{thebibliography}
+
+\end{document}
