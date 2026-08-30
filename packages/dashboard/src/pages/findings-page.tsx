@@ -445,6 +445,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
           data={familyQuery.data}
           assigneeSuggestions={assigneeSuggestions}
           selectedSummary={selectedGroup?.workflow ?? null}
+          reviewMode={viewMode === "review"}
           isSaving={triageMutation.isPending || workflowMutation.isPending}
           onTriage={(triageStatus, triageNote) =>
             triageMutation.mutate({ triageStatus, triageNote })
@@ -495,6 +496,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
     dismissedFingerprint,
     triageMutation.isPending,
     workflowMutation.isPending,
+    viewMode,
   ]);
 
   return (
@@ -749,6 +751,7 @@ function FindingFamilyInspector({
   data,
   assigneeSuggestions,
   selectedSummary,
+  reviewMode,
   onTriage,
   onWorkflow,
   isSaving,
@@ -756,6 +759,7 @@ function FindingFamilyInspector({
   data: FindingFamilyResponse;
   assigneeSuggestions: string[];
   selectedSummary: FindingWorkflowSummary | null;
+  reviewMode: boolean;
   onTriage: (triageStatus: "new" | "accepted" | "suppressed", triageNote: string) => void;
   onWorkflow: (fingerprint: string, workflowStatus: FindingWorkflowPhase, workflowAssignee: string, optimisticStatus?: FindingWorkflowStatus) => void;
   isSaving: boolean;
@@ -843,11 +847,22 @@ function FindingFamilyInspector({
 
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5">
       <InspectorPane
-        eyebrow="Operator"
-        title="Finding controls"
-        description="Review evidence, route the next action into the console, and make a final disposition only when the proof is sufficient."
+        className={reviewMode ? "order-2" : "order-1"}
+        eyebrow={reviewMode ? "Review" : "Operator"}
+        title={
+          reviewMode
+            ? data.workflow.reviewGate === "human_review"
+              ? "Evidence and disposition"
+              : "Evidence and next action"
+            : "Finding controls"
+        }
+        description={
+          reviewMode
+            ? "Inspect the evidence first. Operator controls remain available after the review record."
+            : "Review evidence, route the next action into the console, and make a final disposition only when the proof is sufficient."
+        }
       >
         <div className="flex flex-wrap gap-2">
           <SeverityBadge severity={data.latest.severity} />
@@ -1043,11 +1058,16 @@ function FindingFamilyInspector({
       </InspectorPane>
 
       <InspectorPane
-        eyebrow="Execution"
-        title="Execution record"
-        description="Open the runbook, evidence, and occurrence detail only when this finding needs deeper inspection."
+        className={reviewMode ? "order-1" : "order-2"}
+        eyebrow={reviewMode ? "Review evidence" : "Execution"}
+        title={reviewMode ? "Evidence before disposition" : "Execution record"}
+        description={
+          reviewMode
+            ? "Start with the captured proof, then inspect the work chain or make a disposition."
+            : "Open the runbook, evidence, and occurrence detail only when this finding needs deeper inspection."
+        }
       >
-        <Tabs defaultValue="runbook" className="gap-4">
+        <Tabs defaultValue={reviewMode ? "evidence" : "runbook"} className="gap-4">
           <TabsList>
             <TabsTrigger value="runbook">Runbook</TabsTrigger>
             <TabsTrigger value="evidence">Evidence</TabsTrigger>

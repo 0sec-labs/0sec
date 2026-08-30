@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardEyebrow, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function InspectorPane({
@@ -7,15 +8,17 @@ export function InspectorPane({
   description,
   actions,
   children,
+  className,
 }: {
   eyebrow: string;
   title: string;
   description: string;
   actions?: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <Card className="overflow-hidden">
+    <Card className={cn("overflow-hidden", className)}>
       <CardHeader>
         <div className="min-w-0">
           <CardEyebrow>{eyebrow}</CardEyebrow>
