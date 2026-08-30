@@ -361,6 +361,39 @@ pattern (JIT skills) needed to extend that discipline to the long tail. The
 changes are ordered cheapest-first (bug fix) to most-structural (deferred
 loading) so each ships and pays off independently.
 
+\section{Implementation status (2026-08)}
+
+Several recommendations above have since shipped; we record the delivered state
+so the paper tracks the code rather than only proposing.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Flag-filter bug (rec.~1): fixed.} \texttt{allEnabledTools} now
+  honors the default-OFF \texttt{web\_search} / \texttt{pty\_session} flags, so
+  the console no longer over-advertises them.
+  \item \textbf{Consolidation (rec.~3): scanner and intel families done.} The
+  four scanner wrappers collapsed into
+  \texttt{run\_scanner(\{tool: sqlmap\,|\,nmap\,|\,ffuf\,|\,nuclei, \ldots\})}
+  and the intel wrappers into a single verb tool, removing surface without
+  removing capability. This resolves open question~4 (observability): ATT\&CK
+  attribution is preserved because \texttt{mitre.ts} keys techniques on the
+  \texttt{run\_scanner:$\langle$tool$\rangle$} composite as well as the legacy
+  per-scanner names, so the discriminator survives in the event stream.
+  \item \textbf{Deferred loading (rec.~4): shipped for the high-cardinality
+  source.} The built-in security set is now consolidated below the degradation
+  band and is advertised whole --- deferring \emph{it} would only hide tools the
+  agent reliably needs and cost a load round-trip on the hot path. The genuine
+  cardinality explosion is external MCP servers (a single mail server can expose
+  25+ tools), so the \texttt{list\_tools} / \texttt{load\_tool} front door
+  (\texttt{agent/deferred-tools.ts}) is wired against the MCP surface: when a
+  connected host exposes $\geq$12 tools, only the two read-only control tools are
+  advertised and the model loads by name what it needs (surfacing on the next
+  turn, mirroring the self-extension refresh boundary); below that threshold the
+  tools are advertised directly since deferral would be pure overhead. This
+  answers open question~3 for the near term: a flat, keyword-filterable
+  \texttt{list\_tools} is sufficient at current registry sizes; ranked retrieval
+  is deferred until a host proves large enough to need it.
+\end{itemize}
+
 \section{Open questions}
 
 \begin{enumerate}[leftmargin=*]

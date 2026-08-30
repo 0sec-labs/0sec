@@ -2739,3 +2739,89 @@ describe("createConsoleSession — session-registered tools", () => {
     expect(advertised).not.toContain("self_extend");
   });
 });
+
+describe("createConsoleSession — MCP deferred tool loading", () => {
+  // A stub MCP host exposing an arbitrary catalog. Only the methods the turn
+  // engine + executor touch are implemented.
+  function stubMcpHost(count: number): {
+    registeredTools(): ToolDefinition[];
+    serverIds(): string[];
+    closeAll(): Promise<void>;
+    callTool(): Promise<never>;
+  } {
+    const defs: ToolDefinition[] = Array.from({ length: count }, (_, i) => ({
+      name: `mcp__srv__tool${i + 1}`,
+      description: `mcp tool number ${i + 1}`,
+      parameters: {},
+      required: [],
+    }));
+    return {
+      registeredTools: () => defs,
+      serverIds: () => ["srv"],
+      closeAll: async () => {},
+      callTool: async () => {
+        throw new Error("not used");
+      },
+    };
+  }
+
+  it("defers a large MCP catalog behind list_tools/load_tool and loads on demand", async () => {
+    const runtime = new ScriptedRuntime([
+      // Round 1: model discovers the catalog.
+      {
+        content: [{ type: "tool_use", id: "c1", name: "list_tools", input: {} }],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      // Round 2: model loads one specific tool.
+      {
+        content: [
+          { type: "tool_use", id: "c2", name: "load_tool", input: { names: ["mcp__srv__tool3"] } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      // Round 3: model stops.
+      endTurn("done"),
+    ]);
+
+    const session = createConsoleSession({
+      runtime,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mcpHost: stubMcpHost(15) as any,
+    });
+    const outcome = await session.send("use the mcp tools");
+    expect(outcome.stopReason).toBe("end_turn");
+
+    const round1 = runtime.calls[0].tools.map((t) => t.name);
+    // Control tools advertised; the 15 mcp tools are NOT dumped into the set.
+    expect(round1).toContain("list_tools");
+    expect(round1).toContain("load_tool");
+    expect(round1.filter((n) => n.startsWith("mcp__srv__"))).toEqual([]);
+
+    // list_tools returned the catalog to the model.
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+    expect(String(outcome.toolCalls[0].result.output)).toContain("mcp__srv__tool3");
+
+    // After load_tool, the round-3 tool set includes ONLY the loaded tool.
+    const round3 = runtime.calls[2].tools.map((t) => t.name);
+    expect(round3).toContain("mcp__srv__tool3");
+    expect(round3.filter((n) => n.startsWith("mcp__srv__"))).toEqual(["mcp__srv__tool3"]);
+  });
+
+  it("advertises a small MCP catalog directly (no deferral)", async () => {
+    const runtime = new ScriptedRuntime([endTurn("ok")]);
+    const session = createConsoleSession({
+      runtime,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mcpHost: stubMcpHost(3) as any,
+    });
+    await session.send("hi");
+    const names = runtime.calls[0].tools.map((t) => t.name);
+    // All three advertised directly; no control tools needed.
+    expect(names).toContain("mcp__srv__tool1");
+    expect(names).toContain("mcp__srv__tool3");
+    expect(names).not.toContain("list_tools");
+    expect(names).not.toContain("load_tool");
+  });
+});

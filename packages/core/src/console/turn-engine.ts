@@ -15,6 +15,15 @@ import type {
 import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "../agent/tools.js";
 import type { McpHost } from "../agent/mcp-host.js";
 import { toNativeToolDef, toNativeExtensionToolDef } from "../agent/native-tooldef.js";
+import {
+  DeferredToolRegistry,
+  DEFERRED_TOOLS_MIN,
+  DEFERRED_CONTROL_TOOL_NAMES,
+  LIST_TOOLS_NAME,
+  LOAD_TOOL_NAME,
+  listToolsDef,
+  loadToolDef,
+} from "../agent/deferred-tools.js";
 import type { osecDB } from "@0sec/db";
 import { TOOL_DISPATCH } from "../agent/tools/dispatch.js";
 import {
@@ -1670,6 +1679,15 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // THIS session's connected host.
     (toolContext as ToolContext & { mcpHost?: McpHost }).mcpHost = config.mcpHost;
   }
+  // Progressive tool disclosure: when an MCP host is wired it can expose a
+  // high-cardinality catalog. The registry (seeded at each refresh) keeps that
+  // catalog deferred behind list_tools/load_tool; the executor resolves those
+  // control calls against THIS instance. Only built when a host is present.
+  const deferredTools = config.mcpHost ? new DeferredToolRegistry() : undefined;
+  if (deferredTools) {
+    (toolContext as ToolContext & { deferredTools?: DeferredToolRegistry }).deferredTools =
+      deferredTools;
+  }
 
   // The real dispatcher over the real registry. `db = null` → no persistence
   // this pass (findings live in `toolContext.findings` for the session). When
@@ -1689,6 +1707,12 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     selfExtensionEnabled && selfExtendDef && !tools.some((t) => t.name === "self_extend")
       ? toNativeToolDef(selfExtendDef)
       : undefined;
+
+  // The deferred-loading control tools (list_tools/load_tool) are always
+  // advertised when a deferrable catalog is in play. Both are read-only and
+  // side-effect-free at the executor level, so they need no gate-map entries.
+  const listToolsNativeDef = toNativeToolDef(listToolsDef);
+  const loadToolNativeDef = toNativeToolDef(loadToolDef);
 
   // Session-local gate maps. They START as copies of the static built-in maps
   // and, at every turn boundary, are re-merged with the CURRENT plugin-host +
@@ -1744,9 +1768,28 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       // reach out of process — the danger-by-omission floor from the mcp-client
       // paper), so they go through the same scope/approval gate as bash. Their
       // mcp__ name means the native loop fences their results as untrusted.
-      for (const def of config.mcpHost.registeredTools()) {
-        extras.push(toNativeToolDef(def));
-        net[def.name] = true;
+      const mcpDefs = config.mcpHost.registeredTools();
+      if (deferredTools && mcpDefs.length >= DEFERRED_TOOLS_MIN) {
+        // High-cardinality: keep the catalog deferred (progressive disclosure).
+        // Advertise only the control tools + tools the model has already loaded,
+        // so a big MCP surface neither floods the token budget nor degrades tool
+        // selection. A load_tool call this turn surfaces here on the next.
+        deferredTools.seed(mcpDefs);
+        extras.push(listToolsNativeDef, loadToolNativeDef);
+        // The control tools are pure catalog operations — read-only, no network,
+        // no scope — so they auto-approve like any other read-only tool.
+        ro[LIST_TOOLS_NAME] = true;
+        ro[LOAD_TOOL_NAME] = true;
+        for (const def of deferredTools.loadedDefinitions()) {
+          extras.push(toNativeToolDef(def));
+          net[def.name] = true;
+        }
+      } else {
+        // Small surface: deferral is pure overhead — advertise them all.
+        for (const def of mcpDefs) {
+          extras.push(toNativeToolDef(def));
+          net[def.name] = true;
+        }
       }
     }
 
@@ -2303,6 +2346,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       // inheriting the least-dangerous class by omission.
       capabilitiesResolved:
         Object.prototype.hasOwnProperty.call(TOOL_DISPATCH, call.name) ||
+        (DEFERRED_CONTROL_TOOL_NAMES as readonly string[]).includes(call.name) ||
         config.pluginHost?.ownsTool(call.name) === true ||
         selfExtension?.tool(call.name) !== undefined,
     };

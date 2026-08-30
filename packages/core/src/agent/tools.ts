@@ -168,6 +168,13 @@ import { ProcessManager, probePort, type ReadyGate } from "./process-manager.js"
 import { MCP_TOOL_PREFIX } from "./mcp-adapt.js";
 import type { McpHost } from "./mcp-host.js";
 import {
+  DeferredToolRegistry,
+  LIST_TOOLS_NAME,
+  LOAD_TOOL_NAME,
+  formatToolCatalog,
+  formatLoadResult,
+} from "./deferred-tools.js";
+import {
   MAX_DRAINS_PER_TURN,
   clampOutboundBody,
   decideAddressing,
@@ -2185,6 +2192,21 @@ function mcpHostOf(ctx: ToolContext): McpHost | undefined {
 }
 
 /**
+ * Session-scoped deferred-tool registry (progressive tool disclosure), attached
+ * to the context like {@link mcpHostOf}. The console turn engine seeds it with a
+ * high-cardinality tool catalog (e.g. many MCP-server tools) and advertises only
+ * `list_tools`/`load_tool`; the executor resolves those two control tools here,
+ * and a `load_tool` call adds to the loaded set that the NEXT turn's tool-set
+ * refresh injects. Absent when no such source is wired.
+ */
+interface DeferredToolsCtx {
+  deferredTools?: DeferredToolRegistry;
+}
+function deferredToolsOf(ctx: ToolContext): DeferredToolRegistry | undefined {
+  return (ctx as ToolContext & DeferredToolsCtx).deferredTools;
+}
+
+/**
  * Build the child's `send_message` definition for ONE child.
  *
  * The definition is per-child rather than a module constant because the `to`
@@ -3182,10 +3204,14 @@ export class ToolExecutor {
           >)[methodName]
         : undefined;
       if (typeof handler !== "function") {
-        // Not a built-in: it may be a tool the model registered THIS session via
-        // `self_extend`. Route it through the registry so it is guard-evaluated
-        // under its DECLARED capability gate flags (a self-authored tool can
-        // never reach capability its declared+approved guards deny).
+        // Not a built-in: it may be a deferred-tool control call (list_tools /
+        // load_tool — progressive disclosure over a high-cardinality catalog).
+        const deferred = this._dispatchDeferredControl(call);
+        if (deferred) return deferred;
+        // Or a tool the model registered THIS session via `self_extend`. Route
+        // it through the registry so it is guard-evaluated under its DECLARED
+        // capability gate flags (a self-authored tool can never reach capability
+        // its declared+approved guards deny).
         const ext = this._dispatchExtensionTool(call);
         if (ext) return ext;
         // Or a tool from a connected MCP server. The `mcp__<server>__<tool>`
@@ -3289,6 +3315,36 @@ export class ToolExecutor {
    * implementation" result. This is the security crux: a model-authored tool
    * cannot reach ANY capability, whatever it declares.
    */
+  /**
+   * Resolve the two deferred-tool control calls (`list_tools` / `load_tool`)
+   * against the session's {@link DeferredToolRegistry}. Returns null when this
+   * is not a control call or no registry is wired (so the caller falls through
+   * to extension/MCP dispatch or "Unknown tool"). `load_tool` mutates the loaded
+   * set; the change is picked up by the next turn's tool-set refresh, so a loaded
+   * tool becomes callable on the following turn — never mid-round.
+   */
+  private _dispatchDeferredControl(call: ToolCall): ToolResult | null {
+    if (call.name !== LIST_TOOLS_NAME && call.name !== LOAD_TOOL_NAME) return null;
+    const registry = deferredToolsOf(this.ctx);
+    if (!registry) return null;
+    const args = (call.arguments ?? {}) as Record<string, unknown>;
+    if (call.name === LIST_TOOLS_NAME) {
+      const query = typeof args.query === "string" ? args.query : undefined;
+      return { success: true, output: formatToolCatalog(registry.catalogEntries(query), query) };
+    }
+    // load_tool: names must be a string array (validate, then act).
+    const raw = args.names;
+    const names = Array.isArray(raw) ? raw.filter((n): n is string => typeof n === "string") : [];
+    if (names.length === 0) {
+      return {
+        success: false,
+        output: null,
+        error: "load_tool requires a non-empty `names` array of exact tool names (see list_tools).",
+      };
+    }
+    return { success: true, output: formatLoadResult(registry.load(names)) };
+  }
+
   private _dispatchExtensionTool(call: ToolCall): ToolResult | null {
     const registry = selfExtensionRegistryOf(this.ctx);
     if (!registry || !registry.isEnabled()) return null;
