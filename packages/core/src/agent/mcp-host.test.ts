@@ -4,6 +4,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { McpHost } from "./mcp-host.js";
+import { ToolExecutor } from "./tools.js";
+import type { ToolContext } from "./types.js";
 
 /** Spin up an in-memory MCP server exposing an `echo` tool, linked to the host. */
 async function connectEchoServer(host: McpHost, id = "testsrv"): Promise<McpServer> {
@@ -58,5 +60,32 @@ describe("McpHost (in-memory e2e)", () => {
     const host = new McpHost();
     expect((await host.callTool("bash", {})).success).toBe(false);
     expect((await host.callTool("mcp__ghost__t", {})).error).toMatch(/not connected/);
+  });
+
+  it("routes an mcp__ tool call through ToolExecutor to the host on ctx", async () => {
+    const host = new McpHost();
+    const server = await connectEchoServer(host, "exec");
+    const ctx = {
+      target: "https://example.com",
+      scanId: "mcp-exec",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+    } as ToolContext;
+    (ctx as ToolContext & { mcpHost: McpHost }).mcpHost = host;
+    const executor = new ToolExecutor(ctx, null);
+
+    const res = await executor.execute({ name: "mcp__exec__echo", arguments: { msg: "yo" } });
+    expect(res.success).toBe(true);
+    expect((res.output as { text: string }).text).toBe("echo: yo");
+
+    // Without a host, an mcp__ call is an unknown tool (not a crash).
+    const bare = new ToolExecutor({ ...ctx, mcpHost: undefined } as ToolContext, null);
+    const miss = await bare.execute({ name: "mcp__exec__echo", arguments: { msg: "z" } });
+    expect(miss.success).toBe(false);
+    expect(miss.error).toMatch(/Unknown tool/);
+
+    await host.closeAll();
+    await server.close();
   });
 });

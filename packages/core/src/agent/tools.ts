@@ -165,6 +165,8 @@ import {
 import { PRIMARY_AGENT_NAME, assignAgentName, uniquifyAgentName } from "../hub/name-generator.js";
 import { DetachedAgentSupervisor, runPersistentAgent } from "../hub/supervisor.js";
 import { ProcessManager, probePort, type ReadyGate } from "./process-manager.js";
+import { MCP_TOOL_PREFIX } from "./mcp-adapt.js";
+import type { McpHost } from "./mcp-host.js";
 import {
   MAX_DRAINS_PER_TURN,
   clampOutboundBody,
@@ -2174,6 +2176,14 @@ function messagingRuntimeOf(ctx: ToolContext): MessagingRuntime | undefined {
   return (ctx as ToolContext & AgentMessagingCtx).agentMessaging;
 }
 
+/** Session-scoped MCP client host, attached to the context like agentMessaging. */
+interface McpHostCtx {
+  mcpHost?: McpHost;
+}
+function mcpHostOf(ctx: ToolContext): McpHost | undefined {
+  return (ctx as ToolContext & McpHostCtx).mcpHost;
+}
+
 /**
  * Build the child's `send_message` definition for ONE child.
  *
@@ -3178,6 +3188,13 @@ export class ToolExecutor {
         // never reach capability its declared+approved guards deny).
         const ext = this._dispatchExtensionTool(call);
         if (ext) return ext;
+        // Or a tool from a connected MCP server. The `mcp__<server>__<tool>`
+        // name is matched by isUntrustedSourceTool, so the native loop fences
+        // the result as untrusted; the host only connects/forwards.
+        if (call.name.startsWith(MCP_TOOL_PREFIX)) {
+          const host = mcpHostOf(this.ctx);
+          if (host) return await host.callTool(call.name, (call.arguments ?? {}) as Record<string, unknown>);
+        }
         return { success: false, output: null, error: `Unknown tool: ${call.name}` };
       }
       return await handler.call(this, call.arguments);
