@@ -14,8 +14,15 @@ export type ChatEntry = {
    * them all as the same muted bullet is what made command output read as
    * an undifferentiated dump.
    */
-  kind: "user" | "assistant" | "reasoning" | "tool" | "subagent" | "notice" | "panel" | "error";
+  kind: "user" | "assistant" | "reasoning" | "tool" | "subagent" | "notice" | "panel" | "error" | "peer";
   text: string;
+  /**
+   * Inter-agent (IRC) message endpoints — display names, present only on a
+   * `peer` entry. The renderer colours each by its stable agent accent; `peerTo`
+   * === "all" is a broadcast (rendered `#all`).
+   */
+  peerFrom?: string;
+  peerTo?: string;
   detail?: string;
   success?: boolean;
   turn: number;

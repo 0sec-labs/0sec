@@ -108,7 +108,7 @@ export const DEFAULT_TRANSCRIPT_DETAIL: TranscriptDetail = "collapsed";
  * function independent of the render layer.
  */
 export interface CollapseEntryLike {
-  kind: "user" | "assistant" | "reasoning" | "tool" | "subagent" | "notice" | "panel" | "error";
+  kind: "user" | "assistant" | "reasoning" | "tool" | "subagent" | "notice" | "panel" | "error" | "peer";
   /** Tool result success, when known. `false` marks a failed tool. */
   success?: boolean;
   /** Subagent outcome, when this is a subagent entry. */

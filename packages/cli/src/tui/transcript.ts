@@ -16,7 +16,8 @@ export type TranscriptEntryKind =
   | "subagent"
   | "notice"
   | "panel"
-  | "error";
+  | "error"
+  | "peer";
 
 /**
  * The subset of a chat entry these functions reason about. The renderer's

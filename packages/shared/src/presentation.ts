@@ -54,7 +54,8 @@ export type PresentationTranscriptEntryKind =
   | "subagent"
   | "notice"
   | "panel"
-  | "error";
+  | "error"
+  | "peer";
 
 /**
  * Renderer-neutral transcript record. UI adapters may attach visual state, but

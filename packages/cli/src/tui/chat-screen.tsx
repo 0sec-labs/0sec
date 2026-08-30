@@ -29,6 +29,7 @@ import {
   type OperatorQuestionAnswer,
   type SubagentLifecyclePayload,
   type SubagentMessagePayload,
+  type PeerMessagePayload,
   type TodosEventPayload,
   type SessionObjectivePayload,
   type ToolCall,
@@ -930,6 +931,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
    */
   const [operatorState, setOperatorState] = useState<OperatorQuestionState | null>(null);
   const [activeSubagents, setActiveSubagents] = useState<Record<string, SubagentLifecyclePayload>>({});
+  // Live id → display-name map for agents, fed from lifecycle events. Used by the
+  // peer_message (IRC) handler to resolve a message's from/to ids to the same
+  // AdjectiveNoun names the roster shows, without re-reading React state inside
+  // the bus callback. Main is always itself.
+  const agentNamesRef = useRef<Map<string, string>>(new Map());
   // Per-subagent live transcript (assistant prose + tool cards), assembled from
   // `subagent_message` events. Keyed by agent_id; rendered by the focus view via
   // the SAME planTranscript/renderEntry as the main transcript, so a drilled-in
@@ -1457,10 +1463,29 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         if (type === "subagent_lifecycle") {
           const event = payload as unknown as SubagentLifecyclePayload;
           if (event.parent_scan_id !== scanId) return;
+          if (event.name) agentNamesRef.current.set(event.agent_id, event.name);
           setActiveSubagents((prev) => reduceActiveSubagents(prev, event));
           setHerdAgents((prev) =>
             applySubagentLifecycle(prev, payload as Record<string, unknown>, Date.now()),
           );
+        } else if (type === "peer_message") {
+          // An inter-agent message crossed the hub — render it as an IRC line in
+          // the transcript. Resolve both endpoints to the roster's display names
+          // (Main is itself; "all" is a broadcast); the accent colouring happens
+          // in the renderer.
+          const p = payload as unknown as PeerMessagePayload;
+          const nameFor = (id: string): string =>
+            id === "Main" || id === "all"
+              ? id
+              : agentNamesRef.current.get(id) ?? shortAgentName(id);
+          appendEntry({
+            kind: "peer",
+            text: p.body,
+            peerFrom: nameFor(p.from),
+            peerTo: nameFor(p.to),
+            at: p.ts,
+            turn: turn.current,
+          });
         } else if (type === "subagent_progress") {
           if ((payload as Record<string, unknown>)["parent_scan_id"] !== scanId) return;
           setHerdAgents((prev) =>
@@ -2879,9 +2904,22 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         knownPeerIds: Object.keys(activeSubagents),
       };
       const result = sendOperatorMessage(runtime, agentId, body.trim(), Date.now());
+      if (result.ok) {
+        // sendOperatorMessage is pure (no bus), so surface the operator's steer in
+        // the IRC log here — Main → the addressed agent — the same way an
+        // agent↔agent send appears via the peer_message event.
+        appendEntry({
+          kind: "peer",
+          text: body.trim(),
+          peerFrom: "Main",
+          peerTo: agentNamesRef.current.get(agentId) ?? shortAgentName(agentId),
+          at: Date.now(),
+          turn: turn.current,
+        });
+      }
       return { ok: result.ok, reason: result.reason };
     },
-    [settingsRef, activeSubagents],
+    [settingsRef, activeSubagents, appendEntry],
   );
 
   // The programmatic operator-submit path, exposed to the coordinator via
