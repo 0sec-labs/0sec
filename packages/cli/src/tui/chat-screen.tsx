@@ -2142,7 +2142,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           return true;
         }
 
-        if (firstWord === "send") {
+        if (feedbackCommand.kind === "send") {
           if (!pendingFeedback) {
             appendEntry({
               kind: "notice",
@@ -2189,7 +2189,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           return true;
         }
 
-        if (firstWord === "cancel") {
+        if (feedbackCommand.kind === "cancel") {
           if (!pendingFeedback) {
             appendEntry({
               kind: "notice",
@@ -2210,7 +2210,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
 
         // Plain /feedback <message> — local-only (existing behaviour)
         const written = appendFeedback({
-          message: raw,
+          message: feedbackCommand.message,
           timestamp: new Date().toISOString(),
           version: VERSION,
           model: modelId ?? undefined,
@@ -2540,6 +2540,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     commandCatalog,
     discardStreamPatches,
     mode,
+    modelId,
     onExit,
     onGoBack,
     onNavigate,

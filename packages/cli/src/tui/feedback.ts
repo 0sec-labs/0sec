@@ -122,6 +122,31 @@ export interface FeedbackPayload {
 }
 
 /**
+ * Parsed `/feedback` subcommand. `record` deliberately remains the default so
+ * an ordinary sentence never creates a network side effect.
+ */
+export type FeedbackCommand =
+  | { kind: "record"; message: string }
+  | { kind: "submit"; message: string }
+  | { kind: "send" }
+  | { kind: "cancel" }
+  | { kind: "usage" };
+
+/** Parse the local-only and explicitly staged feedback command forms. */
+export function parseFeedbackCommand(raw: string): FeedbackCommand {
+  const text = raw.trim();
+  if (!text) return { kind: "usage" };
+
+  const separator = text.search(/\s/);
+  const verb = separator < 0 ? text : text.slice(0, separator);
+  const rest = separator < 0 ? "" : text.slice(separator).trim();
+  if (verb === "submit") return rest ? { kind: "submit", message: rest } : { kind: "usage" };
+  if (verb === "send") return rest ? { kind: "usage" } : { kind: "send" };
+  if (verb === "cancel") return rest ? { kind: "usage" } : { kind: "cancel" };
+  return { kind: "record", message: text };
+}
+
+/**
  * Every key that may appear in the serialized body, in wire order. Exported
  * so the guarantee is checkable from outside rather than asserted in prose.
  */

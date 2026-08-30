@@ -176,8 +176,8 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "feedback",
     aliases: [],
     category: "system",
-    description: "Record feedback about 0sec to a local file you control",
-    usage: "/feedback <message>",
+    description: "Record feedback about 0sec to a local file you control, with optional HTTPS submission",
+    usage: "/feedback <message> | /feedback submit <message> | /feedback send | /feedback cancel",
   },
   {
     name: "settings",

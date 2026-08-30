@@ -13,6 +13,7 @@ import {
   formatFeedbackEntry,
   scanForSecrets,
   submissionBlockedReason,
+  parseFeedbackCommand,
   submitFeedback,
   type FeedbackPayload,
 } from "./feedback.js";
@@ -86,6 +87,28 @@ describe("appendFeedback", () => {
     const result = appendFeedback({ message: "nope", timestamp: "t" }, home);
     expect(result.ok).toBe(false);
     expect(result.error).toBeTruthy();
+  });
+});
+
+describe("parseFeedbackCommand", () => {
+  it("keeps ordinary text local by default", () => {
+    expect(parseFeedbackCommand("the picker is great")).toEqual({
+      kind: "record",
+      message: "the picker is great",
+    });
+  });
+
+  it("recognizes only complete explicit send controls", () => {
+    expect(parseFeedbackCommand("submit send this")).toEqual({ kind: "submit", message: "send this" });
+    expect(parseFeedbackCommand("send")).toEqual({ kind: "send" });
+    expect(parseFeedbackCommand("cancel")).toEqual({ kind: "cancel" });
+    expect(parseFeedbackCommand("send extra")).toEqual({ kind: "usage" });
+    expect(parseFeedbackCommand("cancel extra")).toEqual({ kind: "usage" });
+  });
+
+  it("requires a message for submit", () => {
+    expect(parseFeedbackCommand("")).toEqual({ kind: "usage" });
+    expect(parseFeedbackCommand("submit")).toEqual({ kind: "usage" });
   });
 });
 

@@ -170,6 +170,27 @@ the whole codebase on every PR:
 0sec scan --target https://api.example.com/chat --verbose
 ```
 
+## Feedback delivery
+
+`/feedback <message>` is local-only and appends to
+`~/.0sec/feedback.md`. To submit one message through an approved feedback
+relay, configure an HTTPS endpoint explicitly:
+
+```bash
+export 0SEC_FEEDBACK_URL="https://feedback.example.org/v1/feedback"
+```
+
+Then use `/feedback submit <message>` to save locally and inspect the exact
+endpoint, JSON body, headers, and secret-shaped-content warnings. Only a second
+`/feedback send` transmits that exact staged payload; `/feedback cancel` drops
+the pending network action while retaining the local file.
+
+There is no built-in endpoint. Use an authenticated relay that owns any email or
+Slack integration; do **not** place an incoming Slack webhook URL directly in
+the CLI environment, because it is a bearer secret and does not accept 0sec's
+feedback wire schema. `0SEC_OFFLINE`, `0SEC_NO_TELEMETRY`, and `DO_NOT_TRACK`
+block every submission before any connection is made.
+
 ## State directory
 
 All per-user state — scan database, journals, caches, stored credentials, console

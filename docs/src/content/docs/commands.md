@@ -545,6 +545,9 @@ as an operator message.
 | `/transcript` | `/review` | Opens the virtualized transcript review. |
 | `/explain [topic]` | `/eli5` | Sends a real turn asking for a plain-language explanation of the previous result, or of `topic`. It is a normal model call and costs tokens. |
 | `/feedback <message>` | — | Appends the message, with a timestamp, version, model and mode, to `~/.0sec/feedback.md`. **Nothing is transmitted anywhere.** |
+| `/feedback submit <message>` | — | Persists locally and shows a preview of the exact HTTPS endpoint, body, headers and credential warnings. Does **not** transmit. Use `/feedback send` to transmit or `/feedback cancel` to discard. |
+| `/feedback send` | — | Transmits the payload previewed by `/feedback submit` to the configured `0SEC_FEEDBACK_URL` endpoint. Refused when submission is blocked (no endpoint, opt-out or insecure). |
+| `/feedback cancel` | — | Clears the pending feedback without transmitting. The local copy remains saved. |
 | `/clear` | `/new` | Clears the conversation. Readline fallback only — see the caveat below. |
 | `/history` | — | Opens the scan-history screen. |
 | `/findings` | `/finds` | Opens the findings screen. |
