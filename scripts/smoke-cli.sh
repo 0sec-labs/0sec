@@ -43,6 +43,23 @@ fi
 
 say() { printf '\033[36m[smoke]\033[0m %s\n' "$*"; }
 fail() { printf '\033[31m[smoke] FAIL:\033[0m %s\n' "$*" >&2; exit 1; }
+run_ai_smoke() {
+  env \
+    0SEC_CHATGPT_ACCESS_TOKEN="" \
+    0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="" \
+    0SEC_CHATGPT_ACCOUNT_ID="" \
+    0SEC_CHATGPT_AUTH_FILE="$TMP/no-auth.json" \
+    0SEC_CODEX_AUTH_JSON_PATH="$TMP/no-auth.json" \
+    OPENAI_API_KEY="" \
+    OPENROUTER_API_KEY="" \
+    ANTHROPIC_API_KEY=fake \
+    QWEN_API_KEY="" \
+    DEEPSEEK_API_KEY="" \
+    AZURE_OPENAI_API_KEY="" \
+    KIMI_API_KEY="" \
+    $CLI "$@"
+}
+
 
 # ── 1. --help ──────────────────────────────────────────────────────────────
 # Proves the binary loads, commander is wired, and all subcommands registered.
@@ -117,16 +134,20 @@ grep -q '"result"' "$TMP/mcp.out" || fail "mcp-server initialize returned no res
 # Creates a trivially small "repo" and runs `review` against it with a fake
 # API key. We don't care if the LLM call succeeds — the smoke assertion is
 # that the review subcommand bootstraps, walks the repo, and emits a report-
-# shaped JSON document on stdout. Matches how the scan smoke behaves when the
-# API is unreachable: 401 on the agentic loop, but an empty report still
-# lands and exit code is 0.
+# shaped JSON document on stdout. A rejected model credential produces that
+# partial static report with exit 2; any other nonzero exit is a bootstrap
+# failure.
 say "review (source pipeline bootstrap)"
 mkdir -p "$TMP/tinyrepo"
 printf 'console.log("hello");\n' > "$TMP/tinyrepo/index.js"
-ANTHROPIC_API_KEY=fake $CLI review "$TMP/tinyrepo" \
+if run_ai_smoke review "$TMP/tinyrepo" \
     --format json --timeout 3000 \
-    > "$TMP/review.out" 2> "$TMP/review.err" \
-  || fail "review exited non-zero — pipeline bootstrap broken"
+    > "$TMP/review.out" 2> "$TMP/review.err"; then
+  :
+else
+  review_status=$?
+  [ "$review_status" -eq 2 ] || fail "review exited $review_status — pipeline bootstrap broken"
+fi
 # The report payload should at minimum mention the target we passed.
 grep -q '"target"' "$TMP/review.out" || {
   echo "--- review stdout ---" >&2
@@ -148,7 +169,7 @@ say "scan --mode web (template loader + pipeline)"
 # Live network targets require an engagement scope (security gate); provide one
 # so the smoke exercises the pipeline rather than tripping the scope refusal.
 printf '{ "in_scope": ["example.invalid"] }' > "$TMP/scope.json"
-ANTHROPIC_API_KEY=fake $CLI scan \
+run_ai_smoke scan \
     --target http://example.invalid \
     --mode web --depth quick \
     --runtime api --timeout 3000 \
