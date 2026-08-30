@@ -189,6 +189,8 @@ export interface FeedbackResolveOptions {
    * 0SEC_FEEDBACK_URL always wins and never consumes this credential.
    */
   cloudCredentials?: () => { host: string; token: string } | null;
+  /** Disable cloud-credential fallback for a caller without a reviewed preview. */
+  allowCloud?: boolean;
 }
 
 interface FeedbackTarget {
@@ -230,6 +232,7 @@ function resolveFeedbackTarget(
   const configured = env[FEEDBACK_URL_ENV]?.trim();
   if (configured) return { url: configured };
   if (DEFAULT_FEEDBACK_URL) return { url: DEFAULT_FEEDBACK_URL };
+  if (options.allowCloud === false) return null;
 
   const credentials = (options.cloudCredentials ?? (() => defaultCloudCredentials(env)))();
   if (!credentials) return null;

@@ -7,6 +7,7 @@ import { AppContext, createRoot, useKeyboard, useTerminalDimensions } from "@ope
 import { VERSION, type Finding, type FindingTriageStatus } from "@0sec/shared";
 import type { NativeRuntime, SourceFixResult, SourceFixStatus } from "@0sec/core";
 import { getRuntimeAvailability } from "../utils.js";
+import { buildFindingChatPrompt, loadFindingFocus } from "../finding-focus.js";
 import { useTheme, type Theme } from "./theme-context.js";
 import { severityToneFor } from "./themes.js";
 import { fitTuiText, fitTuiUrl } from "./text.js";
@@ -447,7 +448,14 @@ function CrashPanel({ crash, onRestart, onQuit }: { crash: CrashInfo; onRestart:
         const message = buildCrashFeedbackMessage(note, crash);
         const timestamp = new Date().toISOString();
         const local = appendFeedback({ message, timestamp, version: VERSION, mode: "crash" });
-        const sent = await submitFeedback({ message, timestamp, version: VERSION, mode: "crash" });
+        // Crash feedback has no transcript preview surface. Preserve its
+        // historical local-only default; an operator may still opt in with an
+        // explicit 0SEC_FEEDBACK_URL.
+        const sent = await submitFeedback(
+          { message, timestamp, version: VERSION, mode: "crash" },
+          process.env,
+          { allowCloud: false },
+        );
         setResult(describeFeedbackOutcome(local, sent));
       } catch (error) {
         setResult({
@@ -2731,6 +2739,19 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
       action: () => { void mutateTriage("new"); },
     },
     {
+      id: "open-finding",
+      title: "Inspect selected finding in chat",
+      category: "Investigate",
+      description: "Open evidence, then investigate or plan a fix in the persistent chat",
+      keybind: "enter",
+      suggested: true,
+      action: () => {
+        if (selectedRow && selectedFinding) {
+          shell?.openFindingDetail(selectedRow.id, selectedFinding);
+        }
+      },
+    },
+    {
       id: "fix-finding",
       title: "Generate source fix",
       category: "Remediation",
@@ -2872,6 +2893,10 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
     }
     if (shell && key.sequence === "]") {
       shell.goForward();
+      return;
+    }
+    if (key.name === "return" && selectedRow && selectedFinding) {
+      shell?.openFindingDetail(selectedRow.id, selectedFinding);
       return;
     }
     if (key.name === "up") setIndex((current) => Math.max(0, current - 1));
@@ -3034,7 +3059,7 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
               <text fg={theme.MUTED} wrapMode="word">{fitTuiText(filterSummary, findingsDetailContentWidth)}</text>
               <text fg={theme.MUTED}>{fitTuiText(`limit ${options.limit}`, findingsDetailContentWidth)}</text>
               <text fg={theme.MUTED}>{fitTuiText(`mode ${options.all ? "raw rows" : "grouped families"}`, findingsDetailContentWidth)}</text>
-              <text fg={theme.MUTED} wrapMode="word">{fitTuiText("keys a accept · s suppress · r reopen · f fix", findingsDetailContentWidth)}</text>
+              <text fg={theme.MUTED} wrapMode="word">{fitTuiText("enter inspect/chat · a accept · s suppress · r reopen · f generate candidate", findingsDetailContentWidth)}</text>
             </box>
           </PanelSection>
           <PanelSection title="Description" contentWidth={findingsDetailContentWidth} tone={theme.BORDER}>
@@ -4075,34 +4100,25 @@ function UsageRoute({
 /**
  * Routes the finding-detail view, supplying the console shell around it.
  *
- * Two ways in: the click-wiring hands the finding record across directly (the
- * common path once the sidebar / inline findings are clickable), or only an id
- * arrives and the finding is resolved lazily from the findings store here — the
- * same `@0sec/db` read `FindingsScreen` performs, so the overlay never imports
- * the DB into the screen module. `onCopyReport` is wired to the shared
- * `copyToClipboard` (subprocess path — no safe OSC 52 emitter is reachable from
- * this overlay), so the copy action works on the host and degrades to a note
- * when no clipboard tool is on PATH. `onFix` rides the normal agent turn: the
- * coordinator threads it to the always-mounted chat's operator-submit path
- * (`chatSubmitRef`), so "Fix" submits a fix request as a chat turn and returns
- * the operator to chat — it never reaches into core tools. `onSetStatus` stays
- * unwired until the store's write API lands, so the screen never shows a control
- * that does nothing.
+ * Detail stays a read surface. Its investigation and remediation-planning
+ * actions return to the persistent chat, where the normal scope and approval
+ * gates apply. A source patch is never applied from this overlay.
  */
 function FindingDetailRoute({
   findingId,
   finding,
   chatOptions,
   onExit,
-  onFix,
+  onInvestigate,
+  onPlanFix,
   shell,
 }: {
   findingId?: string;
   finding?: Finding;
   chatOptions?: ChatScreenOptions;
   onExit: () => void;
-  /** Route a fix request through the normal chat turn, then return to chat. */
-  onFix?: (finding: Finding) => void;
+  onInvestigate?: (finding: Finding) => void;
+  onPlanFix?: (finding: Finding) => void;
   shell?: ShellNav;
 }) {
   const [resolved, setResolved] = useState<Finding | undefined>(finding);
@@ -4116,19 +4132,8 @@ function FindingDetailRoute({
     let alive = true;
     void (async () => {
       try {
-        const { osecDB } = await import("@0sec/db");
-        const db = new osecDB();
-        try {
-          const row = db.getFinding(findingId);
-          if (alive && row) {
-            setResolved({
-              ...(row as unknown as Finding),
-              ...db.getFindingReviewFields(findingId),
-            });
-          }
-        } finally {
-          db.close();
-        }
+        const focus = loadFindingFocus(findingId);
+        if (alive) setResolved(focus.finding);
       } catch {
         // Leave unresolved; the screen shows its honest empty state.
       }
@@ -4142,7 +4147,8 @@ function FindingDetailRoute({
     <FindingDetailScreen
       finding={resolved}
       findingId={findingId}
-      onFix={onFix}
+      onInvestigate={onInvestigate}
+      onPlanFix={onPlanFix}
       onCopyReport={(_finding, markdown) => {
         void copyToClipboard(markdown, { spawn: defaultSpawn, which: defaultWhich });
       }}
@@ -4559,13 +4565,22 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
         finding={currentRoute.finding}
         chatOptions={currentRoute.chatOptions}
         onExit={onExit}
-        onFix={(finding) => {
-          // Route the fix intent through the SAME operator-submit path a typed
-          // message takes (queue-or-send), then drop the overlay back to chat so
-          // the operator watches the turn run. Never touches core tools.
+        onInvestigate={(finding) => {
           leaveCurrentScreen(shell, onExit);
           chatSubmitRef.current?.(
-            `Generate and apply a fix for finding ${finding.id}: ${finding.title}`,
+            buildFindingChatPrompt(
+              { finding, target: currentRoute.chatOptions?.target },
+              "investigate",
+            ),
+          );
+        }}
+        onPlanFix={(finding) => {
+          leaveCurrentScreen(shell, onExit);
+          chatSubmitRef.current?.(
+            buildFindingChatPrompt(
+              { finding, target: currentRoute.chatOptions?.target },
+              "draft_fix",
+            ),
           );
         }}
         shell={shell}

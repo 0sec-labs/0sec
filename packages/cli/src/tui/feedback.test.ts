@@ -165,6 +165,16 @@ describe("feedbackEndpoint", () => {
   it("derives the canonical authenticated cloud receiver from CLI credentials", () => {
     expect(feedbackEndpoint({}, CLOUD_CREDENTIALS)).toBe("https://cloud.0.security/api/cli-feedback");
   });
+
+  it("can disable cloud fallback for a flow without a reviewed preview", () => {
+    expect(feedbackEndpoint({}, { ...CLOUD_CREDENTIALS, allowCloud: false })).toBeNull();
+    expect(
+      feedbackEndpoint({ "0SEC_FEEDBACK_URL": "https://self-hosted.example/feedback" }, {
+        ...CLOUD_CREDENTIALS,
+        allowCloud: false,
+      }),
+    ).toBe("https://self-hosted.example/feedback");
+  });
 });
 
 describe("submissionBlockedReason", () => {
