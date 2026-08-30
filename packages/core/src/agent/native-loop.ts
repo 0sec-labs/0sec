@@ -41,6 +41,7 @@ import {
 import { createShadowJournal, type ShadowJournal } from "./journal/shadow.js";
 import { loadJournal, rehydrateContext, renderSeedMessages } from "./journal/index.js";
 import { detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
+import { detectDoomLoop, doomLoopNudge, toolCallSignature } from "./doom-loop.js";
 import { formatJitSkillsInstruction, getSkillById } from "./skills/index.js";
 import { estimateCost } from "./cost.js";
 import type { ScanCostLedger } from "./cost-ledger.js";
@@ -1249,6 +1250,12 @@ export async function runNativeAgentLoop(
   let transientRetries = 0;
   const MAX_TRANSIENT_RETRIES = 6;
 
+  // Rolling window of recent tool-call signatures for doom-loop detection — the
+  // agent running the SAME tool with the SAME args over and over (a stuck probe)
+  // burns budget for nothing. Bounded; reset after a nudge fires so it warns
+  // once per stuck streak, not every turn.
+  const toolCallLog: string[] = [];
+
   try {
   while (!state.done && state.turnCount < config.maxTurns) {
     // ── Coordinator rails: supervise sub-agents BETWEEN iterations ──
@@ -1737,6 +1744,9 @@ export async function runNativeAgentLoop(
     for (const block of toolUseBlocks) {
       const call: ToolCall = { name: block.name, arguments: block.input };
       toolCalls.push(call);
+      // Track the call signature for doom-loop detection (see after the loop).
+      toolCallLog.push(toolCallSignature(call.name, call.arguments));
+      if (toolCallLog.length > 12) toolCallLog.shift();
 
       // Correlation id for this single invocation — threaded into the executor
       // so any `tool_artifact` it persists carries the same key, and recorded
@@ -2034,6 +2044,27 @@ export async function runNativeAgentLoop(
     // without creating an invalid two-user-messages-in-a-row sequence.
     for (const note of inlineValidationNotes) {
       toolResultBlocks.push({ type: "text", text: note });
+    }
+
+    // Doom-loop guard: if the last several tool calls are byte-identical the
+    // agent is stuck re-running the same thing (a failing probe, a command that
+    // never changes). Inject a one-line nudge into the SAME tool-results message
+    // so it lands next turn, then reset the window so it warns once per streak.
+    const doom = detectDoomLoop(toolCallLog);
+    if (doom.looping && doom.signature) {
+      toolResultBlocks.push({ type: "text", text: `[0sec] ${doomLoopNudge(doom.signature, doom.count ?? 0)}` });
+      onEvent?.("doom_loop", { turn: state.turnCount, signature: doom.signature, count: doom.count ?? 0 });
+      if (db) {
+        db.logEvent({
+          scanId: config.scanId,
+          stage: config.role,
+          eventType: "doom_loop",
+          agentRole: config.role,
+          payload: { turn: state.turnCount, count: doom.count ?? 0 },
+          timestamp: Date.now(),
+        });
+      }
+      toolCallLog.length = 0;
     }
 
     // Append tool results as user message
