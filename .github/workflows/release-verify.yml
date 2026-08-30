@@ -67,8 +67,8 @@ jobs:
           fake="$prefix/0sec"
           printf '#!/bin/sh\necho 0sec-launcher-smoke\n' > "$fake"
           chmod +x "$fake"
-          0SEC_BINARY="$fake" "$prefix/node_modules/.bin/0sec" --version | grep -qx "0sec-launcher-smoke"
-          0SEC_BINARY="$fake" "$prefix/node_modules/.bin/0" --version | grep -qx "0sec-launcher-smoke"
+          env 0SEC_BINARY="$fake" "$prefix/node_modules/.bin/0sec" --version | grep -qx "0sec-launcher-smoke"
+          env 0SEC_BINARY="$fake" "$prefix/node_modules/.bin/0" --version | grep -qx "0sec-launcher-smoke"
 
       - name: Generate package-root CycloneDX SBOM
         env:
