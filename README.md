@@ -7,7 +7,7 @@
 
 <p align="center">
   <strong>[RESEARCH PREVIEW] Your open & extensible AI cybersecurity team.</strong><br/>
-  0sec vulnerabilities, creates working exploits, and writes the fix.
+  0sec finds vulnerabilities, creates working exploits, and writes the fix.
   Multi-model, multi-agent, but most importantly: yours.
 </p>
 
