@@ -376,7 +376,7 @@ describe("submitFeedback", () => {
 
   it("reports no-endpoint rather than throwing or silently succeeding", async () => {
     const { fn, calls } = stubFetch(() => okResponse());
-    const result = await submitFeedback(payload(), {}, { fetchImpl: fn });
+    const result = await submitFeedback(payload(), {}, { fetchImpl: fn, cloudCredentials: () => null });
     expect(result.ok).toBe(false);
     expect(result.skipped).toBe("no-endpoint");
     expect(result.error).toContain("0SEC_FEEDBACK_URL");
