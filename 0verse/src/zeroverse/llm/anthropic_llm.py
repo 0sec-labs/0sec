@@ -2,7 +2,7 @@
 
 GLM rides the *same* Anthropic Messages wire as Claude, just at a different
 base_url (``https://api.z.ai/api/anthropic``) — that's the house convention from
-pwnkit. So this one backend covers both: pass ``base_url``/``api_key`` for GLM, and
+0sec. So this one backend covers both: pass ``base_url``/``api_key`` for GLM, and
 toggle ``structured`` (GLM's compat endpoint lacks Claude's structured-output
 feature, so we fall back to schema-in-prompt + parse) and ``thinking``.
 

@@ -1,6 +1,6 @@
 """Provider routing — build the right LLM backend from a provider name or model id.
 
-Mirrors the pwnkit house convention (engine ``llm-api.ts``):
+Mirrors the 0sec house convention (engine ``llm-api.ts``):
   * route by **model-id prefix** first (``glm*`` -> z-ai, ``gpt-*``/``o[1-9]`` -> openai,
     ``claude*`` -> anthropic),
   * else walk an env-key priority ladder.

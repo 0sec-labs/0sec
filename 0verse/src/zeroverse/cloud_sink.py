@@ -4,10 +4,10 @@ The binary-scan lane's engine half of ``0verse scan --cloud``. The cloud half
 (``POST /scans/:id/findings``) is already built + flag-gated server-side; this
 module is the producer that drives it.
 
-It mirrors the canonical TypeScript cloud-sink (``@pwnkit/core`` ``cloud-sink.ts``)
+It mirrors the canonical TypeScript cloud-sink (``@0sec/core`` ``cloud-sink.ts``)
 and the ``mapOversePoVToCloudFinding`` mapper:
 
-  * the SAME ``PWNKIT_CLOUD_*`` env contract pwnkit-cli reads,
+  * the SAME ``0SEC_CLOUD_*`` env contract 0sec-cli reads,
   * the SAME two POST shapes — ``{"finding": <CloudSinkFinding>}`` per finding and
     ``{"report": <ScanReport>, "final": true}`` on completion (the completion
     marker), to ``<sink>/scans/<scanId>/findings``,
@@ -64,7 +64,7 @@ class CloudSinkConfig:
     token: str | None = None
     org_id: str | None = None
     timeout_ms: int = 30_000
-    events: bool = True  # PWNKIT_CLOUD_EVENTS — stream per-finding POSTs live
+    events: bool = True  # 0SEC_CLOUD_EVENTS — stream per-finding POSTs live
 
 
 def build_config(
@@ -72,19 +72,19 @@ def build_config(
 ) -> CloudSinkConfig | None:
     """Resolve the sink config from env + CLI flags.
 
-    Env takes precedence over the matching flag (the ``PWNKIT_CLOUD_*`` contract is
-    env-driven, same as pwnkit-cli). The bearer ``token`` is read from the
+    Env takes precedence over the matching flag (the ``0SEC_CLOUD_*`` contract is
+    env-driven, same as 0sec-cli). The bearer ``token`` is read from the
     environment ONLY — it is never accepted on the command line. Returns ``None``
     when no sink URL or scan id is resolvable (the caller treats that as a usage
     error in ``--cloud`` mode).
     """
-    sink_url = (os.environ.get("PWNKIT_CLOUD_SINK") or sink or "").strip()
-    sid = (os.environ.get("PWNKIT_CLOUD_SCAN_ID") or scan_id or "").strip()
+    sink_url = (os.environ.get("0SEC_CLOUD_SINK") or sink or "").strip()
+    sid = (os.environ.get("0SEC_CLOUD_SCAN_ID") or scan_id or "").strip()
     if not sink_url or not sid:
         return None
-    token = (os.environ.get("PWNKIT_CLOUD_TOKEN") or "").strip() or None
-    org_id = (os.environ.get("PWNKIT_CLOUD_ORG_ID") or "").strip() or None
-    events = os.environ.get("PWNKIT_CLOUD_EVENTS", "1").strip() != "0"
+    token = (os.environ.get("0SEC_CLOUD_TOKEN") or "").strip() or None
+    org_id = (os.environ.get("0SEC_CLOUD_ORG_ID") or "").strip() or None
+    events = os.environ.get("0SEC_CLOUD_EVENTS", "1").strip() != "0"
     return CloudSinkConfig(
         sink_url=sink_url, scan_id=sid, token=token, org_id=org_id,
         timeout_ms=timeout_ms, events=events,
@@ -360,13 +360,13 @@ def _log(msg: str) -> None:
 def _headers(config: CloudSinkConfig) -> dict[str, str]:
     headers = {
         "Content-Type": "application/json",
-        "X-Pwnkit-Scan-Id": config.scan_id,
+        "X-0sec-Scan-Id": config.scan_id,
         "x-cloud-sink-version": CLOUD_SINK_VERSION,
     }
     if config.token:
         headers["Authorization"] = f"Bearer {config.token}"
     if config.org_id:
-        headers["X-Pwnkit-Org-Id"] = config.org_id
+        headers["X-0sec-Org-Id"] = config.org_id
     return headers
 
 

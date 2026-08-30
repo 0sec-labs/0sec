@@ -1,6 +1,6 @@
 """Open verification oracles — the unit of truth.
 
-Reimplemented from pwnkit *concepts* (never its code/prompts; see INTEGRATION.md),
+Reimplemented from 0sec *concepts* (never its code/prompts; see INTEGRATION.md),
 these are the deterministic, externally-checkable proofs that turn a hypothesis
 into a finding:
 
@@ -111,7 +111,7 @@ class RunResult:
 
 def differential_confirmed(target: RunResult, control: RunResult) -> bool:
     """A PoV is confirmed only when it crashes the target but NOT the control
-    (mirrors AIxCC's delta check / pwnkit's differential oracle)."""
+    (mirrors AIxCC's delta check / 0sec's differential oracle)."""
     return target.valid and control.valid and target.crashed and not control.crashed
 
 

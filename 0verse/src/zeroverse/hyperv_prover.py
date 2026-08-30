@@ -518,7 +518,7 @@ def write_evidence_bundle(
 
     The transport records absolute paths while it is collecting evidence so
     callers can inspect artifacts immediately.  Absolute producer paths are not
-    portable across the pwnkit/0cloud handoff, though, so the canonical receipt
+    portable across the 0sec/0cloud handoff, though, so the canonical receipt
     is always written next to its sidecars and refers to them by relative path.
     """
     root = Path(artifact_dir).resolve()

@@ -154,7 +154,7 @@ def _make_server(cap: _Capture) -> HTTPServer:
             cap.requests.append({
                 "path": self.path,
                 "auth": self.headers.get("Authorization"),
-                "scan_id_header": self.headers.get("X-Pwnkit-Scan-Id"),
+                "scan_id_header": self.headers.get("X-0sec-Scan-Id"),
                 "body": json.loads(raw) if raw else None,
             })
             if cap.fail_next > 0:
@@ -358,10 +358,10 @@ def test_final_report_failure_exits_nonzero_isolated() -> None:
 # --- env / config resolution ----------------------------------------------
 
 def test_build_config_env_precedence_and_token_from_env(monkeypatch: Any) -> None:
-    monkeypatch.setenv("PWNKIT_CLOUD_SINK", "https://env.example/api")
-    monkeypatch.setenv("PWNKIT_CLOUD_SCAN_ID", "env-scan")
-    monkeypatch.setenv("PWNKIT_CLOUD_TOKEN", "env-token")
-    monkeypatch.setenv("PWNKIT_CLOUD_ORG_ID", "org-7")
+    monkeypatch.setenv("0SEC_CLOUD_SINK", "https://env.example/api")
+    monkeypatch.setenv("0SEC_CLOUD_SCAN_ID", "env-scan")
+    monkeypatch.setenv("0SEC_CLOUD_TOKEN", "env-token")
+    monkeypatch.setenv("0SEC_CLOUD_ORG_ID", "org-7")
     # Flags pass DIFFERENT values; env must win.
     cfg = build_config(sink="https://flag.example/api", scan_id="flag-scan", timeout_ms=1234)
     assert cfg is not None
@@ -385,7 +385,7 @@ def test_build_config_none_without_sink_or_scan_id() -> None:
 
 
 def test_events_flag_disables_per_finding_posts(monkeypatch: Any) -> None:
-    monkeypatch.setenv("PWNKIT_CLOUD_EVENTS", "0")
+    monkeypatch.setenv("0SEC_CLOUD_EVENTS", "0")
     cfg = build_config(sink="https://x/api", scan_id="s")
     assert cfg is not None and cfg.events is False
 
@@ -406,9 +406,9 @@ def test_cli_cloud_invokes_run_cloud_scan(monkeypatch: Any) -> None:
         return 0
 
     monkeypatch.setattr(cloud_sink, "run_cloud_scan", fake_run)
-    monkeypatch.setenv("PWNKIT_CLOUD_TOKEN", "env-only-token")
-    monkeypatch.delenv("PWNKIT_CLOUD_SINK", raising=False)
-    monkeypatch.delenv("PWNKIT_CLOUD_SCAN_ID", raising=False)
+    monkeypatch.setenv("0SEC_CLOUD_TOKEN", "env-only-token")
+    monkeypatch.delenv("0SEC_CLOUD_SINK", raising=False)
+    monkeypatch.delenv("0SEC_CLOUD_SCAN_ID", raising=False)
 
     rc = cli.main([
         "scan", "/bin/vuln", "--cloud", "--scan-id", "cli-scan",
@@ -426,8 +426,8 @@ def test_cli_cloud_invokes_run_cloud_scan(monkeypatch: Any) -> None:
 def test_cli_cloud_usage_error_without_config(monkeypatch: Any) -> None:
     from zeroverse import cli
 
-    monkeypatch.delenv("PWNKIT_CLOUD_SINK", raising=False)
-    monkeypatch.delenv("PWNKIT_CLOUD_SCAN_ID", raising=False)
+    monkeypatch.delenv("0SEC_CLOUD_SINK", raising=False)
+    monkeypatch.delenv("0SEC_CLOUD_SCAN_ID", raising=False)
     # --cloud but neither flags nor env -> usage error (non-zero, no scan run).
     rc = cli.main(["scan", "/bin/vuln", "--cloud", "--format", "ndjson"])
     assert rc == 2

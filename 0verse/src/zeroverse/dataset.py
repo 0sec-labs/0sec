@@ -7,7 +7,7 @@ What ships in OSS vs what stays the private moat — the split is the whole poin
     pipeline run into labeled records, plus a handful of clearly-marked
     ``synthetic`` example rows. This is the *capture mechanism*.
   * **MOAT (never in the repo):** the real corpus of records mined from paid
-    scans at scale — the closed feedback loop pwnkit-cloud trains on. The OSS
+    scans at scale — the closed feedback loop 0sec-cloud trains on. The OSS
     ships the funnel, not the water.
 
 A record maps **binary features** → **(bug_class, source, sink)** → **PoV

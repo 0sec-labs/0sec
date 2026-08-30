@@ -75,17 +75,17 @@ def main(argv: list[str] | None = None) -> int:
     p_scan.add_argument("--llm", default="mock")
     p_scan.add_argument("--model", default=None)
     # Cloud-sink lane — stream findings to the 0cloud orchestrator instead of
-    # printing a local report. The bearer token is env-ONLY (PWNKIT_CLOUD_TOKEN).
+    # printing a local report. The bearer token is env-ONLY (0SEC_CLOUD_TOKEN).
     p_scan.add_argument(
         "--cloud",
         action="store_true",
-        help="stream findings to the 0cloud orchestrator (PWNKIT_CLOUD_* env)",
+        help="stream findings to the 0cloud orchestrator (0SEC_CLOUD_* env)",
     )
     p_scan.add_argument(
-        "--scan-id", default=None, help="cloud scan id (or PWNKIT_CLOUD_SCAN_ID; env wins)"
+        "--scan-id", default=None, help="cloud scan id (or 0SEC_CLOUD_SCAN_ID; env wins)"
     )
     p_scan.add_argument(
-        "--sink", default=None, help="orchestrator base URL (or PWNKIT_CLOUD_SINK; env wins)"
+        "--sink", default=None, help="orchestrator base URL (or 0SEC_CLOUD_SINK; env wins)"
     )
     p_scan.add_argument(
         "--timeout", type=int, default=30000, help="per-request POST timeout in ms (cloud mode)"
@@ -780,7 +780,7 @@ def main(argv: list[str] | None = None) -> int:
             if config is None:
                 print(
                     "error: --cloud requires a sink URL and scan id "
-                    "(--sink/--scan-id flags or PWNKIT_CLOUD_SINK/PWNKIT_CLOUD_SCAN_ID env)",
+                    "(--sink/--scan-id flags or 0SEC_CLOUD_SINK/0SEC_CLOUD_SCAN_ID env)",
                     file=sys.stderr,
                 )
                 return 2

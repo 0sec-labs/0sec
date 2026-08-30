@@ -1,6 +1,6 @@
 """Embeddable scan API + versioned machine result contract (M5 #28).
 
-The stable, embeddable seam a scan platform (pwnkit-cloud) or an external agent
+The stable, embeddable seam a scan platform (0sec-cloud) or an external agent
 (the MCP bridge, #29) drives:
 
     from zeroverse import api

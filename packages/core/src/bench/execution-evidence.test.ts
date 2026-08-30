@@ -121,7 +121,7 @@ function inputs() {
 }
 
 describe("0research execution evidence projection", () => {
-  it("matches the exact canonical digest independently computed by 0brain (re-pinned 2026-08-19 for the pwnkit → 0sec candidateId rename)", () => {
+  it("matches the exact canonical digest independently computed by 0brain (re-pinned 2026-08-19 for the 0sec → 0sec candidateId rename)", () => {
     const fixture = JSON.parse(
       readFileSync(new URL("./improvement-execution-evidence.fixture.json", import.meta.url), "utf8"),
     ) as ResearchExecutionEvidence;
