@@ -40,7 +40,7 @@ describe("isUntrustedSourceTool", () => {
       "done",
       "list_skills",
       "load_skill",
-      "intel_lookup_cve",
+      "intel",
       "payload_lookup",
     ]) {
       expect(isUntrustedSourceTool(t)).toBe(false);

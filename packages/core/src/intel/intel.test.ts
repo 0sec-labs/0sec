@@ -508,8 +508,9 @@ describe("vulnerability intel", () => {
     };
     const executor = new ToolExecutor(ctx, null);
     const result = await executor.execute({
-      name: "intel_search_advisories",
+      name: "intel",
       arguments: {
+        action: "search_advisories",
         ecosystem: "npm",
         package_name: "zipper",
         version: "1.0.0",
@@ -539,8 +540,9 @@ describe("vulnerability intel", () => {
     };
     const executor = new ToolExecutor(ctx, null);
     const result = await executor.execute({
-      name: "intel_build_dossier",
+      name: "intel",
       arguments: {
+        action: "build_dossier",
         ecosystem: "npm",
         package_name: "zipper",
         version: "1.0.0",
@@ -588,8 +590,9 @@ describe("vulnerability intel", () => {
     }));
     const executor = new ToolExecutor(ctx, null);
     const result = await executor.execute({
-      name: "intel_search_target_history",
+      name: "intel",
       arguments: {
+        action: "search_target_history",
         limit: 5,
       },
     });

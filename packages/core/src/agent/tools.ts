@@ -173,13 +173,7 @@ import {
   type MessagingRuntime,
 } from "./agent-messaging.js";
 import { mapWithConcurrency } from "../concurrency.js";
-import {
-  executeIntelSearchAdvisories,
-  executeIntelLookupCve,
-  executeIntelSearchSimilar,
-  executeIntelBuildDossier,
-  executeIntelSearchTargetHistory,
-} from "./tools/intel.js";
+import { executeIntel } from "./tools/intel.js";
 import { resolveScopedPath } from "./tools/scope-path.js";
 import { windowFileContent } from "./tools/read-file-window.js";
 import { executeOverseScan, validateOverseArgs } from "./tools/0verse.js";
@@ -537,11 +531,7 @@ const SCOPED_SOURCE_AUDIT_TOOLS: Record<string, true> = {
   read_file: true,
   list_files: true,
   search_files: true,
-  intel_search_advisories: true,
-  intel_lookup_cve: true,
-  intel_search_similar: true,
-  intel_build_dossier: true,
-  intel_search_target_history: true,
+  intel: true,
   query_findings: true,
   save_finding: true,
   update_finding: true,
@@ -7624,24 +7614,8 @@ export class ToolExecutor {
   // 0sec#1284 — intel handler bodies extracted to ./tools/intel.ts as free
   // functions; these stay as thin delegates so tools/dispatch.test.ts keeps
   // resolving each tool name to a real ToolExecutor method.
-  private intelSearchAdvisories(args: Record<string, unknown>): Promise<ToolResult> {
-    return executeIntelSearchAdvisories(args);
-  }
-
-  private intelLookupCve(args: Record<string, unknown>): Promise<ToolResult> {
-    return executeIntelLookupCve(args);
-  }
-
-  private intelSearchSimilar(args: Record<string, unknown>): Promise<ToolResult> {
-    return executeIntelSearchSimilar(args);
-  }
-
-  private intelBuildDossier(args: Record<string, unknown>): Promise<ToolResult> {
-    return executeIntelBuildDossier(args);
-  }
-
-  private intelSearchTargetHistory(args: Record<string, unknown>): Promise<ToolResult> {
-    return executeIntelSearchTargetHistory(this.ctx, args);
+  private intelTool(args: Record<string, unknown>): Promise<ToolResult> {
+    return executeIntel(this.ctx, args);
   }
 
   private updateTarget(args: Record<string, unknown>): ToolResult {

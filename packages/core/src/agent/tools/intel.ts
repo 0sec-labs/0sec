@@ -22,74 +22,37 @@ import {
 import { resolveScopedPath } from "./scope-path.js";
 
 export const intelToolDefinitions: Record<string, ToolDefinition> = {
-  intel_search_advisories: {
-    name: "intel_search_advisories",
+  // One consolidated vuln-intelligence VERB (0sec#tool-curation): five uniform
+  // lookups behind `action`, instead of five near-identical top-level tools —
+  // trims the advertised surface (Anthropic's "one verb, not many thin tools"
+  // guidance) while keeping each lookup's args documented below.
+  intel: {
+    name: "intel",
     description:
-      "Search live vulnerability intelligence for advisories affecting a package/version. Use before making known-CVE/GHSA claims during package audits. Results are sourced leads; verify local reachability before reporting new vulnerabilities.",
+      "Live vulnerability-intelligence lookups. Set `action`: 'lookup_cve' (a CVE from NVD + CISA KEV — use instead of citing from memory), 'search_advisories' (advisories affecting a package/version), 'search_similar' (related CVEs by CWE/keywords, for variant hunting), 'build_dossier' (a package-level intel dossier: prioritized advisories + prior-vuln playbooks + variant leads), 'search_target_history' (CVEs/GHSAs already reported against this exact target/repo/product). Results are sourced leads; verify local reachability before reporting a new vulnerability.",
     parameters: {
-      ecosystem: {
+      action: {
         type: "string",
-        description: "Package ecosystem: npm, PyPI, crates.io, Go, Maven",
+        description: "Which lookup to run.",
+        enum: ["lookup_cve", "search_advisories", "search_similar", "build_dossier", "search_target_history"],
       },
-      package_name: { type: "string", description: "Package name, e.g. formidable or requests" },
-      version: { type: "string", description: "Optional resolved package version" },
-      enrich: { type: "boolean", description: "Whether to enrich CVE aliases from NVD/CISA KEV (default true)" },
+      cve_id: { type: "string", description: "lookup_cve: CVE identifier, e.g. CVE-2024-1086." },
+      ecosystem: { type: "string", description: "Package ecosystem: npm, PyPI, crates.io, Go, Maven (search_advisories/build_dossier; optional hint elsewhere)." },
+      package_name: { type: "string", description: "Package name, e.g. formidable or requests." },
+      version: { type: "string", description: "Optional resolved package version." },
+      enrich: { type: "boolean", description: "search_advisories: enrich CVE aliases from NVD/CISA KEV (default true)." },
+      cwe: { type: "string", description: "search_similar: CWE id, e.g. CWE-22." },
+      keywords: { type: "string", description: "Comma-separated keywords, e.g. 'zip slip,path traversal'." },
+      limit: { type: "number", description: "Maximum results." },
+      similar_limit: { type: "number", description: "build_dossier: maximum similar-advisory leads (default 10, max 50)." },
+      include_similar: { type: "boolean", description: "build_dossier: include similar historical advisories (default true)." },
+      target: { type: "string", description: "search_target_history: target name, URL, or repository URL." },
+      repo_path: { type: "string", description: "search_target_history: local repo/package path (defaults to the agent scope path)." },
+      repository: { type: "string", description: "search_target_history: GitHub repository, e.g. expressjs/express." },
+      product: { type: "string", description: "search_target_history: optional product/project name." },
+      vendor: { type: "string", description: "search_target_history: optional vendor/organization name." },
     },
-    required: ["ecosystem", "package_name"],
-  },
-
-  intel_lookup_cve: {
-    name: "intel_lookup_cve",
-    description:
-      "Look up a CVE from NVD and CISA KEV. Use this instead of citing CVEs from memory. Returns CVSS, CWE, references, and known-exploited status when available.",
-    parameters: {
-      cve_id: { type: "string", description: "CVE identifier, e.g. CVE-2024-1086" },
-    },
-    required: ["cve_id"],
-  },
-
-  intel_search_similar: {
-    name: "intel_search_similar",
-    description:
-      "Search for related CVEs/advisories by CWE and keywords. Use as variant-hunt context to find historical bug shapes similar to the target code. Provide at least one of: cwe or non-empty keywords.",
-    parameters: {
-      cwe: { type: "string", description: "Optional CWE id, e.g. CWE-22" },
-      ecosystem: { type: "string", description: "Optional ecosystem hint" },
-      keywords: { type: "string", description: "Optional comma-separated keywords, e.g. zip slip,path traversal" },
-      limit: { type: "number", description: "Maximum results (default 10, max 50)" },
-    },
-  },
-
-  intel_build_dossier: {
-    name: "intel_build_dossier",
-    description:
-      "Build a package-level vulnerability intelligence dossier with prioritized advisories, risk summary, prior-vulnerability playbooks, variant-hunt leads, and graph context. Use as the first intel step for dependency audits.",
-    parameters: {
-      ecosystem: { type: "string", description: "Package ecosystem: npm, PyPI, crates.io, Go, Maven" },
-      package_name: { type: "string", description: "Package name, e.g. formidable or requests" },
-      version: { type: "string", description: "Optional resolved package version" },
-      keywords: { type: "string", description: "Optional comma-separated variant-hunt keywords" },
-      similar_limit: { type: "number", description: "Maximum similar-advisory leads (default 10, max 50)" },
-      include_similar: { type: "boolean", description: "Whether to include similar historical advisories (default true)" },
-    },
-    required: ["ecosystem", "package_name"],
-  },
-
-  intel_search_target_history: {
-    name: "intel_search_target_history",
-    description:
-      "Search live vulnerability intelligence for CVEs/GHSAs already reported against this exact target/project/repository/product by other researchers. Use early in source reviews and live-target recon to turn historical target CVEs into multi-step audit playbooks.",
-    parameters: {
-      target: { type: "string", description: "Target name, URL, or repository URL" },
-      repo_path: { type: "string", description: "Optional local repo/package path to infer package/repository/product hints from. Defaults to the agent scope path when available." },
-      repository: { type: "string", description: "Optional GitHub repository, e.g. expressjs/express or https://github.com/expressjs/express" },
-      ecosystem: { type: "string", description: "Optional package ecosystem: npm, PyPI, crates.io, Go, Maven" },
-      package_name: { type: "string", description: "Optional package name if the target is distributed as a package" },
-      product: { type: "string", description: "Optional product/project name" },
-      vendor: { type: "string", description: "Optional vendor/organization name" },
-      keywords: { type: "string", description: "Optional comma-separated aliases or target-specific search terms" },
-      limit: { type: "number", description: "Maximum results per live source query (default 20, max 50)" },
-    },
+    required: ["action"],
   },
 };
 
@@ -99,12 +62,40 @@ export const intelToolDefinitions: Record<string, ToolDefinition> = {
 // executor instance in agent/tools.ts (the methods now delegate to the
 // free-function handlers below — 0sec#1284).
 export const intelDispatch: Record<string, string> = {
-  intel_search_advisories: "intelSearchAdvisories",
-  intel_lookup_cve: "intelLookupCve",
-  intel_search_similar: "intelSearchSimilar",
-  intel_build_dossier: "intelBuildDossier",
-  intel_search_target_history: "intelSearchTargetHistory",
+  intel: "intelTool",
 };
+
+/**
+ * Route one `intel` call to the right lookup by `action`. Keeps the five
+ * per-lookup handlers below intact (each still validates + shapes its own args);
+ * this is the thin verb-dispatcher the single tool resolves to.
+ */
+export async function executeIntel(
+  ctx: ToolContext,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const action = String(args.action ?? "").trim();
+  switch (action) {
+    case "lookup_cve":
+      return executeIntelLookupCve(args);
+    case "search_advisories":
+      return executeIntelSearchAdvisories(args);
+    case "search_similar":
+      return executeIntelSearchSimilar(args);
+    case "build_dossier":
+      return executeIntelBuildDossier(args);
+    case "search_target_history":
+      return executeIntelSearchTargetHistory(ctx, args);
+    default:
+      return {
+        success: false,
+        output: null,
+        error:
+          `intel: unknown action "${action}" — use one of ` +
+          "lookup_cve, search_advisories, search_similar, build_dossier, search_target_history",
+      };
+  }
+}
 
 // ── Runtime handlers (0sec#1284) ──
 // Extracted verbatim from the ToolExecutor private methods of the same name.
