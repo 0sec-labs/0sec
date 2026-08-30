@@ -113,15 +113,15 @@ describe("0sec auth login", () => {
     expect(io.stderr.join("\n")).toMatch(/must be an http\(s\) URL/);
   });
 
-  it("browser flow polls and persists when server returns 200 with a token", async () => {
+  it("browser flow continues through 200 pending responses and persists a ready token", async () => {
     const openCalls: string[] = [];
     let polls = 0;
     const fetchImpl = (async (url: string | URL | Request) => {
       polls += 1;
       const u = String(url);
       expect(u).toMatch(/\/cli-auth\/sessions\//);
-      if (polls < 3) return new Response("not yet", { status: 404 });
-      return jsonResponse({ token: SECRET });
+      if (polls < 3) return jsonResponse({ status: "pending" });
+      return jsonResponse({ status: "ready", token: SECRET });
     }) as typeof fetch;
 
     await runLogin({

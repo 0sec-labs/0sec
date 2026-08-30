@@ -6,19 +6,13 @@
 //   - logout       deletes ~/.0sec/cloud.env
 //   - status       loads creds, hits CloudClient.pingHealth(), reports
 //
-// SCAFFOLD NOTICE
-// ───────────────
-// The server-side mint endpoint (better-auth → scoped CLI token) does
-// NOT exist yet — it ships as a separate 0sec-cloud PR. Until then:
-//   - `0sec auth login` (browser flow) will time out after 5 minutes
-//     because no server-side endpoint is writing the token to the
-//     polled session URL.
-//   - `0sec auth login --token <value>` is the actual usable path:
-//     paste a token you generated some other way (manual server insert,
-//     env handoff, etc.) and the CLI persists it to ~/.0sec/cloud.env.
-//   - `0sec auth status` works against any reachable cloud host that
-//     answers GET /health with a 2xx and `{status: "ok"}`-shaped body.
-//   - `0sec auth logout` works fully (it's just `unlinkSync`).
+// The browser flow is backed by the 0cloud session-mint endpoint:
+//   - `0sec auth login` opens `<host>/cli-auth?session=…` and polls the
+//     session URL until browser confirmation makes a scoped token ready.
+//   - `0sec auth login --token <value>` remains a manual credential path for
+//     self-hosted or recovery use.
+//   - `0sec auth status` works against any reachable cloud host that answers
+//     GET /health with a 2xx and `{status: "ok"}`-shaped body.
 //
 // DIVERGENCE FROM h1.ts
 // ──────────────────────
@@ -86,7 +80,7 @@ interface StatusOptions {
 export function registerAuthCommand(program: Command): void {
   const auth = program
     .command("auth")
-    .description("0sec-cloud authentication (scaffold; see `0sec auth login --help`)");
+    .description("0sec-cloud authentication")
 
   // ── 0sec auth login ──
   auth
@@ -148,10 +142,9 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
     return;
   }
 
-  // Browser flow. NOTE: until the server-side mint endpoint ships, the
-  // poll loop will time out and the user will get a "Login timed out"
-  // error. The logic below is correct — it just has nothing to poll
-  // against yet.
+  // Browser flow. The landing page registers the session and, after the
+  // operator confirms the organization, the poll endpoint returns a scoped
+  // token in its `ready` response.
   const session = randomBytes(9).toString("base64url").slice(0, 12);
   const loginUrl = `${host}/cli-auth?session=${session}`;
   const pollUrl = `${host}/cli-auth/sessions/${session}`;
@@ -159,8 +152,7 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
   consolePresentationOutput.stdout(chalk.dim("Opening browser..."), "auth.login.opening");
   consolePresentationOutput.stdout(chalk.dim(`  ${loginUrl}`), "auth.login.url");
   consolePresentationOutput.stdout("", "auth.login.empty-line");
-  consolePresentationOutput.stdout(chalk.yellow("Note: server-side mint endpoint is not yet implemented (#303)."), "auth.login.scaffold-warning");
-  consolePresentationOutput.stdout(chalk.yellow("      For now, use: 0sec auth login --token <value>"), "auth.login.scaffold-hint");
+  consolePresentationOutput.stdout(chalk.dim("Complete sign-in in the opened browser, then return here."), "auth.login.browser-hint");
   consolePresentationOutput.stdout("", "auth.login.empty-line");
 
   const opener = opts.openBrowser ?? defaultOpenBrowser;
@@ -199,24 +191,35 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
         process.exitCode = EXIT_USER_ERROR;
         return;
       }
+      const status = sessionStatus(body);
       const token = extractToken(body);
-      if (!token) {
-        consolePresentationOutput.stderr(chalk.red("Login poll returned 200 but body did not contain a token. Aborting."), "auth.login.poll-token-error");
-        process.exitCode = EXIT_USER_ERROR;
+      if (token) {
+        if (status !== undefined && status !== "ready") {
+          consolePresentationOutput.stderr(chalk.red("Login poll returned a token before the session was ready. Aborting."), "auth.login.poll-status-error");
+          process.exitCode = EXIT_USER_ERROR;
+          return;
+        }
+        persistCredentials(host, token, opts.homeDir);
+        consolePresentationOutput.stdout(`Logged in (host=${host})`, "auth.login.logged-in");
+        process.exitCode = EXIT_OK;
         return;
       }
-      persistCredentials(host, token, opts.homeDir);
-      consolePresentationOutput.stdout(`Logged in (host=${host})`, "auth.login.logged-in");
-      process.exitCode = EXIT_OK;
+      // The authenticated browser page creates a session before the operator
+      // confirms it, so the documented `200 { status: "pending" }` is normal.
+      // `expired` likewise stays a retryable poll state until this CLI's own
+      // bounded deadline elapses.
+      if (status === "pending" || status === "expired") continue;
+      consolePresentationOutput.stderr(chalk.red("Login poll returned 200 but body did not contain a token. Aborting."), "auth.login.poll-token-error");
+      process.exitCode = EXIT_USER_ERROR;
       return;
     }
-    // 404 = session not yet redeemed; keep polling. Anything else (401/
-    // 403/5xx) we still keep polling for — only the timeout is fatal.
+    // 404 = session not yet registered; keep polling. Anything else (401/
+    // 403/5xx) is also transient here — only the local timeout is fatal.
   }
 
   consolePresentationOutput.stderr(chalk.red(
     `Login timed out after ${Math.round((attempts * intervalMs) / 1000)}s. ` +
-      "Use `0sec auth login --token <value>` until the server-side mint endpoint ships (#303).",
+      "Retry the browser flow or use `0sec auth login --token <value>`.",
   ), "auth.login.timed-out");
   process.exitCode = EXIT_NET;
 }
@@ -381,12 +384,19 @@ function persistCredentials(host: string, token: string, homeDirOverride?: strin
   }
 }
 
+type CliAuthPollStatus = "pending" | "ready" | "expired";
+
+function sessionStatus(body: unknown): CliAuthPollStatus | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const status = (body as Record<string, unknown>).status;
+  return status === "pending" || status === "ready" || status === "expired"
+    ? status
+    : undefined;
+}
+
 /**
- * Extract a token from a `/cli-auth/sessions/<id>` response body. The
- * server contract isn't pinned yet (#303) — we accept either
- * `{ token: "…" }` or `{ access_token: "…" }` to keep the scaffold
- * flexible. The follow-up PR adds a zod schema once the shape is
- * locked.
+ * Extract a token from a `/cli-auth/sessions/<id>` response body. Keep the
+ * legacy `access_token` spelling for compatible self-hosted receivers.
  */
 function extractToken(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
@@ -430,6 +440,9 @@ function defaultOpenBrowser(url: string): void {
     args = [url];
   }
   const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+  // `spawn` reports a missing desktop opener asynchronously on Node. Consume
+  // that error so a headless shell still keeps polling the printed login URL.
+  child.on("error", () => undefined);
   child.unref();
 }
 
