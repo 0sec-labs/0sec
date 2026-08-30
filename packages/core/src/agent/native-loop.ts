@@ -1537,8 +1537,9 @@ export async function runNativeAgentLoop(
     // The threshold itself is measured against total prompt tokens (cache reads
     // included), so a high cache hit rate does not silently defer compaction
     // past the real context limit. See `readCacheUsage` in runtime/prompt-cache.ts.
-    const COMPACTION_THRESHOLD = 77_000;
-    const COMPACTION_REGROW = 30_000;
+    // Env-tunable so an operator can match the model's real context window.
+    const { threshold: COMPACTION_THRESHOLD, regrow: COMPACTION_REGROW } =
+      resolveCompactionThresholds(process.env);
     if (
       features.contextCompaction
       && state.totalUsage.inputTokens > COMPACTION_THRESHOLD
@@ -2743,6 +2744,31 @@ function extractKeyFindings(messages: NativeMessage[]): string {
   return findings.slice(0, 80).join("\n");
 }
 
+/** Default compaction trigger + regrow, in prompt tokens. */
+export const DEFAULT_COMPACTION_THRESHOLD = 77_000;
+export const DEFAULT_COMPACTION_REGROW = 30_000;
+
+/**
+ * Resolve the compaction thresholds from the environment so an operator can tune
+ * them to the model's real context window (there is no context-window catalog to
+ * derive a fraction from). `0SEC_COMPACTION_THRESHOLD` sets when compaction
+ * fires; `0SEC_COMPACTION_REGROW` sets how much new context must accrue before it
+ * fires again. Both are clamped to sane positive floors; a malformed value falls
+ * back to the default. Pure — the env is passed in.
+ */
+export function resolveCompactionThresholds(
+  env: Record<string, string | undefined> = {},
+): { threshold: number; regrow: number } {
+  const parse = (raw: string | undefined, fallback: number, floor: number): number => {
+    const n = raw === undefined ? NaN : Number(raw);
+    return Number.isFinite(n) && n >= floor ? Math.floor(n) : fallback;
+  };
+  return {
+    threshold: parse(env["0SEC_COMPACTION_THRESHOLD"], DEFAULT_COMPACTION_THRESHOLD, 1_000),
+    regrow: parse(env["0SEC_COMPACTION_REGROW"], DEFAULT_COMPACTION_REGROW, 500),
+  };
+}
+
 /**
  * Compact the conversation using LLM-based summarization.
  *
@@ -2791,7 +2817,7 @@ export async function compactMessagesWithLLM(
           role: "user",
           content: [{
             type: "text",
-            text: `Summarize this security testing conversation. Preserve ALL:\n- URLs and endpoints discovered\n- Credentials, tokens, cookies, API keys found\n- Technologies and frameworks identified\n- Vulnerabilities found or suspected\n- Attack attempts and their results (success/failure)\n- Any flags or partial flags seen\n\nBe concise but complete. Use bullet points.\n\nCONVERSATION:\n${conversationText}`,
+            text: `Summarize this security testing conversation. Preserve ALL:\n- URLs and endpoints discovered\n- Credentials, tokens, cookies, API keys found\n- Technologies and frameworks identified\n- Vulnerabilities found or suspected\n- Attack attempts and their results (success/failure)\n- Any flags or partial flags seen\n- OPEN todo/plan items and the current objective/phase (what is still in progress and what to do next)\n- Payloads/commands that worked, so they need not be re-derived\n\nBe concise but complete. Use bullet points.\n\nCONVERSATION:\n${conversationText}`,
           }],
         },
       ],
