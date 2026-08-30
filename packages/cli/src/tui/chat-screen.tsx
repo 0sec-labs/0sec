@@ -3825,9 +3825,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   const subagentVisible = subagentEntries.slice(0, SUBAGENT_MAX_VISIBLE);
   const subagentOverflow = subagentEntries.length - subagentVisible.length;
   const subagentOverflowRow = subagentOverflow > 0 ? 1 : 0;
-  // Title + rows + optional overflow line. Zero when nothing is running.
+  // Title + pinned Main row + child rows + optional overflow line. Zero when
+  // nothing is running (Main only joins the roster once there are agents to lead,
+  // so a solo session isn't cluttered with a lone Main row). Main is a pinned,
+  // non-navigable row, so it costs one row but never enters the nav list.
   const subagentBlockRows = subagentVisible.length > 0
-    ? 1 + subagentVisible.length + subagentOverflowRow
+    ? 1 + 1 + subagentVisible.length + subagentOverflowRow
     : 0;
   // Selection within the block while navigating into it. Clamped every render so
   // an index left dangling by a finished agent lands back on a live row.
@@ -4223,7 +4226,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         // label muted), so the down-into-agents hint no longer costs its own
         // row. Shown only when idle (not already navigating) and hints are on,
         // and only when the pair actually fits beside the title.
-        const subTitle = `AGENTS · ${subagentEntries.length}`;
+        const subTitle = `AGENTS · ${subagentEntries.length + 1}`;
         const showSelectHint =
           settings.showComposerHints && agentNavIndex < 0 && !focused;
         const selectPairs: KeyHint[] = [{ key: "↓", label: "select" }];
@@ -4240,6 +4243,27 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
               </box>
             ) : null}
           </box>
+        );
+      })()}
+      {(() => {
+        // Main is pinned as the first roster row (OMP: "Main is never parked"),
+        // in its own accent, non-selectable so it never enters the child nav list.
+        const mainView: AgentRowView = {
+          id: "Main",
+          name: "Main",
+          task: "operator session",
+          status: "running",
+          accent: agentAccentFor("Main", theme.CANVAS),
+        };
+        return (
+          <AgentTreeRow
+            key="agent-main"
+            view={mainView}
+            width={contentWidth}
+            theme={theme}
+            selected={false}
+            isLast={false}
+          />
         );
       })()}
       {subagentVisible.map((sa, index) => {
