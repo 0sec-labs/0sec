@@ -43,6 +43,8 @@ describe("LlmApiRuntime provider detection", () => {
     delete process.env.Z_AI_BASE_URL;
     delete process.env.XAI_API_KEY;
     delete process.env.XAI_BASE_URL;
+    delete process.env.OPENCODE_API_KEY;
+    delete process.env.OPENCODE_BASE_URL;
     delete process.env["0SEC_MODEL"];
     delete process.env["0SEC_SELECTED_PROVIDER"];
     delete process.env["0SEC_FORCE_PROVIDER"];
@@ -322,8 +324,7 @@ describe("LlmApiRuntime provider detection", () => {
     expect((rt as any).baseUrl).toBe("https://xai.example/v1");
   });
 
-  it("places xai ahead of the Anthropic final fallback, and routes per model pick", () => {
-    // xai joins z-ai/kimi/qwen as an explicit opt-in tried BEFORE Anthropic,
+  it("places xai ahead of the Anthropic final fallback, and routes per model pick", () => {    // xai joins z-ai/kimi/qwen as an explicit opt-in tried BEFORE Anthropic,
     // so Anthropic stays the last-resort fallback. With both keys present a
     // bare run therefore resolves to xai, while an explicit claude pick still
     // routes per-call to Anthropic.
@@ -335,6 +336,56 @@ describe("LlmApiRuntime provider detection", () => {
     expect((bare as any).provider).toBe("xai");
     const picked = new LlmApiRuntime({ type: "api", timeout: 5000, model: "grok-4.6" });
     expect((picked as any).provider).toBe("xai");
+    const claude = new LlmApiRuntime({ type: "api", timeout: 5000, model: "claude-sonnet-4-6" });
+    expect((claude as any).provider).toBe("anthropic");
+  });
+
+  it("selects OpenCode Zen via OPENCODE_API_KEY with Muse Spark defaults on the Responses wire", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENCODE_API_KEY = "zen-test";
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((rt as any).provider).toBe("opencode");
+    expect((rt as any).model).toBe("muse-spark-1.3-contributor-free");
+    expect((rt as any).baseUrl).toBe("https://opencode.ai/zen/v1");
+    expect((rt as any).wireApi).toBe("responses");
+    const headers = (rt as any).buildHeaders();
+    expect(headers["Authorization"]).toBe("Bearer zen-test");
+    expect(headers["x-api-key"]).toBeUndefined();
+    expect((rt as any).buildUrl()).toBe("https://opencode.ai/zen/v1/responses");
+  });
+
+  it("routes mimo/ling picks to opencode on the chat/completions wire, honoring OPENCODE_BASE_URL", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENCODE_API_KEY = "zen-test";
+    process.env.OPENCODE_BASE_URL = "https://zen.example/v1";
+    process.env["0SEC_MODEL"] = "mimo-v2.5-free";
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((rt as any).provider).toBe("opencode");
+    expect((rt as any).model).toBe("mimo-v2.5-free");
+    expect((rt as any).baseUrl).toBe("https://zen.example/v1");
+    expect((rt as any).wireApi).toBe("chat_completions");
+    expect((rt as any).buildUrl()).toBe("https://zen.example/v1/chat/completions");
+  });
+
+  it("places opencode ahead of the Anthropic final fallback, and routes per model pick", () => {
+    // opencode joins z-ai/kimi/qwen/xai as an explicit opt-in tried BEFORE
+    // Anthropic, so Anthropic stays the last-resort fallback. With both keys
+    // present a bare run therefore resolves to opencode, while an explicit
+    // claude pick still routes per-call to Anthropic.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENCODE_API_KEY = "zen-test";
+    const bare = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((bare as any).provider).toBe("opencode");
+    const mimo = new LlmApiRuntime({ type: "api", timeout: 5000, model: "mimo-v2.5-free" });
+    expect((mimo as any).provider).toBe("opencode");
+    expect((mimo as any).wireApi).toBe("chat_completions");
+    const spark = new LlmApiRuntime({ type: "api", timeout: 5000, model: "muse-spark-1.3-contributor-free" });
+    expect((spark as any).provider).toBe("opencode");
+    expect((spark as any).wireApi).toBe("responses");
     const claude = new LlmApiRuntime({ type: "api", timeout: 5000, model: "claude-sonnet-4-6" });
     expect((claude as any).provider).toBe("anthropic");
   });
@@ -1794,6 +1845,18 @@ describe("resolveFailoverProvider", () => {
     const cfg = resolveFailoverProvider("anthropic", "claude-sonnet-4-20250514");
     expect(cfg).not.toBeUndefined();
     expect(cfg!.apiKey).toBe("sk-ant-fallback");
+  });
+
+  it("resolves opencode with a per-model wire (responses for spark, chat for mimo)", () => {
+    process.env.OPENCODE_API_KEY = "zen-key";
+    const spark = resolveFailoverProvider("opencode", "muse-spark-1.3-contributor-free");
+    expect(spark).not.toBeUndefined();
+    expect(spark!.apiKey).toBe("zen-key");
+    expect(spark!.baseUrl).toBe("https://opencode.ai/zen/v1");
+    expect(spark!.wireApi).toBe("responses");
+    const mimo = resolveFailoverProvider("opencode", "mimo-v2.5-free");
+    expect(mimo).not.toBeUndefined();
+    expect(mimo!.wireApi).toBe("chat_completions");
   });
 });
 
