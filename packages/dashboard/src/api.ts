@@ -7,6 +7,14 @@ import type {
   ScanFindingsResponse,
   ScanRecord,
 } from "./types";
+import type {
+  DesktopCodexAuthStatus,
+  DesktopConsoleAutonomyMode,
+  DesktopConsoleDecisionResponse,
+  DesktopConsoleEvent,
+  DesktopConsoleRole,
+  DesktopConsoleSession,
+} from "@0sec/shared";
 
 /** Read the per-session control token injected by the dashboard server. */
 function getControlToken(): string | null {
@@ -157,4 +165,76 @@ export function launchRun(args: {
     method: "POST",
     body: JSON.stringify(args),
   });
+}
+
+export async function getDesktopConsoleSessions(): Promise<DesktopConsoleSession[]> {
+  const data = await fetchJson<{ sessions: DesktopConsoleSession[] }>("/api/console/sessions");
+  return data.sessions;
+}
+
+export async function createDesktopConsoleSession(input: {
+  target?: string;
+  role?: DesktopConsoleRole;
+  autonomyMode?: DesktopConsoleAutonomyMode;
+}): Promise<DesktopConsoleSession> {
+  const data = await fetchJson<{ session: DesktopConsoleSession }>("/api/console/sessions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return data.session;
+}
+
+export async function getDesktopConsoleEvents(sessionId: string, after: number): Promise<DesktopConsoleEvent[]> {
+  const data = await fetchJson<{ events: DesktopConsoleEvent[] }>(
+    `/api/console/sessions/${encodeURIComponent(sessionId)}/events?after=${encodeURIComponent(String(after))}`,
+  );
+  return data.events;
+}
+
+export async function sendDesktopConsoleMessage(sessionId: string, text: string): Promise<DesktopConsoleSession> {
+  const data = await fetchJson<{ session: DesktopConsoleSession }>(
+    `/api/console/sessions/${encodeURIComponent(sessionId)}/messages`,
+    { method: "POST", body: JSON.stringify({ text }) },
+  );
+  return data.session;
+}
+
+export async function cancelDesktopConsoleTurn(sessionId: string): Promise<DesktopConsoleSession> {
+  const data = await fetchJson<{ session: DesktopConsoleSession }>(
+    `/api/console/sessions/${encodeURIComponent(sessionId)}/cancel`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+  return data.session;
+}
+
+export async function resolveDesktopConsoleDecision(
+  sessionId: string,
+  decisionId: string,
+  response: DesktopConsoleDecisionResponse,
+): Promise<DesktopConsoleSession> {
+  const data = await fetchJson<{ session: DesktopConsoleSession }>(
+    `/api/console/sessions/${encodeURIComponent(sessionId)}/decisions/${encodeURIComponent(decisionId)}`,
+    { method: "POST", body: JSON.stringify(response) },
+  );
+  return data.session;
+}
+
+export async function getDesktopCodexAuthStatus(): Promise<DesktopCodexAuthStatus> {
+  const data = await fetchJson<{ status: DesktopCodexAuthStatus }>("/api/console/providers/codex");
+  return data.status;
+}
+
+export async function startDesktopCodexDeviceAuth(): Promise<DesktopCodexAuthStatus> {
+  const data = await fetchJson<{ status: DesktopCodexAuthStatus }>("/api/console/providers/codex/device-auth", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return data.status;
+}
+
+export async function cancelDesktopCodexDeviceAuth(): Promise<DesktopCodexAuthStatus> {
+  const data = await fetchJson<{ status: DesktopCodexAuthStatus }>("/api/console/providers/codex/device-auth", {
+    method: "DELETE",
+  });
+  return data.status;
 }

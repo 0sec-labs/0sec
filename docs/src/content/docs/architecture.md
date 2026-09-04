@@ -276,6 +276,48 @@ owns stdout, direct process writes are captured as semantic records instead of
 being allowed to corrupt the renderer frame; the original stream is restored
 when the console exits.
 
+### Desktop control plane
+
+The desktop application is an Electron shell around the same local control
+plane, not a second engine. Its primary surface is a sparse chat-first operator
+workspace: one security header, the same centered empty-state composer used for
+the conversation, and contextual details opened only when needed. Operations,
+runs, and findings remain secondary routes; the dashboard is not the desktop
+home screen.
+
+Electron starts a platform-matched compiled 0sec sidecar on an ephemeral
+loopback port and loads only the URL that sidecar emits. The sidecar owns
+`ConsoleSession`, provider credentials, scope, tool execution, event history,
+and approval promises. The renderer receives only JSON-safe session events and
+submits typed decisions back to that daemon.
+
+The renderer is sandboxed, context-isolated, has no Node integration or raw IPC
+access, receives no credential, and cannot choose sidecar commands or
+arguments. Navigation remains pinned to the loopback dashboard origin. The only
+preload capability is a validated `https:` external-link request; permissions,
+webviews, and arbitrary renderer-driven process execution are denied.
+
+New desktop sessions can be created before a provider is available. On the
+first turn the daemon constructs the real console runtime; a ChatGPT Codex
+connection runs Codex's official device OAuth in the daemon, reads its local
+auth file there, and exposes only phase/output status to the UI. Tokens never
+cross the renderer boundary.
+
+The sidecar and renderer are version-pinned inside one desktop package. A
+desktop update applies only between engagements; it must never replace code,
+policy, credentials, or evidence behavior in a live run. Current packages are
+manually installed; automatic update checks stay disabled until the release
+pipeline has a signed, rollback-capable publisher for every desktop platform.
+
+Desktop migration is deliberately one-way:
+
+1. package the secure native shell;
+2. expose the console's typed session, approval, provider, and event contract
+   from the daemon—not terminal frames or renderer-specific text;
+3. make the React chat workspace the primary product surface;
+4. retain OpenTUI until desktop parity covers durable resume, every approval
+   path, reconnect, transcript, and replay; then remove the duplicate path.
+
 ## Scan modes
 
 | Mode | Target | What it does |

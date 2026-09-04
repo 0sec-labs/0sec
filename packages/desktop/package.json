@@ -1,0 +1,84 @@
+{
+  "name": "@0sec/desktop",
+  "version": "0.15.0",
+  "description": "Native desktop control plane for the 0sec security harness.",
+  "author": "0sec Labs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0sec-labs/0sec.git"
+  },
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.js",
+  "desktopName": "0sec",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "start": "pnpm run build && electron .",
+    "test": "vitest run",
+    "package": "pnpm run build && node scripts/prepare-desktop-resources.mjs && electron-builder --publish never",
+    "package:linux": "pnpm run build && node scripts/prepare-desktop-resources.mjs && electron-builder --publish never --linux",
+    "package:mac": "pnpm run build && node scripts/prepare-desktop-resources.mjs && electron-builder --publish never --mac",
+    "package:win": "pnpm run build && node scripts/prepare-desktop-resources.mjs && electron-builder --publish never --win",
+    "clean": "rm -rf dist release resources"
+  },
+  "build": {
+    "appId": "com.0security.osec",
+    "productName": "0sec",
+    "executableName": "0sec",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "icon": "build/icon.png",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/dashboard",
+        "to": "dashboard",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/sidecars",
+        "to": "sidecars",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "maintainer": "0sec Labs",
+      "syncDesktopName": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "electron": "42.3.3",
+    "electron-builder": "26.15.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}

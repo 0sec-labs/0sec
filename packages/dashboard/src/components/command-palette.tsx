@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
-import { FileSearch, LayoutDashboard, PlayCircle, ShieldCheck, ShieldOff } from "lucide-react";
+import { FileSearch, LayoutDashboard, MessageSquare, PlayCircle, ShieldCheck, ShieldOff } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getFindingFamily, updateFindingFamilyTriage } from "@/api";
@@ -70,6 +70,15 @@ export function CommandPalette({
 
   const items = useMemo<PaletteAction[]>(() => {
     const base: PaletteAction[] = [
+      {
+        id: "page-chat",
+        group: "Pages",
+        label: "Open chat workspace",
+        meta: "Scoped operator conversation and approvals",
+        icon: MessageSquare,
+        keywords: ["chat operator workspace session scope approvals"],
+        run: () => navigate("/chat"),
+      },
       {
         id: "page-findings",
         group: "Pages",

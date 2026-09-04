@@ -8,6 +8,7 @@ import { URL } from "node:url";
 import { isIP } from "node:net";
 import type { Command } from "commander";
 import chalk from "chalk";
+import { z } from "zod";
 import {
   createPresentationEvent,
   type FindingTriageStatus,
@@ -17,11 +18,15 @@ import {
 import { readToolCallNames } from "@0sec/core";
 import { presentationEventBus } from "../presentation/event-bus.js";
 import { buildFindingConsoleCommand } from "../finding-handoff.js";
+import { DesktopConsoleGateway, DesktopConsoleGatewayError } from "../desktop/console-gateway.js";
+import { DesktopCodexAuthController } from "../desktop/codex-auth-controller.js";
 
 type DashboardOptions = {
   dbPath?: string;
   port?: string;
   host?: string;
+  assetDir?: string;
+  readyJson?: boolean;
   // Commander 12 maps `--no-open` to `opts.open = false` (not `opts.noOpen = true`).
   // See: https://github.com/tj/commander.js/blob/master/Readme.md#other-option-types-negatable-boolean-and-booleanvalue
   open?: boolean;
@@ -1023,9 +1028,10 @@ function groupByKey<T, K extends keyof T>(rows: T[], key: K) {
   return map;
 }
 
-function resolveDashboardAssetDir(): string {
+function resolveDashboardAssetDir(explicitAssetDir?: string): string {
   const moduleDir = resolve(fileURLToPath(new URL(".", import.meta.url)));
   const candidates = [
+    ...(explicitAssetDir ? [resolve(explicitAssetDir)] : []),
     join(moduleDir, "dashboard"),
     join(moduleDir, "..", "dashboard"),
     // A source checkout must serve the freshly built workspace dashboard,
@@ -1059,6 +1065,124 @@ function requireControlToken(req: IncomingMessage, res: ServerResponse, controlT
     return false;
   }
   return true;
+}
+
+const DesktopConsoleSessionInputSchema = z.object({
+  target: z.unknown().optional(),
+  role: z.unknown().optional(),
+  autonomyMode: z.unknown().optional(),
+});
+
+const DesktopConsoleMessageInputSchema = z.object({
+  text: z.unknown().optional(),
+});
+
+function consolePath(pathname: string): { sessionId: string; action?: "events" | "messages" | "cancel"; decisionId?: string } | null {
+  const match = /^\/api\/console\/sessions\/([a-zA-Z0-9-]+)(?:\/(events|messages|cancel)|\/decisions\/([a-zA-Z0-9-]+))?$/.exec(pathname);
+  if (!match) return null;
+  const action = match[2] as "events" | "messages" | "cancel" | undefined;
+  return {
+    sessionId: match[1]!,
+    ...(action ? { action } : {}),
+    ...(match[3] ? { decisionId: match[3] } : {}),
+  };
+}
+
+function consoleEventsAfter(value: string | null): number {
+  if (value === null || value === "") return 0;
+  const after = Number(value);
+  if (!Number.isSafeInteger(after) || after < 0) {
+    throw new DesktopConsoleGatewayError("Event cursor must be a non-negative integer.", 400);
+  }
+  return after;
+}
+
+async function handleDesktopConsoleApiRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  requestUrl: URL,
+  gateway: DesktopConsoleGateway,
+  codexAuth: DesktopCodexAuthController,
+  controlToken: string,
+): Promise<boolean> {
+  if (!requestUrl.pathname.startsWith("/api/console/")) return false;
+  if (!requireControlToken(req, res, controlToken)) return true;
+
+  try {
+    if (requestUrl.pathname === "/api/console/providers/codex") {
+      if (req.method === "GET") {
+        json(res, 200, { status: codexAuth.status() });
+        return true;
+      }
+      json(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    if (requestUrl.pathname === "/api/console/providers/codex/device-auth") {
+      if (req.method === "POST") {
+        json(res, 202, { status: codexAuth.start() });
+        return true;
+      }
+      if (req.method === "DELETE") {
+        json(res, 200, { status: codexAuth.cancel() });
+        return true;
+      }
+      json(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/console/sessions") {
+      if (req.method === "GET") {
+        json(res, 200, { sessions: gateway.list() });
+        return true;
+      }
+      if (req.method === "POST") {
+        const body = DesktopConsoleSessionInputSchema.parse(await readJson(req));
+        const session = gateway.create(body);
+        json(res, 201, { session });
+        return true;
+      }
+      json(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+
+    const parsed = consolePath(requestUrl.pathname);
+    if (!parsed) return false;
+    if (parsed.action === "events" && req.method === "GET") {
+      json(res, 200, { events: gateway.eventsAfter(parsed.sessionId, consoleEventsAfter(requestUrl.searchParams.get("after"))) });
+      return true;
+    }
+    if (parsed.action === "messages" && req.method === "POST") {
+      const body = DesktopConsoleMessageInputSchema.parse(await readJson(req));
+      json(res, 202, { session: gateway.send(parsed.sessionId, body.text) });
+      return true;
+    }
+    if (parsed.action === "cancel" && req.method === "POST") {
+      json(res, 200, { session: gateway.cancel(parsed.sessionId) });
+      return true;
+    }
+    if (parsed.decisionId && req.method === "POST") {
+      const body = await readJson(req);
+      json(res, 200, { session: gateway.resolveDecision(parsed.sessionId, parsed.decisionId, body) });
+      return true;
+    }
+    if (!parsed.action && !parsed.decisionId && req.method === "DELETE") {
+      await gateway.close(parsed.sessionId);
+      json(res, 200, { ok: true });
+      return true;
+    }
+    json(res, 405, { error: "Method not allowed" });
+    return true;
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      json(res, 400, { error: "Invalid console request payload." });
+      return true;
+    }
+    if (error instanceof DesktopConsoleGatewayError) {
+      json(res, error.statusCode, { error: error.message });
+      return true;
+    }
+    throw error;
+  }
 }
 
 type PresentationCursor = {
@@ -1590,13 +1714,15 @@ export function registerDashboardCommand(program: Command): void {
     .command("dashboard")
     .description("Run a local mission-control dashboard for scans and findings")
     .option("--db-path <path>", "Path to SQLite database")
-    .option("--port <port>", "Port to bind", "48123")
+    .option("--port <port>", "Port to bind; 0 chooses a free loopback port", "48123")
     .option("--host <host>", "Loopback host to bind (127.0.0.0/8 or ::1)", "127.0.0.1")
+    .option("--asset-dir <path>", "Path to built dashboard assets")
+    .option("--ready-json", "Emit the bound dashboard URL as machine-readable JSON")
     .option("--no-open", "Do not auto-open a browser")
     .action(async (opts: DashboardOptions) => {
       const host = opts.host?.trim() || "127.0.0.1";
       const port = parseInt(opts.port ?? "48123", 10);
-      if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      if (!Number.isInteger(port) || port < 0 || port > 65535) {
         throw new Error(`Invalid port: ${opts.port ?? "48123"}`);
       }
       if (!isLoopbackDashboardHost(host)) {
@@ -1604,17 +1730,21 @@ export function registerDashboardCommand(program: Command): void {
           "Dashboard only binds loopback addresses (127.0.0.0/8 or ::1). Use an SSH tunnel or an authenticated reverse proxy bound to local loopback for remote access.",
         );
       }
-      const origin = `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
+      let origin = `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
 
 
-      const assetDir = resolveDashboardAssetDir();
+      const assetDir = resolveDashboardAssetDir(opts.assetDir);
       const controlToken = randomUUID();
+      const consoleGateway = new DesktopConsoleGateway();
+      const codexAuth = new DesktopCodexAuthController();
 
       const server = createServer(async (req, res) => {
         const requestUrl = new URL(req.url ?? "/", origin);
 
         try {
           if (requestUrl.pathname.startsWith("/api/")) {
+            const consoleHandled = await handleDesktopConsoleApiRequest(req, res, requestUrl, consoleGateway, codexAuth, controlToken);
+            if (consoleHandled) return;
             const handled = await handleApiRequest(req, res, requestUrl.pathname, opts.dbPath, controlToken);
             if (!handled) json(res, 404, { error: "Not found" });
             return;
@@ -1622,7 +1752,7 @@ export function registerDashboardCommand(program: Command): void {
 
           const explicitAsset = resolveAssetPath(assetDir, requestUrl.pathname);
           if (explicitAsset) {
-            sendFile(res, explicitAsset);
+            sendFile(res, explicitAsset, controlToken);
             return;
           }
 
@@ -1639,15 +1769,22 @@ export function registerDashboardCommand(program: Command): void {
       });
 
       server.listen(port, host, () => {
+        const address = server.address();
+        if (address && typeof address !== "string") {
+          origin = `http://${host.includes(":") ? `[${host}]` : host}:${address.port}`;
+        }
         const url = origin;
-        console.log(chalk.red.bold("  \u25C6 0sec") + chalk.gray(" dashboard"));
+        console.log(chalk.red.bold("  ◆ 0sec") + chalk.gray(" dashboard"));
         console.log(chalk.gray(`  ${url}`));
+        if (opts.readyJson) console.log(`0SEC_DASHBOARD_READY ${JSON.stringify({ url })}`);
         console.log(chalk.gray("  Ctrl+C to stop"));
-        if (opts.open !== false) openBrowser(url);
+        if (opts.open !== false) openBrowser(`${url}/dashboard`);
       });
 
       process.once("SIGINT", () => {
-        server.close(() => process.exit(0));
+        void consoleGateway.closeAll().finally(() => {
+          server.close(() => process.exit(0));
+        });
       });
     });
 }

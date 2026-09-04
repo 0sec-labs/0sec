@@ -504,7 +504,7 @@ export function FindingsPage({ dashboard }: { dashboard: DashboardResponse }) {
       <PageHeader
         eyebrow="Findings"
         title="Findings workspace"
-        summary="A finding family groups repeated observations across runs. Start from evidence and the recommended next action; use terminal chat only when the case needs judgment."
+        summary="A finding family groups repeated observations across runs. Start from evidence and the recommended next action; use the scoped chat workspace when the case needs judgment."
         actions={(
           <>
             <Button variant="outline" onClick={() => setFiltersOpen(true)}>

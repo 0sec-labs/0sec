@@ -167,6 +167,42 @@ git clone https://github.com/0sec-labs/0sec.git && cd 0sec
 corepack enable && pnpm install --frozen-lockfile && pnpm build && node packages/cli/dist/index.js --help
 ```
 
+### Desktop development
+
+The Electron shell opens a chat-first React operator workspace against a local
+Bun sidecar. Operations, runs, and findings are secondary routes; Node and
+provider credentials never enter the renderer.
+
+```bash
+pnpm build
+pnpm desktop
+```
+
+Package a host-native app only after compiling its matching sidecar:
+
+```bash
+# Apple Silicon macOS
+bash scripts/bun-compile.sh "" dist-bin/0sec-darwin-arm64
+
+# Linux x64
+# bash scripts/bun-compile.sh "" dist-bin/0sec-linux-x64
+
+pnpm desktop:package
+```
+
+The macOS desktop workflow targets a protected Apple-silicon self-hosted runner;
+it packages the app and smokes its bundled sidecar. A logged-in Mac desktop
+session remains required for visual UI verification.
+
+For an interactive remote development session, the unpackaged app can expose a
+**loopback-only** Chromium debugger for an SSH tunnel:
+
+```bash
+OSEC_DESKTOP_DEBUG_PORT=9222 pnpm desktop
+```
+
+Do not expose that port on a LAN or enable it for packaged releases.
+
 ## Contributing & security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) — synthetic or authorized targets only. Report vulnerabilities privately via [SECURITY.md](SECURITY.md) (security@0sec.ai), not public issues.

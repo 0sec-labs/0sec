@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Command, LayoutDashboard, Menu, Radar, Radio, ShieldAlert } from "lucide-react";
+import { Activity, Command, LayoutDashboard, Menu, MessageSquare, Radar, Radio, ShieldAlert } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { getRecentEvents } from "@/api";
 import type { DashboardResponse, RecentEventsResponse, ScanRecord } from "@/types";
@@ -144,7 +144,7 @@ function buildShellContext({
   if (pathname.startsWith("/threads") || pathname.startsWith("/findings")) {
     return {
       title: "Findings workspace",
-      summary: "Review deduplicated evidence, continue the few cases that need judgment, and keep execution in the scoped terminal chat.",
+      summary: "Review deduplicated evidence, continue the cases that need judgment, and return to the scoped chat workspace when execution needs direction.",
       sections: [
         {
           label: "Queue",
@@ -287,6 +287,7 @@ export function AppShell({
             <BrandMark compact className="size-9" />
 
             <nav className="mt-6 flex flex-1 flex-col items-center gap-2">
+              <RailNavItem to="/chat" label="Chat" icon={MessageSquare} />
               <RailNavItem to="/dashboard" label="Operations" icon={LayoutDashboard} />
               <RailNavItem to="/findings" label="Findings" icon={ShieldAlert} badge={newFamilies} />
               <RailNavItem to="/runs" label="Runs" icon={Radar} badge={activeRuns} />
@@ -373,6 +374,12 @@ export function AppShell({
                       <div className="flex flex-col gap-5 px-3 py-3">
                         <div className="flex flex-col gap-0.5">
                           <SidebarNavItem
+                            to="/chat"
+                            label="Chat"
+                            meta="Scoped operator workspace"
+                            icon={MessageSquare}
+                          />
+                          <SidebarNavItem
                             to="/dashboard"
                             label="Operations"
                             meta="Launch, queue, worker control"
@@ -381,7 +388,7 @@ export function AppShell({
                           <SidebarNavItem
                             to="/findings"
                             label="Findings"
-                            meta="Evidence, chat handoff, disposition"
+                            meta="Evidence, review, chat context"
                             icon={ShieldAlert}
                             badge={newFamilies}
                           />

@@ -8,3 +8,4 @@ export * from "./research-evidence.js";
 export * from "./paths.js";
 export * from "./agent-assurance.js";
 export * from "./presentation.js";
+export * from "./desktop-console.js";

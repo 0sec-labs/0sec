@@ -109,6 +109,15 @@ vi.mock("node:http", async () => {
           if (cb) cb();
           return this;
         },
+        address() {
+          const binding = httpState.listenCalls.at(-1);
+          if (!binding) return null;
+          return {
+            address: binding.host,
+            family: binding.host.includes(":") ? "IPv6" : "IPv4",
+            port: binding.port === 0 ? 46123 : binding.port,
+          };
+        },
         close(cb?: () => void) {
           httpState.closeCalled = true;
           if (cb) cb();
@@ -526,11 +535,13 @@ describe("dashboard — argument validation", () => {
     expect(httpState.listenCalls).toHaveLength(0);
   });
 
-  it("rejects port 0", async () => {
-    const err = await runCli(["dashboard", "--port", "0"]);
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/invalid port: 0/i);
-    expect(httpState.listenCalls).toHaveLength(0);
+  it("lets port 0 allocate a free loopback port and emits a machine-readable URL", async () => {
+    const err = await runCli(["dashboard", "--no-open", "--port", "0", "--ready-json"]);
+    expect(err).toBeUndefined();
+    expect(httpState.listenCalls).toEqual([{ port: 0, host: "127.0.0.1" }]);
+    expect(logSpy).toHaveBeenCalledWith(
+      '0SEC_DASHBOARD_READY {"url":"http://127.0.0.1:46123"}',
+    );
   });
 
   it("rejects port > 65535", async () => {
@@ -579,6 +590,21 @@ describe("dashboard — argument validation", () => {
     expect((err as Error).message).toMatch(/Dashboard assets not found/);
     expect(httpState.listenCalls).toHaveLength(0);
   });
+
+  it("uses explicit dashboard assets before checkout-relative candidates", async () => {
+    fsState.existsPaths.clear();
+    const assetDir = "/tmp/0sec-desktop-dashboard";
+    fsState.existsPaths.add(`${assetDir}/index.html`);
+    fsState.readBodies.set(
+      `${assetDir}/index.html`,
+      "<html><head><title>desktop dashboard</title></head><body>ok</body></html>",
+    );
+
+    const err = await runCli(["dashboard", "--no-open", "--asset-dir", assetDir]);
+
+    expect(err).toBeUndefined();
+    expect(httpState.listenCalls).toEqual([{ port: 48123, host: "127.0.0.1" }]);
+  });
 });
 
 // ── Tests: browser auto-open ────────────────────────────────────────────────
@@ -614,14 +640,14 @@ describe("dashboard — static asset serving", () => {
     await runCli(["dashboard", "--no-open"]);
   });
 
-  it("GET / serves index.html (explicit-asset branch, no token injection)", async () => {
-    // resolveAssetPath maps "/" → "/index.html" which existsSync-resolves
-    // and is served verbatim. The control-token <meta> is only injected
-    // on the SPA-fallback branch (extension-less routes that miss).
+  it("GET / injects the page-bound control token into index.html", async () => {
+    // Electron loads "/" before React routes to /chat. The bootstrap document
+    // therefore needs the same token as a deep-linked SPA route; otherwise the
+    // renderer can render chat but every authenticated API request is rejected.
     const captured = await invokeHandler(makeRequest({ method: "GET", url: "/" }));
     expect(captured.statusCode).toBe(200);
     expect(captured.headers["Content-Type"]).toMatch(/text\/html/);
-    expect(captured.body).toMatch(/<head>/);
+    expect(captured.body).toMatch(/0sec-control-token" content="[0-9a-f-]{8,}"/);
   });
 
   it("GET /<spa-route> serves index.html WITH the control-token <meta> injected", async () => {
@@ -661,6 +687,79 @@ describe("dashboard — static asset serving", () => {
     // assetDir-escape filename.
     expect(captured.body).not.toMatch(/root:x:/);
     expect(captured.statusCode).not.toBe(500);
+  });
+});
+
+// ── Tests: desktop console control surface ──────────────────────────────────
+
+describe("dashboard — desktop console API", () => {
+  beforeEach(async () => {
+    await runCli(["dashboard", "--no-open"]);
+  });
+
+  it("requires the page-bound control token before creating a console session", async () => {
+    const captured = await invokeHandler(
+      makeRequest({ method: "POST", url: "/api/console/sessions", body: {} }),
+    );
+
+    expect(captured.statusCode).toBe(403);
+    expect(JSON.parse(captured.body)).toEqual({ error: "Invalid or missing control token" });
+  });
+
+  it("returns Codex device-auth status without exposing credential material", async () => {
+    const token = await getControlToken();
+    const captured = await invokeHandler(
+      makeRequest({
+        method: "GET",
+        url: "/api/console/providers/codex",
+        headers: { "x-0sec-control-token": token },
+      }),
+    );
+
+    expect(captured.statusCode).toBe(200);
+    expect(JSON.parse(captured.body)).toEqual({
+      status: {
+        phase: "idle",
+        message: "ChatGPT Codex is not connected.",
+        lines: [],
+      },
+    });
+  });
+
+  it("creates a session and returns its renderer-safe event ledger", async () => {
+    const token = await getControlToken();
+    const created = await invokeHandler(
+      makeRequest({
+        method: "POST",
+        url: "/api/console/sessions",
+        headers: { "x-0sec-control-token": token },
+        body: {
+          target: "https://app.example.test",
+          role: "audit",
+          autonomyMode: "standard",
+        },
+      }),
+    );
+
+    expect(created.statusCode).toBe(201);
+    const session = JSON.parse(created.body) as { session: { id: string; target: string; status: string } };
+    expect(session.session).toMatchObject({
+      target: "https://app.example.test",
+      status: "ready",
+    });
+
+    const events = await invokeHandler(
+      makeRequest({
+        method: "GET",
+        url: `/api/console/sessions/${session.session.id}/events?after=0`,
+        headers: { "x-0sec-control-token": token },
+      }),
+    );
+
+    expect(events.statusCode).toBe(200);
+    expect(JSON.parse(events.body)).toMatchObject({
+      events: [{ type: "session", sessionId: session.session.id }],
+    });
   });
 });
 

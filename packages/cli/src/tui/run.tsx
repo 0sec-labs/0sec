@@ -4354,6 +4354,13 @@ function ConsoleApp({
           }
           chatPaneActions[destination]();
         }}
+        // A recognized credential failure (e.g. the Codex 401 after a spent
+        // refresh token) opens the connect screen CARRYING the recovery, so
+        // ConnectScreen auto-selects the failed provider and shows its reconnect
+        // prompt — for chatgpt-codex, "Press Enter to start device OAuth".
+        // Without this wire-up the failure only printed "turn failed" in chat and
+        // the device-auth pane never surfaced.
+        onConnectionFailure={(recovery) => navigate({ type: "connect", recovery })}
         onExit={onExit}
       />
     </AppContext.Provider>
