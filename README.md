@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo-intro.gif" alt="0sec — finds, proves, and reports vulnerabilities" width="840">
+  <img src="assets/demo-intro.gif" alt="0sec finds, proves and reports vulnerabilities" width="840">
 </p>
 
 ## Install & Quick Start
@@ -41,14 +41,15 @@ The verified binary is installed to `~/.0sec/bin` with no Node/Bun dependency.
 Add the `export` line to your shell profile to make `0` available in future shells.
 
 <p align="center">
-  <img src="assets/0sec-demo.gif" alt="0sec quickstart — a scan from start to finish" width="820">
+  <img src="assets/0sec-demo.gif" alt="0sec quickstart: a scan from start to finish" width="820">
 </p>
 
 ## What 0sec aims to cover
 
-Most AI pentesting harnesses and tools stop at the web app layer to find and chain vulnerabilities. However research suggests that supply chain and other infrastructure level exploits are more common, and cheaper to exploit than ever before.
+Most AI pentesting tools stop at the web app. The layers underneath it, dependencies
+and runtime and kernel, need different tooling to reach, so they usually go untested.
 
-0sec's core philosophy is to be a single, extensible and transparent tool to tackle all the remaining layers as security changes from point-in-time tests towards continuous security.
+0sec is one extensible tool for all of them.
 
 | Layer | Finds |
 | --- | --- |
@@ -87,28 +88,30 @@ and research, but they are not separate primary TUI modes.
 
 <p align="center">
   <img src="assets/demo-commands.gif" alt="0sec console command palette" width="820"><br/>
-  <sub>The interactive console — <code>/</code> opens the command palette.</sub>
+  <sub>The interactive console. <code>/</code> opens the command palette.</sub>
 </p>
 
 ## How it works
 
-It proves the bug before it reports it.
-
-- **Free-form agents, hard guardrails.** Models decide what to probe; turn budgets, loop detection, and scope-on-every-call keep them in line.
-- **Reproduce before trust.** A blind agent re-exploits each finding from the PoC alone. What it can't reproduce is dropped.
-- **Triage before verify.** Class oracles and a second scanner cut noise before the expensive step.
-- **Bring your own model.** Anthropic, OpenAI, Azure, OpenRouter, or local Ollama — you hold the key.
+- **Free-form agents, hard guardrails.** Models decide what to probe. Turn budgets,
+  loop detection and a scope check on every call keep them inside the engagement.
+- **Blind re-exploitation.** A second agent gets the PoC and nothing else. If it
+  can't reproduce the finding, the finding is dropped.
+- **Cheap checks first.** Class oracles and a second scanner cut the noise, so the
+  expensive step runs on less.
+- **Your own model.** Anthropic, OpenAI, Azure, OpenRouter or local Ollama. You hold
+  the key.
 
 Every run keeps its own evidence under `~/.0sec/runs/<id>/`, so you can `resume`, `replay`, or `disclose` it later.
 
 <p align="center">
   <img src="assets/demo-verify.gif" alt="0sec blind verification" width="820"><br/>
-  <sub>Blind verification — every finding is re-exploited before it ships.</sub>
+  <sub>Blind verification. Every finding is re-exploited by an agent that never saw the original run.</sub>
 </p>
 
 ## Track record
 
-0sec has landed real, maintainer-reviewed fixes in the **mainline Linux kernel** and other open source. The verified list lives at **[0.security](https://0.security)**. Benchmarks are secondary evidence — caveats in the [benchmark docs](docs/src/content/docs/benchmark.md).
+0sec has landed real, maintainer-reviewed fixes in the **mainline Linux kernel** and other open source. The verified list lives at **[0.security](https://0.security)**. Benchmarks are secondary evidence; caveats in the [benchmark docs](docs/src/content/docs/benchmark.md).
 
 ## Supported by
 
@@ -154,7 +157,7 @@ With special thanks to the startup and research programs supporting our work:
 ## Honest limitations
 
 - Kernel/IOKit findings stay hypotheses until a real oracle reproduces them (the `linux-kernel` profile is static).
-- Verification depth varies: `verificationSpec` covers file/diff predicates. The replay runner isolates PoCs in fresh, unprivileged, read-only Docker containers (no network by default; scoped HTTP opts into a bridge/custom network via `verify --docker-network` + `--scope`) and offline QEMU initramfs guests (`--qemu-kernel` / `--qemu-busybox`, or `0SEC_REPLAY_QEMU_*`) — but a finding still has to ship executable `pocSteps` for any of it to run; without them the finding is `skipped`.
+- Verification depth varies: `verificationSpec` covers file/diff predicates. The replay runner isolates PoCs in fresh, unprivileged, read-only Docker containers (no network by default; scoped HTTP opts into a bridge/custom network via `verify --docker-network` + `--scope`) and offline QEMU initramfs guests (`--qemu-kernel` / `--qemu-busybox`, or `0SEC_REPLAY_QEMU_*`). A finding still has to ship executable `pocSteps` for any of it to run; without them the finding is `skipped`.
 - The false-positive-moat layers are off by default and slice-dependent.
 - Benchmarks are single-model/config/trial; the 10/10 AI-suite is self-authored, not independent.
 - `fix` is narrow: source-only, single-file, ≤3 attempts.
@@ -205,8 +208,8 @@ Do not expose that port on a LAN or enable it for packaged releases.
 
 ## Contributing & security
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — synthetic or authorized targets only. Report vulnerabilities privately via [SECURITY.md](SECURITY.md) (security@0sec.ai), not public issues.
+See [CONTRIBUTING.md](CONTRIBUTING.md): synthetic or authorized targets only. Report vulnerabilities privately via [SECURITY.md](SECURITY.md) (security@0sec.ai), not public issues.
 
 ## License
 
-Dual-licensed **MIT OR Apache-2.0** — see [LICENSE](LICENSE) / [LICENSE-MIT](LICENSE-MIT). © 2026 0sec Labs.
+Dual-licensed **MIT OR Apache-2.0**. See [LICENSE](LICENSE) / [LICENSE-MIT](LICENSE-MIT). © 2026 0sec Labs.
