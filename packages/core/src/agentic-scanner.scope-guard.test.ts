@@ -25,7 +25,7 @@ function baseConfig(overrides: Partial<ScanConfig> = {}): ScanConfig {
     target: "https://target.example.invalid",
     depth: "quick",
     format: "json",
-    runtime: "codex",
+    runtime: "api",
     ...overrides,
   } as ScanConfig;
 }

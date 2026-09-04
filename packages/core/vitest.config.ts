@@ -7,9 +7,9 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts"],
-    // The suite contains CPU-heavy property and integration tests. Bound worker
-    // contention so each test's five-second deadline measures work, not queueing
-    // on the shared self-hosted runner.
-    maxWorkers: 4,
+    // The suite contains CPU-heavy property and integration tests. Two workers
+    // keep SQLite and native-addon tests below their five-second behavioral
+    // deadlines on the shared CI runner; four still starved unrelated tests.
+    maxWorkers: 2,
   },
 });
