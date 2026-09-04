@@ -11,7 +11,7 @@ import type {
   NativeContentBlock,
 } from "./types.js";
 
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { VERSION } from "@0sec/shared";
@@ -991,6 +991,14 @@ interface ChatGptCodexAuthState {
    * gets away with it via single-request architecture).
    */
   inflightRefresh?: Promise<void>;
+  /**
+   * Path to the `~/.codex/auth.json` the tokens were loaded from, when they came
+   * from disk (local CLI/TUI path) rather than an env-forwarded access token
+   * (worker-controller/cloud path). Set → the rotated refresh_token is written
+   * back on every refresh so the NEXT process doesn't replay an already-used
+   * token and 401. Undefined for the env-forwarded path (nothing to persist).
+   */
+  authFilePath?: string;
 }
 
 /**
@@ -1003,6 +1011,11 @@ interface ChatGptCodexAuthState {
  * on hosts WITHOUT the env var pay zero startup cost.
  */
 let chatGptCodexAuthState: ChatGptCodexAuthState | undefined;
+
+/** Reset the module-singleton codex auth state (test isolation). */
+export function __resetChatGptCodexAuthStateForTests(): void {
+  chatGptCodexAuthState = undefined;
+}
 
 function readChatGptCodexEnv():
   | { accessToken?: string; refreshToken?: string; accountId?: string }
@@ -1020,10 +1033,62 @@ function readChatGptCodexEnv():
   };
 }
 
+/** Resolve the codex auth.json path (env override or the default `~/.codex`). */
+function resolveChatGptCodexAuthPath(): string {
+  return process.env["0SEC_CHATGPT_AUTH_FILE"] ?? join(homedir(), ".codex", "auth.json");
+}
+
+/**
+ * Persist a refreshed token set back to `~/.codex/auth.json`, preserving every
+ * other field the file carries (e.g. `OPENAI_API_KEY`, unrelated `tokens.*`).
+ * OpenAI ROTATES the refresh_token on every refresh, so the on-disk copy becomes
+ * single-use-spent the instant we refresh; writing the new one back is what keeps
+ * the NEXT `0`/`0sec tui`/`codex` process from replaying an already-used token
+ * and hitting a 401. Mirrors the codex CLI's own auth.json write-back.
+ *
+ * Atomic (temp-file + rename) and 0600, so a concurrent reader never sees a
+ * half-written credential file. Best-effort: a write failure is logged and
+ * swallowed — the in-memory token still works for THIS process; only the next
+ * process would need a re-login.
+ */
+function persistChatGptCodexAuthFile(authPath: string, tokens: CodexTokenResponse): void {
+  try {
+    let existing: Record<string, unknown> = {};
+    try {
+      existing = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, unknown>;
+    } catch {
+      existing = {};
+    }
+    const prevTokens =
+      (existing.tokens as Record<string, unknown> | undefined) ?? {};
+    const nextTokens: Record<string, unknown> = {
+      ...prevTokens,
+      access_token: tokens.access_token,
+      ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}),
+      ...(tokens.id_token ? { id_token: tokens.id_token } : {}),
+    };
+    const merged = {
+      ...existing,
+      tokens: nextTokens,
+      last_refresh: new Date().toISOString(),
+    };
+    const tmp = `${authPath}.tmp-${process.pid}`;
+    writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmp, authPath);
+  } catch (err) {
+    // Non-fatal: the refresh already succeeded for this process.
+    process.stderr.write(
+      `[0sec] warning: could not persist rotated Codex refresh token to ${authPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }\n`,
+    );
+  }
+}
+
 function readChatGptCodexAuthFile():
   | { accessToken?: string; refreshToken?: string; accountId?: string }
   | undefined {
-  const authPath = process.env["0SEC_CHATGPT_AUTH_FILE"] ?? join(homedir(), ".codex", "auth.json");
+  const authPath = resolveChatGptCodexAuthPath();
   if (!existsSync(authPath)) return undefined;
   try {
     const auth = JSON.parse(readFileSync(authPath, "utf8")) as {
@@ -1142,7 +1207,12 @@ export async function getChatGptCodexAccessToken(): Promise<{
   accountId?: string;
 }> {
   if (!chatGptCodexAuthState) {
-    const fromEnv = readChatGptCodexEnv() ?? readChatGptCodexAuthFile();
+    // Prefer env-forwarded tokens (worker-controller/cloud path — no write-back);
+    // fall back to the on-disk auth.json (local CLI/TUI path — write rotations
+    // back so a later process doesn't replay a used refresh token).
+    const fromEnvOnly = readChatGptCodexEnv();
+    const fromFile = fromEnvOnly ? undefined : readChatGptCodexAuthFile();
+    const fromEnv = fromEnvOnly ?? fromFile;
     if (!fromEnv) {
       throw new Error(
         "ChatGPT Codex auth: neither 0SEC_CHATGPT_ACCESS_TOKEN nor " +
@@ -1162,6 +1232,8 @@ export async function getChatGptCodexAccessToken(): Promise<{
       accessTokenExpiresAt: fromEnv.accessToken
         ? accessTokenExpiryMs(fromEnv.accessToken)
         : 0,
+      // Only the on-disk source is written back; env-forwarded tokens are not.
+      ...(fromFile ? { authFilePath: resolveChatGptCodexAuthPath() } : {}),
     };
     // Seed accountId from the forwarded access_token's JWT when not
     // already provided — saves one round-trip for cloud sandboxes that
@@ -1202,13 +1274,18 @@ export async function getChatGptCodexAccessToken(): Promise<{
           state.accessTokenExpiresAt = Date.now() + (tokens.expires_in ?? 3600) * 1000;
           // Refresh token rotates on every call. Persist the new one
           // immediately or the old one becomes invalid and future
-          // refreshes 401. Note: we don't write back to disk here —
-          // that's the worker-controller's job for the cloud path,
-          // and the CLI path keeps the env-loaded token in-memory only
-          // for the lifetime of the process (acceptable since 0sec-cli
-          // is short-lived).
+          // refreshes 401 ("refresh token has already been used").
           if (tokens.refresh_token) {
             state.refreshToken = tokens.refresh_token;
+            // Write the rotation back to ~/.codex/auth.json on the local
+            // CLI/TUI path (authFilePath set). Without this, the NEXT
+            // `0`/`0sec tui`/`codex` process re-reads the now-spent token
+            // from disk and 401s on its first call — the exact failure the
+            // operator hit. The env-forwarded cloud path has authFilePath
+            // undefined and is left to the worker-controller.
+            if (state.authFilePath) {
+              persistChatGptCodexAuthFile(state.authFilePath, tokens);
+            }
           }
           if (!state.accountId) {
             state.accountId = extractChatGptAccountId(tokens);
