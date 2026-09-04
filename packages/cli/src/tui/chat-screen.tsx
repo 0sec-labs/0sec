@@ -486,8 +486,11 @@ export interface ChatScreenProps {
   /**
    * Opens the provider recovery screen after a recognized credential failure.
    * Tool and target errors stay in the transcript instead of misrouting here.
+   * REQUIRED: it was previously optional and the sole call site (run.tsx) forgot
+   * to wire it, so a Codex 401 only printed "turn failed" and the device-auth
+   * pane never opened. Keeping it required makes that omission a compile error.
    */
-  onConnectionFailure?: (recovery: ConnectionRecovery) => void;
+  onConnectionFailure: (recovery: ConnectionRecovery) => void;
   /**
    * A handle the coordinator populates with a function that submits an operator
    * message into the SAME composer-submit path a typed message takes (queue if a
