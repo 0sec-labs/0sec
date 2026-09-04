@@ -27,10 +27,10 @@ concurrency:
 
 jobs:
   desktop:
-    # The default labels of an Apple-silicon self-hosted Actions runner. This
-    # job is deliberately main/dispatch-only: never run untrusted PR code on
-    # the Mac mini that holds desktop signing and keychain access.
-    runs-on: [self-hosted, macOS, ARM64]
+    # This protected Apple-silicon Mac mini holds desktop signing and keychain
+    # access. Its bespoke label prevents the job landing on any other macOS
+    # runner if one is added. Main/dispatch-only: never run untrusted PR code.
+    runs-on: [self-hosted, macOS, ARM64, 0sec-mac-mini]
     timeout-minutes: 35
     env:
       0SEC_CHATGPT_ACCESS_TOKEN: ""
