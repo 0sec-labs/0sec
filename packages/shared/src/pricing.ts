@@ -57,6 +57,15 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   // credit-billed variant whose per-credit rate Alibaba does not publish.
   "qwen3.8-max": { input: 2.00, output: 6.00 },
   "qwen3.7-max": { input: 2.50, output: 7.50 },
+  // OpenCode Zen free tier (https://opencode.ai/docs/zen/) — zero-rate gateway
+  // models; actual spend is $0 while the free period lasts.
+  "muse-spark-1.3-contributor-free": { input: 0, output: 0 },
+  "muse-spark-1.2-contributor-free": { input: 0, output: 0 },
+  "mimo-v2.5-free": { input: 0, output: 0 },
+  "ling-3.0-flash-fin-free": { input: 0, output: 0 },
+  "big-pickle": { input: 0, output: 0 },
+  "nemotron-3-ultra-free": { input: 0, output: 0 },
+  "nemotron-3.5-lightning-free": { input: 0, output: 0 },
   // xAI Grok (docs.x.ai/developers/pricing, checked 2026-08-22) — SHORT-CONTEXT
   // rates only. xAI charges a second, higher tier once a request's prompt
   // crosses 200k tokens (grok-4.6: $4.00/$12.00 vs the $2.00/$6.00 below;
@@ -132,6 +141,7 @@ function normalizeModel(model: string): string {
     "kimi/",
     "moonshot/",
     "openrouter/",
+    "opencode/",
   ];
   for (const prefix of prefixes) {
     if (model.startsWith(prefix)) return model.slice(prefix.length);
@@ -178,6 +188,7 @@ export function modelProvider(model?: string): string {
   if (lowered.startsWith("z-ai/") || lowered.startsWith("zai/")) return "z-ai";
   if (lowered.startsWith("kimi/") || lowered.startsWith("moonshot/")) return "kimi";
   if (lowered.startsWith("openrouter/")) return "openrouter";
+  if (lowered.startsWith("opencode/")) return "opencode";
   if (lowered.startsWith("xai/") || lowered.startsWith("x-ai/")) return "xai";
 
   const stripped = normalizeModel(model).toLowerCase();
@@ -191,6 +202,7 @@ export function modelProvider(model?: string): string {
   if (stripped.startsWith("k3") || stripped.startsWith("kimi")) return "kimi";
   if (stripped.startsWith("qwen")) return "qwen";
   if (stripped.startsWith("grok")) return "xai";
+  if (/^(muse-spark|mimo|ling|big-pickle|nemotron|minimax)/.test(stripped)) return "opencode";
   return "unknown";
 }
 

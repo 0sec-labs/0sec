@@ -14,6 +14,7 @@ as environment variables.
 | **Alibaba Qwen** | `QWEN_API_KEY` | Use `--model qwen3.8-max` or `0SEC_MODEL=qwen3.8-max`. Uses Alibaba Model Studio's OpenAI-compatible endpoint. |
 | **Moonshot Kimi** | `KIMI_API_KEY` | Use `--model k3`. Uses Moonshot's Anthropic-compatible Coding endpoint. |
 | **xAI Grok** | `XAI_API_KEY` | Use `--model grok-4.6`. Uses xAI's OpenAI-compatible endpoint. Override the host with `XAI_BASE_URL`. Cost note: our price table carries xAI's short-context rates, so spend on prompts over 200k tokens is under-reported — reconcile against the xAI console. |
+| **OpenCode Zen** | `OPENCODE_API_KEY` | Use `--model muse-spark-1.3-contributor-free` (Responses wire) or `--model mimo-v2.5-free` (chat/completions wire), or `opencode/<model-id>`. Uses OpenCode Zen's OpenAI-compatible gateway, which serves GPT/Grok/Muse Spark on `/responses` and the rest of the catalog on `/chat/completions`. Override the host with `OPENCODE_BASE_URL`. |
 | **ChatGPT Codex** | `0SEC_CHATGPT_ACCESS_TOKEN`, `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` | OAuth subscription auth, not an API key. Both tokens are accepted; the access token is read first, the refresh token is refreshed on demand. This is the one provider that can also authenticate from a file — see [ChatGPT Codex authentication](#chatgpt-codex-authentication) below. |
 | **DeepSeek** | `DEEPSEEK_API_KEY` | Direct DeepSeek API access. Endpoint override: `DEEPSEEK_BASE_URL`. |
 | **OpenRouter** | `OPENROUTER_API_KEY` | Access to many hosted model families through one API. |
@@ -21,7 +22,7 @@ as environment variables.
 | **Azure OpenAI** | `AZURE_OPENAI_API_KEY` | Azure-hosted OpenAI models. See [Azure configuration](#azure-openai-configuration) below for additional settings. |
 | **OpenAI** | `OPENAI_API_KEY` | Direct access to GPT models. Endpoint override: `OPENAI_BASE_URL`. |
 
-These ten are the only providers the runtime detects from the environment. Model
+These eleven are the only providers the runtime detects from the environment. Model
 families with no direct path (Google, Meta, Mistral) are reachable through
 OpenRouter instead.
 
@@ -34,6 +35,8 @@ when more than one credential is present.
 - `glm-*` / `z-ai/*` → Z.ai
 - `qwen*` → Alibaba Qwen
 - `k3` / `kimi*` → Moonshot Kimi
+- `grok*` / `xai/*` → xAI Grok
+- `muse-spark*` / `mimo*` / `ling*` / `big-pickle` / `nemotron*` / `minimax*` / `opencode/*` → OpenCode Zen
 - `claude*` / `anthropic/*` → Anthropic, then OpenRouter when direct Anthropic
   credentials are absent
 - `gpt-*` / `o*` → ChatGPT Codex subscription when configured, otherwise
@@ -133,7 +136,7 @@ Run `/providers` first to confirm the provider is configured.
 
 Use OpenRouter to reach a model family with no direct provider credential. It's
 not required for Z.ai GLM, Alibaba Qwen, Moonshot Kimi, Anthropic, OpenAI, Azure,
-or DeepSeek.
+OpenCode Zen, or DeepSeek.
 
 ## Azure OpenAI configuration
 

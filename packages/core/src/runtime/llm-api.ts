@@ -701,7 +701,19 @@ const QWEN_TOKEN_PLAN_DEEPSEEK_MODEL = "deepseek-v4-flash-0731";
 const XAI_DEFAULT_BASE_URL = "https://api.x.ai/v1";
 const XAI_DEFAULT_MODEL = "grok-4.6";
 
-type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen" | "xai";
+// ── OpenCode Zen (API-key gateway, https://opencode.ai/zen/v1) ─────────────
+// ponytail: per-model wire split (muse-spark/gpt/grok→responses, rest chat); new Responses families need a regex entry.
+const OPENCODE_DEFAULT_BASE_URL = "https://opencode.ai/zen/v1";
+const OPENCODE_DEFAULT_MODEL = "muse-spark-1.3-contributor-free";
+
+/** Which Zen endpoint serves `model`. Defaults to chat so new free models work without a code change. */
+function opencodeWireApiForModel(model: string | undefined): WireApi {
+  const m = (model ?? OPENCODE_DEFAULT_MODEL).toLowerCase();
+  const bare = m.startsWith("opencode/") ? m.slice("opencode/".length) : m;
+  return /^(muse-spark|gpt-|o[1-4](?:[-_]|$)|grok|xai\/|x-ai\/)/.test(bare) ? "responses" : "chat_completions";
+}
+
+type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen" | "xai" | "opencode";
 type WireApi = "chat_completions" | "responses";
 /**
  * Azure Foundry deployment ids used by 0cloud. The worker can inject both
@@ -749,7 +761,7 @@ export function parseLlmFallbackChain(): FallbackEntry[] {
   const entries: FallbackEntry[] = [];
   const VALID_PROVIDERS: Record<string, true> = {
     openrouter: true, anthropic: true, openai: true, azure: true, deepseek: true,
-    "chatgpt-codex": true, "z-ai": true, kimi: true, qwen: true, xai: true,
+    "chatgpt-codex": true, "z-ai": true, kimi: true, qwen: true, xai: true, opencode: true,
   };
   for (const part of raw.split(",")) {
     const trimmed = part.trim();
@@ -847,6 +859,11 @@ export function resolveFailoverProvider(
       const key = process.env.XAI_API_KEY;
       if (!key) return undefined;
       return { apiKey: key, baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+    }
+    case "opencode": {
+      const key = process.env.OPENCODE_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, wireApi: opencodeWireApiForModel(model) };
     }
   }
 }
@@ -1397,6 +1414,10 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
   if (m.startsWith("grok") || m.startsWith("xai/") || m.startsWith("x-ai/")) {
     return process.env.XAI_API_KEY ? "xai" : undefined;
   }
+  // OpenCode Zen: vendor prefix + Zen-exclusive families (no native provider).
+  if (/^(opencode\/|muse-spark|mimo|ling|big-pickle|nemotron|minimax)/.test(m)) {
+    return process.env.OPENCODE_API_KEY ? "opencode" : undefined;
+  }
   // OpenAI GPT-5 / o-series → ChatGPT-Codex subscription if present, else OpenAI.
   if (/^gpt-|^o[1-4](?:[-_]|$)/.test(m)) {
     if (process.env["0SEC_CHATGPT_ACCESS_TOKEN"] || process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]) return "chatgpt-codex";
@@ -1497,6 +1518,7 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       "kimi",
       "qwen",
       "xai",
+      "opencode",
     ];
     if (!supported.includes(pinnedProviderRaw as ApiProvider)) {
       throw new Error(`${source} is unsupported: ${pinnedProviderRaw}`);
@@ -1561,6 +1583,9 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     case "xai":
       return { provider: "xai", apiKey: process.env.XAI_API_KEY as string,
         baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, defaultModel: XAI_DEFAULT_MODEL, wireApi: "chat_completions" };
+    case "opencode":
+      return { provider: "opencode", apiKey: process.env.OPENCODE_API_KEY as string,
+        baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, defaultModel: OPENCODE_DEFAULT_MODEL, wireApi: opencodeWireApiForModel(preferredModel) };
     case "chatgpt-codex":
       return { provider: "chatgpt-codex", apiKey: "", baseUrl: CODEX_API_ENDPOINT,
         defaultModel: process.env["0SEC_MODEL"] ?? CODEX_DEFAULT_MODEL, wireApi: "responses" };
@@ -1728,6 +1753,20 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
+  // OpenCode Zen — OpenAI-compatible gateway (per-model Responses vs
+  // chat/completions wire, see opencodeWireApiForModel), same explicit-opt-in
+  // treatment as z-ai/kimi/qwen/xai, still before the Anthropic final fallback.
+  const opencodeKey = process.env.OPENCODE_API_KEY;
+  if (opencodeKey) {
+    return {
+      provider: "opencode",
+      apiKey: opencodeKey,
+      baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL,
+      defaultModel: OPENCODE_DEFAULT_MODEL,
+      wireApi: opencodeWireApiForModel(preferredModel),
+    };
+  }
+
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     return {
@@ -1866,6 +1905,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.provider === "deepseek" ||
       this.provider === "qwen" ||
       this.provider === "xai" ||
+      this.provider === "opencode" ||
       // chatgpt-codex always speaks Responses API; treat it as
       // OpenAI-compat for body-shape branching purposes (the Responses
       // wire-API code paths below already key on `wireApi === "responses"`
@@ -2089,6 +2129,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       case "kimi": return "Kimi (Moonshot)";
       case "qwen": return "Qwen (Alibaba Model Studio)";
       case "xai": return "xAI (Grok)";
+      case "opencode": return "OpenCode Zen";
     }
   }
 
@@ -2104,7 +2145,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       "  export Z_AI_API_KEY=...                (Z.ai GLM — flat-rate Coding Plan, Anthropic-compatible)\n" +
       "  export KIMI_API_KEY=...                (Moonshot Kimi K3 — flat-rate coding, Anthropic-compatible)\n" +
       "  export QWEN_API_KEY=...                (Alibaba Qwen — Token Plan sub, OpenAI-compatible)\n" +
-      "  export XAI_API_KEY=...                 (xAI Grok — OpenAI-compatible)"
+      "  export XAI_API_KEY=...                 (xAI Grok — OpenAI-compatible)\n" +
+      "  export OPENCODE_API_KEY=...            (OpenCode Zen — OpenAI-compatible gateway)"
     );
   }
 

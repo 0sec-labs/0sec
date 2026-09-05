@@ -64,6 +64,7 @@ const AUTH_VARS = [
   "KIMI_API_KEY",
   "QWEN_API_KEY",
   "XAI_API_KEY",
+  "OPENCODE_API_KEY",
   "0SEC_HUNT_REFUTER_CANDIDATES",
   "0SEC_HUNT_CROSS_FAMILY",
 ] as const;
@@ -148,6 +149,28 @@ describe("refuterFamily", () => {
     });
     expect(choice.crossFamily).toBe(false);
     expect(choice.status).toBe("no-distinct-family");
+  });
+
+  it("classifies Muse Spark as its own family, so OpenCode Zen can serve as a refuter", () => {
+    // Same regression shape as the Grok guard above: without the
+    // modelProvider mapping this answers "unknown" and the roster entry is a
+    // silent no-op.
+    expect(refuterFamily("muse-spark-1.3-contributor-free")).toBe("opencode");
+    expect(refuterFamily("opencode/mimo-v2.5-free")).toBe("opencode");
+  });
+
+  it("picks Muse Spark to decorrelate from a GPT finder", () => {
+    withProviders({ OPENCODE_API_KEY: "zen-test" });
+    expect(availableRefuterCandidates()).toEqual(["muse-spark-1.3-contributor-free"]);
+    const choice = selectCrossFamilyRefuter({
+      enabled: true,
+      finderModel: "gpt-5.5",
+      candidates: availableRefuterCandidates(),
+    });
+    expect(choice.crossFamily).toBe(true);
+    expect(choice.status).toBe("enforced");
+    expect(choice.model).toBe("muse-spark-1.3-contributor-free");
+    expect(choice.refuterFamily).toBe("opencode");
   });
 
   it("unwraps the openrouter/ routing prefix — same weights are NOT a second family", () => {

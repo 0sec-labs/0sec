@@ -52,8 +52,25 @@ describe("estimateCost", () => {
       .toBeCloseTo(1.4 + 4.4, 5);
   });
 
-  it("prices Kimi K3 flat-rate coding models (incl. the [1m] context suffix)", () => {
-    // Kimi K3 flat-rate estimate: $3/M in, $15/M out.
+  it("prices the OpenCode Zen free tier at zero, not the default rate", () => {
+    // Free while the Zen free period lasts. Pinned so an OSS pricing refresh
+    // (OSS overlays MANUAL) silently re-pricing one of these can never pass.
+    for (const model of [
+      "muse-spark-1.3-contributor-free",
+      "muse-spark-1.2-contributor-free",
+      "mimo-v2.5-free",
+      "ling-3.0-flash-fin-free",
+      "big-pickle",
+      "nemotron-3-ultra-free",
+      "nemotron-3.5-lightning-free",
+    ]) {
+      expect(getRates(model)).toEqual({ input: 0, output: 0 });
+      expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 500_000 }, model)).toBe(0);
+    }
+    expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 0 }, "opencode/mimo-v2.5-free")).toBe(0);
+  });
+
+  it("prices Kimi K3 flat-rate coding models (incl. the [1m] context suffix)", () => {    // Kimi K3 flat-rate estimate: $3/M in, $15/M out.
     expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "k3"))
       .toBeCloseTo(3.0 + 15.0, 5);
     // The [1m] long-context variant is priced explicitly (normalizeModel does
@@ -215,6 +232,7 @@ describe("modelProvider", () => {
     expect(modelProvider("z-ai/glm-5.1")).toBe("z-ai");
     expect(modelProvider("kimi/k3")).toBe("kimi");
     expect(modelProvider("moonshot/k3")).toBe("kimi");
+    expect(modelProvider("opencode/mimo-v2.5-free")).toBe("opencode");
   });
 
   it("falls back to family-based detection for bare model names", () => {
@@ -230,6 +248,11 @@ describe("modelProvider", () => {
     expect(modelProvider("k3")).toBe("kimi");
     expect(modelProvider("k3[1m]")).toBe("kimi");
     expect(modelProvider("kimi-for-coding")).toBe("kimi");
+    expect(modelProvider("muse-spark-1.3-contributor-free")).toBe("opencode");
+    expect(modelProvider("mimo-v2.5-free")).toBe("opencode");
+    expect(modelProvider("ling-3.0-flash-fin-free")).toBe("opencode");
+    expect(modelProvider("big-pickle")).toBe("opencode");
+    expect(modelProvider("nemotron-3-ultra-free")).toBe("opencode");
   });
 
   it("returns 'unknown' for empty / unrecognisable model ids", () => {
