@@ -49,6 +49,7 @@ describe("PROVIDERS", () => {
         "deepseek",
         "kimi",
         "openai",
+        "opencode",
         "openrouter",
         "qwen",
         "xai",

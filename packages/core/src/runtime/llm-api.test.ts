@@ -43,6 +43,8 @@ describe("LlmApiRuntime provider detection", () => {
     delete process.env.Z_AI_BASE_URL;
     delete process.env.XAI_API_KEY;
     delete process.env.XAI_BASE_URL;
+    delete process.env.OPENCODE_API_KEY;
+    delete process.env.OPENCODE_BASE_URL;
     delete process.env["0SEC_MODEL"];
     delete process.env["0SEC_SELECTED_PROVIDER"];
     delete process.env["0SEC_FORCE_PROVIDER"];
@@ -335,6 +337,95 @@ describe("LlmApiRuntime provider detection", () => {
     expect((bare as any).provider).toBe("xai");
     const picked = new LlmApiRuntime({ type: "api", timeout: 5000, model: "grok-4.6" });
     expect((picked as any).provider).toBe("xai");
+    const claude = new LlmApiRuntime({ type: "api", timeout: 5000, model: "claude-sonnet-4-6" });
+    expect((claude as any).provider).toBe("anthropic");
+  });
+
+  it("selects OpenCode Zen via OPENCODE_API_KEY with Muse Spark defaults on the Responses wire", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENCODE_API_KEY = "zen-test";
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((rt as any).provider).toBe("opencode");
+    expect((rt as any).model).toBe("muse-spark-1.3-contributor-free");
+    expect((rt as any).baseUrl).toBe("https://opencode.ai/zen/v1");
+    expect((rt as any).wireApi).toBe("responses");
+    const headers = (rt as any).buildHeaders();
+    expect(headers["Authorization"]).toBe("Bearer zen-test");
+    expect(headers["x-api-key"]).toBeUndefined();
+    expect((rt as any).buildUrl()).toBe("https://opencode.ai/zen/v1/responses");
+  });
+
+  it("routes mimo/ling picks to opencode on the chat/completions wire, honoring OPENCODE_BASE_URL", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENCODE_API_KEY = "zen-test";
+    process.env.OPENCODE_BASE_URL = "https://zen.example/v1";
+    process.env["0SEC_MODEL"] = "opencode/mimo-v2.5-free";
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((rt as any).provider).toBe("opencode");
+    expect((rt as any).model).toBe("mimo-v2.5-free");
+    expect((rt as any).baseUrl).toBe("https://zen.example/v1");
+    expect((rt as any).wireApi).toBe("chat_completions");
+    expect((rt as any).buildUrl()).toBe("https://zen.example/v1/chat/completions");
+  });
+
+  it("routes prefixed Claude and Gemini models to their native Zen wires", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENCODE_API_KEY = "zen-test";
+    const claude = new LlmApiRuntime({
+      type: "api",
+      timeout: 5000,
+      model: "opencode/claude-opus-4-7",
+    });
+    const claudeWire = claude as unknown as {
+      model: string;
+      wireApi: string;
+      buildHeaders(): Record<string, string>;
+      buildUrl(): string;
+    };
+    expect(claudeWire.model).toBe("claude-opus-4-7");
+    expect(claudeWire.wireApi).toBe("anthropic_messages");
+    expect(claudeWire.buildHeaders()["x-api-key"]).toBe("zen-test");
+    expect(claudeWire.buildUrl()).toBe("https://opencode.ai/zen/v1/messages");
+
+    const gemini = new LlmApiRuntime({
+      type: "api",
+      timeout: 5000,
+      model: "opencode/gemini-3.8-flash",
+    });
+    const geminiWire = gemini as unknown as {
+      model: string;
+      wireApi: string;
+      buildHeaders(): Record<string, string>;
+      buildUrl(): string;
+    };
+    expect(geminiWire.model).toBe("gemini-3.8-flash");
+    expect(geminiWire.wireApi).toBe("google_generate_content");
+    expect(geminiWire.buildHeaders()["x-goog-api-key"]).toBe("zen-test");
+    expect(geminiWire.buildUrl()).toBe(
+      "https://opencode.ai/zen/v1/models/gemini-3.8-flash:generateContent",
+    );
+  });
+
+  it("places opencode ahead of the Anthropic final fallback, and routes per model pick", () => {
+    // opencode joins z-ai/kimi/qwen/xai as an explicit opt-in tried BEFORE
+    // Anthropic, so Anthropic stays the last-resort fallback. With both keys
+    // present a bare run therefore resolves to opencode, while an explicit
+    // claude pick still routes per-call to Anthropic.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENCODE_API_KEY = "zen-test";
+    const bare = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((bare as any).provider).toBe("opencode");
+    const mimo = new LlmApiRuntime({ type: "api", timeout: 5000, model: "mimo-v2.5-free" });
+    expect((mimo as any).provider).toBe("opencode");
+    expect((mimo as any).wireApi).toBe("chat_completions");
+    const spark = new LlmApiRuntime({ type: "api", timeout: 5000, model: "muse-spark-1.3-contributor-free" });
+    expect((spark as any).provider).toBe("opencode");
+    expect((spark as any).wireApi).toBe("responses");
     const claude = new LlmApiRuntime({ type: "api", timeout: 5000, model: "claude-sonnet-4-6" });
     expect((claude as any).provider).toBe("anthropic");
   });
@@ -704,6 +795,203 @@ describe("LlmApiRuntime chat completions format", () => {
     (rt as any).reasoningEffort = "low";
     await rt.execute("prompt");
     expect(capturedBody.reasoning_effort).toBe("low");
+  });
+});
+
+// ── OpenCode Gemini generateContent format ──
+
+type GoogleRuntimeInternals = {
+  provider: string;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  wireApi: string;
+};
+
+function googleRuntime(): LlmApiRuntime {
+  const runtime = new LlmApiRuntime({ type: "api", timeout: 5000 });
+  // Test-only access to the selected runtime transport.
+  const internals = runtime as unknown as GoogleRuntimeInternals;
+  internals.provider = "opencode";
+  // Test fixture, literal non-secret key.
+  // foxguard: ignore[js/no-hardcoded-secret]
+  internals.apiKey = "zen-test";
+  internals.baseUrl = "https://opencode.ai/zen/v1";
+  internals.model = "gemini-3.8-flash";
+  internals.wireApi = "google_generate_content";
+  return runtime;
+}
+
+describe("LlmApiRuntime OpenCode Gemini format", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("preserves Gemini function-call metadata through a tool continuation", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const requestUrls: string[] = [];
+    const requestHeaders: Headers[] = [];
+    const responses = [
+      {
+        candidates: [{
+          content: {
+            parts: [{
+              functionCall: {
+                id: "upstream-call-1",
+                name: "read_file",
+                args: { path: "README.md" },
+                thoughtSignature: "signed-thought",
+              },
+            }],
+          },
+          finishReason: "STOP",
+        }],
+        usageMetadata: { promptTokenCount: 7, candidatesTokenCount: 3 },
+      },
+      {
+        candidates: [{
+          content: { parts: [{ text: "README inspected." }] },
+          finishReason: "STOP",
+        }],
+        usageMetadata: { promptTokenCount: 11, candidatesTokenCount: 4 },
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body)) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("expected an object request body");
+      }
+      requestBodies.push(parsed as Record<string, unknown>);
+      requestUrls.push(String(url));
+      requestHeaders.push(new Headers(init?.headers));
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected extra request");
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(response),
+      } as unknown as Response;
+    }));
+
+    const runtime = googleRuntime();
+    const tools = [{
+      name: "read_file",
+      description: "Read a file",
+      input_schema: {
+        type: "object" as const,
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+    }];
+    const first = await runtime.executeNative(
+      "Inspect the repository.",
+      [{ role: "user", content: [{ type: "text", text: "Read README.md" }] }],
+      tools,
+    );
+
+    expect(requestUrls[0]).toBe(
+      "https://opencode.ai/zen/v1/models/gemini-3.8-flash:generateContent",
+    );
+    expect(requestHeaders[0]?.get("x-goog-api-key")).toBe("zen-test");
+    expect(requestBodies[0]).toMatchObject({
+      systemInstruction: { parts: [{ text: "Inspect the repository." }] },
+      contents: [{ role: "user", parts: [{ text: "Read README.md" }] }],
+      tools: [{
+        functionDeclarations: [{
+          name: "read_file",
+          parametersJsonSchema: { type: "object" },
+        }],
+      }],
+    });
+    expect(first).toMatchObject({
+      stopReason: "tool_use",
+      usage: { inputTokens: 7, outputTokens: 3 },
+      content: [{
+        type: "tool_use",
+        id: "upstream-call-1",
+        name: "read_file",
+        input: { path: "README.md" },
+      }],
+    });
+    if (!first.providerRaw) throw new Error("expected Google provider metadata");
+
+    const second = await runtime.executeNative(
+      "Inspect the repository.",
+      [
+        { role: "user", content: [{ type: "text", text: "Read README.md" }] },
+        { role: "assistant", content: first.content, providerRaw: first.providerRaw },
+        {
+          role: "user",
+          content: [{
+            type: "tool_result",
+            tool_use_id: "upstream-call-1",
+            content: "# 0sec",
+          }],
+        },
+      ],
+      tools,
+    );
+
+    expect(requestBodies[1]).toMatchObject({
+      contents: [
+        { role: "user", parts: [{ text: "Read README.md" }] },
+        {
+          role: "model",
+          parts: [{
+            functionCall: {
+              id: "upstream-call-1",
+              name: "read_file",
+              thoughtSignature: "signed-thought",
+            },
+          }],
+        },
+        {
+          role: "user",
+          parts: [{
+            functionResponse: {
+              id: "upstream-call-1",
+              name: "read_file",
+              response: { name: "read_file", content: "# 0sec" },
+            },
+          }],
+        },
+      ],
+    });
+    expect(second).toMatchObject({
+      stopReason: "end_turn",
+      content: [{ type: "text", text: "README inspected." }],
+      usage: { inputTokens: 11, outputTokens: 4 },
+    });
+  });
+
+  it("uses generateContent for legacy prompts", async () => {
+    let body: Record<string, unknown> | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body)) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("expected an object request body");
+      }
+      body = parsed as Record<string, unknown>;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          candidates: [{ content: { parts: [{ text: "legacy result" }] } }],
+        }),
+      } as unknown as Response;
+    }));
+
+    const result = await googleRuntime().execute("Summarize this.", {
+      systemPrompt: "Be concise.",
+    });
+
+    expect(body).toMatchObject({
+      systemInstruction: { parts: [{ text: "Be concise." }] },
+      contents: [{ role: "user", parts: [{ text: "Summarize this." }] }],
+      generationConfig: { maxOutputTokens: 8192 },
+    });
+    expect(result).toMatchObject({ output: "legacy result", exitCode: 0 });
   });
 });
 
@@ -1794,6 +2082,24 @@ describe("resolveFailoverProvider", () => {
     const cfg = resolveFailoverProvider("anthropic", "claude-sonnet-4-20250514");
     expect(cfg).not.toBeUndefined();
     expect(cfg!.apiKey).toBe("sk-ant-fallback");
+  });
+
+  it("resolves OpenCode models to their documented native wires", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENCODE_API_KEY = "zen-key";
+    const spark = resolveFailoverProvider("opencode", "muse-spark-1.3-contributor-free");
+    expect(spark).toMatchObject({
+      apiKey: "zen-key",
+      baseUrl: "https://opencode.ai/zen/v1",
+      wireApi: "responses",
+    });
+    expect(resolveFailoverProvider("opencode", "mimo-v2.5-free")?.wireApi)
+      .toBe("chat_completions");
+    expect(resolveFailoverProvider("opencode", "opencode/claude-opus-4-7")?.wireApi)
+      .toBe("anthropic_messages");
+    expect(resolveFailoverProvider("opencode", "opencode/gemini-3.8-flash")?.wireApi)
+      .toBe("google_generate_content");
   });
 });
 

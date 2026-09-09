@@ -117,6 +117,7 @@ const REFUTER_ROSTER: ReadonlyArray<{ model: string; envKeys: readonly string[] 
   { model: "k3", envKeys: ["KIMI_API_KEY"] },
   { model: "qwen3.8-max", envKeys: ["QWEN_API_KEY"] },
   { model: "grok-4.6", envKeys: ["XAI_API_KEY"] },
+  { model: "muse-spark-1.3-contributor-free", envKeys: ["OPENCODE_API_KEY"] },
 ];
 
 /**

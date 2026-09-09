@@ -124,6 +124,13 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     hint: "set XAI_API_KEY from console.x.ai (endpoint override: XAI_BASE_URL)",
   },
   {
+    id: "opencode",
+    label: "OpenCode Zen",
+    auth: "api-key",
+    envVars: ["OPENCODE_API_KEY"],
+    hint: "set OPENCODE_API_KEY from opencode.ai/auth (endpoint override: OPENCODE_BASE_URL)",
+  },
+  {
     id: "anthropic",
     label: "Anthropic",
     auth: "api-key",

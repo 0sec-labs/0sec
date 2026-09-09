@@ -57,6 +57,7 @@ function safeParseJson(raw: string | null | undefined): Record<string, unknown> 
   }
 }
 
+
 /** True when persisted provider output is safe to replay as Anthropic blocks. */
 function isWireBlockArray(blocks: unknown[]): blocks is WireBlock[] {
   return blocks.every(
@@ -701,8 +702,41 @@ const QWEN_TOKEN_PLAN_DEEPSEEK_MODEL = "deepseek-v4-flash-0731";
 const XAI_DEFAULT_BASE_URL = "https://api.x.ai/v1";
 const XAI_DEFAULT_MODEL = "grok-4.6";
 
-type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen" | "xai";
-type WireApi = "chat_completions" | "responses";
+// ── OpenCode Zen (API-key gateway, https://opencode.ai/zen/v1) ─────────────
+//
+// Zen proxies several native APIs. Route each documented model family to its
+// actual wire instead of treating the gateway as universally OpenAI-compatible:
+// Responses (GPT/Grok/Muse), Anthropic Messages (Claude/Qwen), Google
+// generateContent (Gemini), and OpenAI chat completions (the remaining
+// documented families).
+const OPENCODE_DEFAULT_BASE_URL = "https://opencode.ai/zen/v1";
+const OPENCODE_DEFAULT_MODEL = "muse-spark-1.3-contributor-free";
+
+type WireApi =
+  | "chat_completions"
+  | "responses"
+  | "anthropic_messages"
+  | "google_generate_content";
+
+let googleFunctionCallSequence = 0;
+
+function opencodeModelId(model: string): string {
+  return model.replace(/^opencode\//i, "");
+}
+
+/** Return the documented Zen wire for a canonical or `opencode/`-prefixed model. */
+function opencodeWireApiForModel(model: string | undefined): WireApi {
+  const bare = opencodeModelId(model ?? OPENCODE_DEFAULT_MODEL).toLowerCase();
+  if (/^(muse-spark|gpt-|o[1-4](?:[-_]|$)|grok)/.test(bare)) return "responses";
+  if (/^(claude|qwen)/.test(bare)) return "anthropic_messages";
+  if (/^gemini/.test(bare)) return "google_generate_content";
+  if (/^(deepseek|mimo|ling|big-pickle|nemotron|minimax|glm|kimi|k3)/.test(bare)) {
+    return "chat_completions";
+  }
+  throw new Error(`OpenCode Zen has no wire mapping for model "${bare}"`);
+}
+
+type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen" | "xai" | "opencode";
 /**
  * Azure Foundry deployment ids used by 0cloud. The worker can inject both
  * the Azure primary key and a direct-DeepSeek fallback key; route a Foundry
@@ -749,7 +783,7 @@ export function parseLlmFallbackChain(): FallbackEntry[] {
   const entries: FallbackEntry[] = [];
   const VALID_PROVIDERS: Record<string, true> = {
     openrouter: true, anthropic: true, openai: true, azure: true, deepseek: true,
-    "chatgpt-codex": true, "z-ai": true, kimi: true, qwen: true, xai: true,
+    "chatgpt-codex": true, "z-ai": true, kimi: true, qwen: true, xai: true, opencode: true,
   };
   for (const part of raw.split(",")) {
     const trimmed = part.trim();
@@ -847,6 +881,11 @@ export function resolveFailoverProvider(
       const key = process.env.XAI_API_KEY;
       if (!key) return undefined;
       return { apiKey: key, baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+    }
+    case "opencode": {
+      const key = process.env.OPENCODE_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, wireApi: opencodeWireApiForModel(model) };
     }
   }
 }
@@ -1397,6 +1436,10 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
   if (m.startsWith("grok") || m.startsWith("xai/") || m.startsWith("x-ai/")) {
     return process.env.XAI_API_KEY ? "xai" : undefined;
   }
+  // OpenCode Zen: vendor prefix + Zen-exclusive families (no native provider).
+  if (/^(opencode\/|muse-spark|mimo|ling|big-pickle|nemotron|minimax)/.test(m)) {
+    return process.env.OPENCODE_API_KEY ? "opencode" : undefined;
+  }
   // OpenAI GPT-5 / o-series → ChatGPT-Codex subscription if present, else OpenAI.
   if (/^gpt-|^o[1-4](?:[-_]|$)/.test(m)) {
     if (process.env["0SEC_CHATGPT_ACCESS_TOKEN"] || process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]) return "chatgpt-codex";
@@ -1497,6 +1540,7 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       "kimi",
       "qwen",
       "xai",
+      "opencode",
     ];
     if (!supported.includes(pinnedProviderRaw as ApiProvider)) {
       throw new Error(`${source} is unsupported: ${pinnedProviderRaw}`);
@@ -1561,6 +1605,9 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     case "xai":
       return { provider: "xai", apiKey: process.env.XAI_API_KEY as string,
         baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, defaultModel: XAI_DEFAULT_MODEL, wireApi: "chat_completions" };
+    case "opencode":
+      return { provider: "opencode", apiKey: process.env.OPENCODE_API_KEY as string,
+        baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, defaultModel: OPENCODE_DEFAULT_MODEL, wireApi: opencodeWireApiForModel(preferredModel) };
     case "chatgpt-codex":
       return { provider: "chatgpt-codex", apiKey: "", baseUrl: CODEX_API_ENDPOINT,
         defaultModel: process.env["0SEC_MODEL"] ?? CODEX_DEFAULT_MODEL, wireApi: "responses" };
@@ -1728,6 +1775,20 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
+  // OpenCode Zen — multi-wire gateway selected per model (see
+  // opencodeWireApiForModel), same explicit-opt-in treatment as z-ai/kimi/qwen/xai,
+  // still before the Anthropic final fallback.
+  const opencodeKey = process.env.OPENCODE_API_KEY;
+  if (opencodeKey) {
+    return {
+      provider: "opencode",
+      apiKey: opencodeKey,
+      baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL,
+      defaultModel: OPENCODE_DEFAULT_MODEL,
+      wireApi: opencodeWireApiForModel(preferredModel),
+    };
+  }
+
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     return {
@@ -1807,6 +1868,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     } else {
       this.model = requestedModel ?? detected.defaultModel;
     }
+    // `opencode/<model-id>` is a routing prefix, not an upstream model id.
+    // Strip it once the provider and wire have been selected so the gateway
+    // receives its canonical catalog ID.
+    if (this.provider === "opencode") {
+      this.model = opencodeModelId(this.model);
+    }
 
     // These deployments reject function tools plus reasoning_effort on
     // /chat/completions. The Responses endpoint supports the agent loop, so
@@ -1866,6 +1933,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.provider === "deepseek" ||
       this.provider === "qwen" ||
       this.provider === "xai" ||
+      (this.provider === "opencode" &&
+        (this.wireApi === "chat_completions" || this.wireApi === "responses")) ||
       // chatgpt-codex always speaks Responses API; treat it as
       // OpenAI-compat for body-shape branching purposes (the Responses
       // wire-API code paths below already key on `wireApi === "responses"`
@@ -1890,8 +1959,14 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     return (
       this.provider === "anthropic" ||
       this.provider === "z-ai" ||
-      this.provider === "kimi"
+      this.provider === "kimi" ||
+      (this.provider === "opencode" && this.wireApi === "anthropic_messages")
     );
+  }
+
+  /** Whether this OpenCode Zen model uses the Google generateContent wire. */
+  private get isGoogleWire(): boolean {
+    return this.provider === "opencode" && this.wireApi === "google_generate_content";
   }
 
   /**
@@ -1923,6 +1998,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         "Content-Type": "application/json",
         originator: "0sec",
         "User-Agent": `0sec/${VERSION}`,
+      };
+    }
+    if (this.isGoogleWire) {
+      return {
+        "Content-Type": "application/json",
+        "x-goog-api-key": this.apiKey,
       };
     }
     if (this.isOpenAICompat) {
@@ -1997,6 +2078,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       // to it too.
       return CODEX_API_ENDPOINT;
     }
+    if (this.isGoogleWire) {
+      return `${this.baseUrl}/models/${this.model}:generateContent`;
+    }
     if (this.isOpenAICompat) {
       return `${this.baseUrl}/${this.wireApi === "responses" ? "responses" : "chat/completions"}`;
     }
@@ -2005,7 +2089,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     // so an unmapped provider fails loudly instead of silently hitting
     // `/v1/messages`.
     if (this.isAnthropicWire) {
-      return `${this.baseUrl}/v1/messages`;
+      return this.provider === "opencode"
+        ? `${this.baseUrl}/messages`
+        : `${this.baseUrl}/v1/messages`;
     }
     throw new Error(`buildUrl: provider ${this.provider} is not mapped to a wire`);
   }
@@ -2049,6 +2135,76 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     return { thinking: { type: "enabled", budget_tokens: budget } };
   }
 
+  /** Convert the unified transcript into Gemini generateContent contents. */
+  private googleContents(messages: NativeMessage[]): Array<Record<string, unknown>> {
+    const toolNames = new Map<string, string>();
+    const upstreamCallIds = new Map<string, string>();
+    const contents: Array<Record<string, unknown>> = [];
+
+    for (const message of messages) {
+      const parts: Array<Record<string, unknown>> = [];
+      const rawParts =
+        message.role === "assistant" &&
+        message.providerRaw?.provider === this.provider &&
+        message.providerRaw.model === this.model &&
+        message.providerRaw.wireApi === this.wireApi &&
+        Array.isArray(message.providerRaw.output)
+          ? message.providerRaw.output as Array<Record<string, unknown>>
+          : undefined;
+
+      if (rawParts) {
+        const toolUses = message.content.filter(
+          (block): block is Extract<NativeContentBlock, { type: "tool_use" }> =>
+            block.type === "tool_use",
+        );
+        let toolUseIndex = 0;
+        for (const part of rawParts) {
+          const call =
+            part.functionCall && typeof part.functionCall === "object"
+              ? part.functionCall as Record<string, unknown>
+              : undefined;
+          const toolUse = call ? toolUses[toolUseIndex++] : undefined;
+          const name = typeof call?.name === "string" ? call.name : toolUse?.name;
+          if (toolUse && name) {
+            toolNames.set(toolUse.id, name);
+            if (typeof call?.id === "string") upstreamCallIds.set(toolUse.id, call.id);
+          }
+          parts.push(part);
+        }
+      } else {
+        for (const block of message.content) {
+          if (block.type === "text") {
+            parts.push({ text: block.text });
+          } else if (block.type === "tool_use") {
+            toolNames.set(block.id, block.name);
+            upstreamCallIds.set(block.id, block.id);
+            parts.push({ functionCall: { id: block.id, name: block.name, args: block.input } });
+          } else if (block.type === "tool_result") {
+            const name = toolNames.get(block.tool_use_id);
+            if (!name) {
+              throw new Error(`Google tool result ${block.tool_use_id} has no matching tool call`);
+            }
+            const upstreamId = upstreamCallIds.get(block.tool_use_id);
+            parts.push({
+              functionResponse: {
+                ...(upstreamId ? { id: upstreamId } : {}),
+                name,
+                response: {
+                  name,
+                  content: block.is_error ? `Error: ${block.content}` : block.content,
+                },
+              },
+            });
+          }
+        }
+      }
+      if (parts.length > 0) {
+        contents.push({ role: message.role === "assistant" ? "model" : "user", parts });
+      }
+    }
+    return contents;
+  }
+
   /**
    * Per-turn prompt-cache accounting line, so a run can be shown to actually
    * be hitting cache rather than assumed to be. Off unless
@@ -2089,6 +2245,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       case "kimi": return "Kimi (Moonshot)";
       case "qwen": return "Qwen (Alibaba Model Studio)";
       case "xai": return "xAI (Grok)";
+      case "opencode": return "OpenCode Zen";
     }
   }
 
@@ -2104,7 +2261,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       "  export Z_AI_API_KEY=...                (Z.ai GLM — flat-rate Coding Plan, Anthropic-compatible)\n" +
       "  export KIMI_API_KEY=...                (Moonshot Kimi K3 — flat-rate coding, Anthropic-compatible)\n" +
       "  export QWEN_API_KEY=...                (Alibaba Qwen — Token Plan sub, OpenAI-compatible)\n" +
-      "  export XAI_API_KEY=...                 (xAI Grok — OpenAI-compatible)"
+      "  export XAI_API_KEY=...                 (xAI Grok — OpenAI-compatible)\n" +
+      "  export OPENCODE_API_KEY=...            (OpenCode Zen — multi-wire gateway)"
     );
   }
 
@@ -2220,7 +2378,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         continue;
       }
       this.provider = entry.provider;
-      this.model = entry.model;
+      this.model = entry.provider === "opencode" ? opencodeModelId(entry.model) : entry.model;
       this.apiKey = cfg.apiKey;
       this.baseUrl = cfg.baseUrl;
       this.wireApi = cfg.wireApi;
@@ -2536,6 +2694,17 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           }),
           controller.signal,
         );
+      } else if (this.isGoogleWire) {
+        res = await this.postWithRetry(
+          () => JSON.stringify({
+            ...(systemPrompt
+              ? { systemInstruction: { parts: [{ text: systemPrompt }] } }
+              : {}),
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
+          }),
+          controller.signal,
+        );
       } else if (this.isAnthropicWire) {
         // Anthropic Messages API format (also serves the z-ai/GLM and
         // kimi/Moonshot providers — see `isAnthropicWire`).
@@ -2592,6 +2761,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
                   .map((block: Record<string, unknown>) => String(block.text ?? ""))
                   .join("\n")
               : "";
+      } else if (this.isGoogleWire) {
+        text =
+          json.candidates?.[0]?.content?.parts
+            ?.filter((part: Record<string, unknown>) => typeof part.text === "string")
+            .map((part: Record<string, unknown>) => part.text as string)
+            .join("\n") ?? "";
       } else {
         // Anthropic Messages response (also z-ai/GLM + kimi/Moonshot).
         text =
@@ -2988,6 +3163,26 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         });
         clearTimeout(timer);
         return streamed;
+      } else if (this.isGoogleWire) {
+        const body: Record<string, unknown> = {
+          ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+          contents: this.googleContents(messages),
+          generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
+        };
+        if (tools.length > 0) {
+          body.tools = [{
+            functionDeclarations: tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              parametersJsonSchema: tool.input_schema,
+            })),
+          }];
+        }
+        res = await this.postWithRetry(
+          () => JSON.stringify(body),
+          call.signal,
+          call,
+        );
       } else if (this.isAnthropicWire) {
         // Anthropic Messages API format (also serves the z-ai/GLM and
         // kimi/Moonshot providers — see `isAnthropicWire`).
@@ -3250,6 +3445,53 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             // Responses `input_tokens` already includes the cached span, so
             // this is instrumentation only — see the streaming path.
             ...readResponsesCachedTokens(json.usage as Record<string, unknown>),
+          };
+        }
+      } else if (this.isGoogleWire) {
+        const candidate = json.candidates?.[0];
+        const rawParts = Array.isArray(candidate?.content?.parts)
+          ? candidate.content.parts as Array<Record<string, unknown>>
+          : [];
+        content = [];
+        if (rawParts.length > 0) {
+          providerRaw = {
+            provider: this.provider,
+            model: this.model,
+            wireApi: this.wireApi,
+            output: rawParts,
+          };
+        }
+        for (const part of rawParts) {
+          if (typeof part.text === "string") {
+            content.push({ type: "text", text: part.text });
+            continue;
+          }
+          const call =
+            part.functionCall && typeof part.functionCall === "object"
+              ? part.functionCall as Record<string, unknown>
+              : undefined;
+          if (call && typeof call.name === "string") {
+            content.push({
+              type: "tool_use",
+              id: typeof call.id === "string" ? call.id : `google-call-${++googleFunctionCallSequence}`,
+              name: call.name,
+              input:
+                call.args && typeof call.args === "object" && !Array.isArray(call.args)
+                  ? call.args as Record<string, unknown>
+                  : {},
+            });
+          }
+        }
+        const finishReason = String(candidate?.finishReason ?? "").toUpperCase();
+        stopReason = content.some((block) => block.type === "tool_use")
+          ? "tool_use"
+          : finishReason === "MAX_TOKENS"
+            ? "max_tokens"
+            : "end_turn";
+        if (json.usageMetadata) {
+          usage = {
+            inputTokens: json.usageMetadata.promptTokenCount ?? 0,
+            outputTokens: json.usageMetadata.candidatesTokenCount ?? 0,
           };
         }
       } else {

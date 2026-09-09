@@ -76,6 +76,13 @@ export function connectionRecoveryForError(error: string): ConnectionRecovery | 
       detail,
     };
   }
+  if (/opencode|\bzen\b/i.test(detail)) {
+    return {
+      providerId: "opencode",
+      title: "OpenCode Zen credentials need attention",
+      detail,
+    };
+  }
   if (/openai|api key|api_key/i.test(detail)) {
     return {
       providerId: "openai",

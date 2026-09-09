@@ -22,6 +22,7 @@ describe("connectionRecoveryForError", () => {
       ["Moonshot Kimi API error", "kimi"],
       ["Alibaba Model Studio API error", "qwen"],
       ["xAI Grok API error", "xai"],
+      ["OpenCode Zen API error", "opencode"],
       ["OpenAI API error: invalid key", "openai"],
     ]) {
       expect(connectionRecoveryForError(error)).toMatchObject({ providerId });
