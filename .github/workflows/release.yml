@@ -89,7 +89,6 @@ jobs:
             ./0sec --help | grep -q "security research harness"
             # Run the dashboard from the same empty directory. This must use
             # the manifest embedded by bun-compile, not workspace assets.
-            ./0sec db reset --db-path dashboard.db --seed verification
             ./0sec dashboard --db-path dashboard.db --port 48123 --no-open --ready-json > dashboard.log 2>&1 &
             dashboard_pid=$!
             cleanup_dashboard() {

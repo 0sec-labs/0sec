@@ -12,6 +12,14 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-09-09
+
+### Fixed
+
+- Native binary release smoke now verifies embedded dashboard assets on every
+  supported platform without relying on a platform-specific database setup.
+
+
 ## [0.16.1] - 2026-09-09
 
 ### Fixed
