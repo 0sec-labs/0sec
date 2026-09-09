@@ -57,7 +57,6 @@ describe("estimateCost", () => {
     // (OSS overlays MANUAL) silently re-pricing one of these can never pass.
     for (const model of [
       "muse-spark-1.3-contributor-free",
-      "muse-spark-1.2-contributor-free",
       "mimo-v2.5-free",
       "ling-3.0-flash-fin-free",
       "big-pickle",
@@ -70,7 +69,8 @@ describe("estimateCost", () => {
     expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 0 }, "opencode/mimo-v2.5-free")).toBe(0);
   });
 
-  it("prices Kimi K3 flat-rate coding models (incl. the [1m] context suffix)", () => {    // Kimi K3 flat-rate estimate: $3/M in, $15/M out.
+  it("prices Kimi K3 flat-rate coding models (incl. the [1m] context suffix)", () => {
+    // Kimi K3 flat-rate estimate: $3/M in, $15/M out.
     expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "k3"))
       .toBeCloseTo(3.0 + 15.0, 5);
     // The [1m] long-context variant is priced explicitly (normalizeModel does

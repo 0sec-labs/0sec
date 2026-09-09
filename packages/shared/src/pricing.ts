@@ -60,7 +60,6 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   // OpenCode Zen free tier (https://opencode.ai/docs/zen/) — zero-rate gateway
   // models; actual spend is $0 while the free period lasts.
   "muse-spark-1.3-contributor-free": { input: 0, output: 0 },
-  "muse-spark-1.2-contributor-free": { input: 0, output: 0 },
   "mimo-v2.5-free": { input: 0, output: 0 },
   "ling-3.0-flash-fin-free": { input: 0, output: 0 },
   "big-pickle": { input: 0, output: 0 },
