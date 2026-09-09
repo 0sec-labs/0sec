@@ -90,5 +90,3 @@ export const todosDispatch: Record<string, string> = {
   write_todos: "updateTodos",
 };
 
-/** The alias name, excluded from advertised role tool-sets. */
-export const TODOS_ALIAS_NAME = "write_todos";

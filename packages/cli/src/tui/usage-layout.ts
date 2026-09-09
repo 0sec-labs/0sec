@@ -684,7 +684,3 @@ export function usageFooterHint(): string {
   return ["esc back", "ctrl+c exit"].join(" · ");
 }
 
-/** Sanitise a caller-supplied string for the terminal. */
-export function usageText(value: unknown): string {
-  return sanitizeTuiText(typeof value === "string" ? value : "");
-}

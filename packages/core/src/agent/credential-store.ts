@@ -26,7 +26,7 @@ import type {
   PersistentCredentialRow,
   CredentialKindDB,
 } from "@0sec/db";
-import type { LootKind, LootItem } from "./loot.js";
+import type { LootItem } from "./loot.js";
 import { LootLedger } from "./loot.js";
 
 /** How many leading chars of a value survive into the (redacted) preview. */
@@ -164,12 +164,3 @@ export class PersistentCredentialStore {
   }
 }
 
-/** Loot kinds that are credential-like. Currently all LootKind values map 1:1. */
-export const CREDENTIAL_LOOT_KINDS: readonly LootKind[] = [
-  "credential",
-  "token",
-  "path",
-  "endpoint",
-  "hash",
-  "cookie",
-];

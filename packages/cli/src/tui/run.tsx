@@ -4617,9 +4617,6 @@ export async function showOpenTuiConsole(options: ChatScreenOptions = {}): Promi
   });
 }
 
-export async function showOpenTuiOps(options: { dbPath?: string; refreshMs: number }): Promise<void> {
-  await mountApp({ type: "console", initialRoute: { type: "ops", dbPath: options.dbPath, refreshMs: options.refreshMs }, onResolve: () => {}, onExit: () => {} });
-}
 
 export async function showOpenTuiDoctor(): Promise<void> {
   await mountApp({ type: "console", initialRoute: { type: "doctor" }, onResolve: () => {}, onExit: () => {} });
@@ -4644,16 +4641,6 @@ export async function showOpenTuiSettings(): Promise<void> {
   await mountApp({ type: "console", initialRoute: { type: "settings" }, onResolve: () => {}, onExit: () => {} });
 }
 
-/**
- * Opens the console straight onto the model picker.
- *
- * Mirrors `showOpenTuiSettings`. The route is rooted on a chat route, so Esc
- * lands in chat rather than exiting — which is also what happens when the
- * picker is reached from `/model`.
- */
-export async function showOpenTuiModels(options: ChatScreenOptions = {}): Promise<void> {
-  await mountApp({ type: "console", initialRoute: { type: "models", chatOptions: options }, onResolve: () => {}, onExit: () => {} });
-}
 
 export async function showOpenTuiFindings(options: FindingsScreenOptions): Promise<void> {
   await mountApp({ type: "console", initialRoute: { type: "findings", options }, onResolve: () => {}, onExit: () => {} });

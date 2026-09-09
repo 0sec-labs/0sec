@@ -33,7 +33,6 @@
  * is fully unit-testable with a fake runner (no VM, no keys).
  */
 
-import type { NativeToolDef } from "../runtime/types.js";
 
 // ────────────────────────────────────────────────────────────────────
 // Target contract — what we are trying to reach
@@ -140,32 +139,6 @@ export type HarnessRunner = (input: HarnessRunInput) => Promise<HarnessRunResult
 // The synthesis LLM — injected, structured-output
 // ────────────────────────────────────────────────────────────────────
 
-/**
- * The `emit_harness` tool the synth model must call. Structured-output
- * discipline (kernel-run.ts): the harness is emitted through a schema, not
- * free-form prose, so the runner gets a program it can build directly.
- */
-export const emitHarnessTool: NativeToolDef = {
-  name: "emit_harness",
-  description:
-    "Emit a self-contained harness that opens the device, performs the init handshake, builds the " +
-    "arg struct, and issues the call that REACHES the target sink. For a kernel target emit a C " +
-    "reproducer with main() (or a syz program); for a Windows driver emit a C harness that " +
-    "CreateFile()s the device and DeviceIoControl()s the IOCTL. Reach the sink — do not stop at an " +
-    "early validation return.",
-  input_schema: {
-    type: "object",
-    properties: {
-      lang: { type: "string", enum: ["c", "syz"], description: "Harness language." },
-      source: { type: "string", description: "The full harness source." },
-      rationale: {
-        type: "string",
-        description: "One line: how this harness reaches the sink (which handshake, which arg gate it clears).",
-      },
-    },
-    required: ["lang", "source"],
-  },
-};
 
 /**
  * One synth turn, injected. Given the running conversation (as a single rendered

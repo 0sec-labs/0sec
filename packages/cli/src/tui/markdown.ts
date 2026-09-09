@@ -81,8 +81,6 @@ export const CODE_BLOCK_PAD = 2;
 
 /** Cells between two table columns: space, bar, space. Kept in sync with the renderer. */
 export const TABLE_COLUMN_GAP = " │ ";
-/** The separator-row glyph that sits where a `TABLE_COLUMN_GAP` bar sits. */
-export const TABLE_JOIN_GLYPH = "─┼─";
 
 /**
  * Cells the renderer's outer table frame consumes on top of the inter-column

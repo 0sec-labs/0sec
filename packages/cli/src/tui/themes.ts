@@ -1165,26 +1165,6 @@ export function isSafeThemeId(id: unknown): id is string {
 let installedThemes: Map<string, ThemeEntry> | null = null;
 let installedFromHome: string | undefined;
 
-/**
- * Coerce one parsed theme file into a validated `ThemeEntry`, or `null`.
- *
- * The palette must pass the FULL `validateTheme` (completeness + contrast, no
- * waivers — waivers exist only for the preserved built-in default), so an
- * installed theme is held to the same legibility bar as a shipped one. Fail
- * closed: any problem drops the theme.
- */
-export function installedThemeEntryFromFile(id: string, raw: unknown): ThemeEntry | null {
-  if (!isSafeThemeId(id)) return null;
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
-  const record = raw as Record<string, unknown>;
-  const palette = record.palette;
-  if (validateTheme(palette).length > 0) return null;
-  const label = typeof record.label === "string" && record.label.length > 0 ? record.label : id;
-  const description =
-    typeof record.description === "string" ? record.description : "Installed theme.";
-  const mode: ThemeMode = record.mode === "light" ? "light" : "dark";
-  return { name: id, label, description, mode, palette: palette as Theme };
-}
 
 /**
  * Read + validate every installed theme file. Total, fail-soft.

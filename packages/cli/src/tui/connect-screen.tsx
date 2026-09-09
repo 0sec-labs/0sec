@@ -78,19 +78,6 @@ import {
 /** How many rows page-up and page-down move. */
 const PAGE_STEP = 5;
 
-/**
- * True when at least one provider holds a real credential — in the environment
- * or in the on-disk store. Drives a later onboarding nudge; reads once per
- * environment change, since credentials are process-level and a file read on
- * every render would be wasted work.
- */
-export function useConnected(env: Record<string, string | undefined> = process.env): boolean {
-  return useMemo(() => {
-    const states = providerStates(env);
-    const stored = loadCredentials();
-    return hasAnyConnection({ states, stored: Object.keys(stored) });
-  }, [env]);
-}
 
 export interface ConnectFrameInput {
   body: React.ReactNode;

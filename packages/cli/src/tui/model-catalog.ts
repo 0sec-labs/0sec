@@ -133,14 +133,3 @@ export function buildFullModelCatalog(
   return [...priced, ...extras].sort(compareCatalogRows(currentModel));
 }
 
-export function fullModelSelectorItems(
-  currentModel?: string,
-  opts: CatalogSyncOptions = {},
-): SelectorItem[] {
-  return buildFullModelCatalog(currentModel, opts).map((model) => ({
-    id: model.id,
-    label: model.id,
-    meta: `${model.provider} · ${model.price}`,
-    current: model.id === currentModel,
-  }));
-}

@@ -471,10 +471,6 @@ export type ToolTrustLevel = "trusted" | "untrusted";
 
 export { isUntrustedSourceTool };
 
-/** Trust level for a tool's result content. See `isUntrustedSourceTool`. */
-export function toolTrustLevel(toolName: string, isMcp = false): ToolTrustLevel {
-  return isUntrustedSourceTool(toolName, isMcp) ? "untrusted" : "trusted";
-}
 
 // ── Allowed commands for run_command (safety) ──
 

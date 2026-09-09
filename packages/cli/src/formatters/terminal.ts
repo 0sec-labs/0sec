@@ -226,16 +226,3 @@ function formatDuration(ms: number): string {
 
 // ── Progress Bar (exported for use in index.ts) ──
 
-export function renderProgressBar(
-  current: number,
-  total: number,
-  width = 30
-): string {
-  const ratio = Math.min(current / total, 1);
-  const filled = Math.round(ratio * width);
-  const empty = width - filled;
-  const bar =
-    chalk.red("█".repeat(filled)) + chalk.gray("░".repeat(empty));
-  const pct = Math.round(ratio * 100);
-  return `${bar} ${chalk.white.bold(String(pct))}${chalk.gray("%")} ${chalk.gray(`(${current}/${total})`)}`;
-}

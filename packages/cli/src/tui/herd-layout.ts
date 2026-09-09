@@ -793,10 +793,6 @@ export function herdComposerVisibleDraft(draft: unknown, contentWidth: number): 
   return text.length > width ? text.slice(text.length - width) : text;
 }
 
-/** Budget the empty-state text to the pane and clip it if the pane is tiny. */
-export function fitHerdEmptyText(width: number): string {
-  return fitTuiText(HERD_EMPTY_TEXT, cells(width));
-}
 
 // ===========================================================================
 // FOCUS MODE — drill into ONE subagent, watch its live activity, steer it.
