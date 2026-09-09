@@ -12,6 +12,8 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-09
+
 ### Added
 
 - `0sec lens-synth --watch --promote` now evolves additive appsec finder lenses
@@ -28,6 +30,11 @@ on the published npm package and the GitHub Release tag.
 - ChatGPT Codex now uses `codex login --device-auth` from the chat-owned
   provider pane. It never enters the generic API-key store or asks for an
   OpenAI API key; OpenAI remains a separate API-key provider.
+
+### Fixed
+
+- Review-card selections now lead with the evidence record and preserve the
+  Review context; operator controls remain available after the review detail.
 
 ## [0.15.0] - 2026-08-30
 
