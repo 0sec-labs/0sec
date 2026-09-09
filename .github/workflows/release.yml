@@ -63,11 +63,13 @@ jobs:
         # No --ignore-scripts: the native addon (tree-sitter) must build so the
         # compiled binary has a .node to load at runtime (arm64 has no prebuilt).
         run: pnpm install --no-frozen-lockfile
-      - name: Build the CLI dependency closure
-        # Only the 0sec-cli closure is needed for the binary. Building the whole
-        # workspace (pnpm -r) also builds @0sec/docs, whose astro site 404s on
-        # Windows and has nothing to do with the release binary.
-        run: pnpm --filter "0sec-cli..." build
+      - name: Build dashboard and CLI dependency closure
+        # The compiled CLI embeds the Vite dashboard assets. The dashboard is
+        # not a CLI dependency, so build it explicitly before bun-compile
+        # generates the embedded asset manifest.
+        run: |
+          pnpm --filter @0sec/dashboard build
+          pnpm --filter "0sec-cli..." build
       - name: Compile native binary
         shell: bash
         run: bash scripts/bun-compile.sh "" "dist-bin/${{ matrix.asset }}"
@@ -85,6 +87,34 @@ jobs:
             cd "$smoke_dir"
             ./0sec --version
             ./0sec --help | grep -q "security research harness"
+            # Run the dashboard from the same empty directory. This must use
+            # the manifest embedded by bun-compile, not workspace assets.
+            ./0sec db reset --db-path dashboard.db --seed verification
+            ./0sec dashboard --db-path dashboard.db --port 48123 --no-open --ready-json > dashboard.log 2>&1 &
+            dashboard_pid=$!
+            cleanup_dashboard() {
+              kill "$dashboard_pid" >/dev/null 2>&1 || true
+              wait "$dashboard_pid" >/dev/null 2>&1 || true
+            }
+            trap cleanup_dashboard EXIT
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const deadline = Date.now() + 10_000;
+              while (Date.now() < deadline) {
+                try {
+                  if (readFileSync("dashboard.log", "utf8").includes("0SEC_DASHBOARD_READY")) process.exit(0);
+                } catch {}
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              throw new Error(`Dashboard did not become ready:\n${readFileSync("dashboard.log", "utf8")}`);
+            '
+            node --input-type=module -e '
+              const response = await fetch("http://127.0.0.1:48123/findings");
+              const html = await response.text();
+              if (!response.ok || !html.includes("/assets/")) {
+                throw new Error(`Embedded dashboard did not serve its HTML (${response.status}).`);
+              }
+            '
           )
       - uses: actions/upload-artifact@v4
         with:

@@ -68,10 +68,25 @@ PKG_VERSION="$(node -p "require('./package.json').version")"
 
 # `node-gyp-build` hides native addon paths behind a runtime lookup. Stage the
 # selected pair at fixed relative paths so c-dataflow's direct requires make Bun
-# embed them. The trap leaves normal source builds free of generated binaries.
+# embed them. The dashboard follows the same pattern: its Vite output is
+# generated into a temporary source module immediately before compilation, then
+# restored so ordinary source builds remain clean.
 STAGE_DIR="${ROOT_DIR}/packages/core/dist/stages/tree-sitter-compiled"
+DASHBOARD_ASSET_FILE="${ROOT_DIR}/packages/cli/src/dashboard-assets.generated.ts"
+DASHBOARD_ASSET_BACKUP="$(mktemp)"
+cp "$DASHBOARD_ASSET_FILE" "$DASHBOARD_ASSET_BACKUP"
+cleanup() {
+  rm -rf "$STAGE_DIR"
+  if [ -f "$DASHBOARD_ASSET_BACKUP" ]; then
+    cp "$DASHBOARD_ASSET_BACKUP" "$DASHBOARD_ASSET_FILE"
+    rm -f "$DASHBOARD_ASSET_BACKUP"
+  fi
+}
+trap cleanup EXIT
 node scripts/stage-tree-sitter-native.mjs "$NATIVE_TARGET" "$STAGE_DIR"
-trap 'rm -rf "$STAGE_DIR"' EXIT
+node packages/cli/scripts/generate-dashboard-assets.mjs \
+  "${ROOT_DIR}/packages/dashboard/dist" \
+  "$DASHBOARD_ASSET_FILE"
 
 cd packages/cli
 

@@ -109,6 +109,9 @@ vi.mock("node:http", async () => {
           if (cb) cb();
           return this;
         },
+        once() {
+          return this;
+        },
         address() {
           const binding = httpState.listenCalls.at(-1);
           if (!binding) return null;
