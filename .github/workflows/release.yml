@@ -49,6 +49,9 @@ jobs:
           # against Node 24's V8 (missing cppgc header) on linux-arm64, which has
           # no prebuilt. Node 22 compiles it from source cleanly.
           node-version: 22
+          # Hosted runners do not expose pnpm until the next `corepack enable`
+          # step. Disable setup-node's pre-Corepack cache probe.
+          package-manager-cache: false
       - run: corepack enable
       # Keep the compiler pinned while the bundled OpenTUI/native-addon surface
       # is validated. `bun-compile.sh` stages tree-sitter's runtime-discovered
