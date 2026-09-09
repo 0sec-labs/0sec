@@ -813,6 +813,8 @@ function googleRuntime(): LlmApiRuntime {
   // Test-only access to the selected runtime transport.
   const internals = runtime as unknown as GoogleRuntimeInternals;
   internals.provider = "opencode";
+  // Test fixture, literal non-secret key.
+  // foxguard: ignore[js/no-hardcoded-secret]
   internals.apiKey = "zen-test";
   internals.baseUrl = "https://opencode.ai/zen/v1";
   internals.model = "gemini-3.8-flash";
