@@ -17,9 +17,9 @@ export interface ImprovementPromotionPolicy {
 }
 
 /**
- * Conservative initial policy. A candidate is never deployed by this module:
- * policy changes can become eligible for a separately controlled canary, while
- * executable source changes always require an explicit human promotion.
+ * Conservative initial policy. This pure evaluator never deploys candidates.
+ * Source decisions require operator approval; the evolution controller may
+ * apply an explicitly configured autoPromote grant after independent canaries.
  */
 export const DEFAULT_IMPROVEMENT_PROMOTION_POLICY: Readonly<ImprovementPromotionPolicy> = Object.freeze({
   minimumCases: 10,

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Model-authored self-extension: a session-scoped, additive-only registry.
  *
@@ -221,6 +223,14 @@ export interface SelfExtensionEvent {
   readonly manifestBytes: number;
   /** Present (non-empty) only on `kind: "rejected"`. */
   readonly errors?: readonly string[];
+  /**
+   * Stable content digest of the manifest (SHA-256 over canonical JSON).
+   * Present on `kind: "registered"` and `kind: "revoked"`; omitted on rejections
+   * where the manifest was never validated. Binds the event to the specific
+   * manifest content so a persisted event log cannot be silently re-associated
+   * with different tool definitions.
+   */
+  readonly digest?: string;
 }
 
 /** Revokes one registration. Idempotent; returns true only on the first call. */
@@ -258,6 +268,98 @@ export interface SelfExtensionRegistryOptions {
   readonly maxToolsPerSession?: number;
   readonly maxGuardsPerExtension?: number;
   readonly maxManifestBytes?: number;
+}
+
+// ── Persistent snapshot ─────────────────────────────────────────────────────
+
+/**
+ * One registration entry in a snapshot, carrying the raw validated manifest
+ * and metadata needed to reconstruct the tool set. Guards are NOT included
+ * — functions cannot be serialized, and the restore path re-validates against
+ * the current guard floor without them.
+ */
+export interface SelfExtensionRegisteredManifest {
+  readonly registrationId: string;
+  readonly pluginId: string;
+  /**
+   * The raw validated manifest object (JSON-safe, schema-validated).
+   * Re-validated against current constraints on restore.
+   */
+  readonly manifest: Record<string, unknown>;
+  readonly origin: ExtensionOrigin;
+  readonly registeredAt: number;
+  readonly guardCount: number;
+  readonly manifestBytes: number;
+  /**
+   * Digest of the manifest content at registration time. Re-computed and
+   * compared on restore to detect tampering of the persisted snapshot.
+   */
+  readonly digest: string;
+}
+
+/**
+ * Immutable, JSON-serializable snapshot of the registry's reconstructible
+ * state. Captures all successful registrations so they can be restored on
+ * session resume through the same validation path. Guards are not included
+ * (functions cannot be serialized); the restore re-validates every manifest
+ * against current constraints (enabled flag, reserved names, limits) and
+ * rejects on any drift.
+ */
+export interface SelfExtensionSnapshot {
+  /** Whether self-extension was enabled at snapshot time. */
+  readonly enabled: boolean;
+  /** The registration counter, so restored ids continue the sequence. */
+  readonly seq: number;
+  /**
+   * The reserved tool names at snapshot time (the baseline identity).
+   * On restore, every current reserved name must be a superset of this set;
+   * a manifest whose tools collide with any name not in this set is rejected.
+   */
+  readonly reservedAtSnapshot: readonly string[];
+  /** Successful registrations in order, with their validated manifests. */
+  readonly registrations: readonly SelfExtensionRegisteredManifest[];
+}
+
+// ── Digest helper ───────────────────────────────────────────────────────────
+
+/**
+ * Recursively sort the keys of any JSON-compatible object, producing a
+ * deterministically ordered copy. Arrays are recursed into but their element
+ * order is preserved. Pure — the input is never mutated.
+ */
+function canonicalSortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalSortKeys);
+  }
+  if (typeof value === "object" && value !== null) {
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    const out: Record<string, unknown> = Object.create(null);
+    for (const k of keys) {
+      out[k] = canonicalSortKeys(obj[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Compute a stable SHA-256 digest of an arbitrary JSON-compatible value using
+ * canonical (key-order-independent) JSON serialisation. Matches the contract of
+ * `evolutionDigest` in the improvement module.
+ */
+export function extensionManifestDigest(value: unknown): string {
+  const canonical = canonicalSortKeys(value);
+  const json = JSON.stringify(canonical);
+  return `sha256:${createHash("sha256").update(json).digest("hex")}`;
+}
+
+function freezeJson<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const child of Object.values(value)) freezeJson(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -330,6 +432,10 @@ interface LiveRegistration {
   record: SelfExtensionRecord;
   readonly tools: readonly RegisteredExtensionTool[];
   readonly guards: readonly ToolGuard[];
+  /** The raw validated manifest object (JSON-safe), captured for snapshot/restore. */
+  readonly manifest: Record<string, unknown>;
+  /** Stable digest of the raw manifest at registration time. */
+  readonly digest: string;
   revoked: boolean;
 }
 
@@ -535,10 +641,14 @@ export class SelfExtensionRegistry {
       manifestBytes,
     });
 
+    const entryManifest = freezeJson(JSON.parse(JSON.stringify(submission.manifest))) as Record<string, unknown>;
+    const digest = extensionManifestDigest(entryManifest);
     const entry: LiveRegistration = {
       record,
       tools: Object.freeze(tools),
       guards: wrapped,
+      manifest: entryManifest,
+      digest,
       revoked: false,
     };
     this.live.push(entry);
@@ -554,6 +664,7 @@ export class SelfExtensionRegistry {
       tools: audit,
       guardCount: wrapped.length,
       manifestBytes,
+      digest,
     });
 
     const dispose: ExtensionDisposer = () => this.revoke(entry);
@@ -618,6 +729,116 @@ export class SelfExtensionRegistry {
     return Object.freeze([...this.auditLog]);
   }
 
+  // ── snapshot / restore (session persistence) ──
+
+  /**
+   * Produce a JSON-serialisable snapshot of every successful registration.
+   * Guards are not included (functions cannot be serialised); the restore path
+   * re-validates each manifest against current constraints.
+   *
+   * Returns an empty snapshot when the registry is disabled — a disabled
+   * registry cannot have registrations, and persisting `{ enabled: false }`
+   * would mislead a restore into assuming there was nothing to restore.
+   */
+  snapshot(): SelfExtensionSnapshot {
+    return Object.freeze({
+      enabled: this.enabled,
+      seq: this.seq,
+      reservedAtSnapshot: Object.freeze([...this.reserved]),
+      registrations: Object.freeze(
+        this.live
+          .filter((r) => !r.revoked)
+          .map((r) =>
+            Object.freeze({
+              registrationId: r.record.registrationId,
+              pluginId: r.record.pluginId,
+              manifest: r.manifest,
+              origin: r.record.origin,
+              registeredAt: r.record.registeredAt,
+              guardCount: r.record.guardCount,
+              manifestBytes: r.record.manifestBytes,
+              digest: r.digest,
+            }),
+          ),
+      ),
+    });
+  }
+
+  /**
+   * Restore previously-snapped registrations into a FRESH (empty) registry.
+   *
+   * Every manifest is re-validated against the current `enabled` flag, reserved
+   * tool names, guard floor, and limits. If any registration would violate
+   * current constraints the entire restore is rejected — never silently partial.
+   *
+   * Requirements:
+   *   - The registry MUST be empty (no live registrations). Calling restore on
+   *     a registry that already has registrations throws.
+   *   - The snapshot's `enabled` must match the registry's `enabled`, and the
+   *     snapshot's `reservedAtSnapshot` must be a subset of the current reserved
+   *     names (the toolset may have grown but never shrunk in a way that would
+   *     admit a collision the original did not guard against).
+   *
+   * Function-valued contributed guards cannot be reconstructed. Such snapshots
+   * are rejected, never restored with weaker policy.
+   */
+  restore(snapshot: SelfExtensionSnapshot): void {
+    if (!snapshot || !Array.isArray(snapshot.registrations) || !Array.isArray(snapshot.reservedAtSnapshot)
+      || !Number.isSafeInteger(snapshot.seq) || snapshot.seq < 0) {
+      throw new Error("cannot restore invalid self-extension snapshot");
+    }
+    if (snapshot.enabled !== this.enabled) {
+      throw new Error("cannot restore self-extension snapshot: enabled flag mismatch");
+    }
+    if (this.live.length > 0 || this.seq !== 0) {
+      throw new Error("cannot restore self-extension snapshot into a non-empty registry");
+    }
+    const currentReserved = new Set(this.reserved);
+    for (const name of snapshot.reservedAtSnapshot) {
+      if (typeof name !== "string" || !currentReserved.has(name)) {
+        throw new Error("cannot restore self-extension snapshot over a narrower reserved-name baseline");
+      }
+    }
+
+    // Validate in a private registry: failure must expose neither partial tools
+    // nor registration events to the resumed session.
+    let registeredAt = 0;
+    const staged = new SelfExtensionRegistry({
+      enabled: this.enabled,
+      reservedToolNames: this.reserved,
+      baseGuards: this.baseGuards,
+      ...this.limits(),
+      now: () => registeredAt,
+    });
+    for (const reg of snapshot.registrations) {
+      const match = typeof reg?.registrationId === "string" && /^ext-([1-9]\d*)$/.exec(reg.registrationId);
+      const sequence = match ? Number(match[1]) : NaN;
+      if (!Number.isSafeInteger(sequence) || sequence <= staged.seq || sequence > snapshot.seq
+        || !Number.isFinite(reg.registeredAt) || reg.registeredAt < 0
+        || (reg.origin !== "model" && reg.origin !== "operator")) {
+        throw new Error("cannot restore invalid self-extension registration identity");
+      }
+      if (reg.guardCount !== 0) {
+        throw new Error("cannot restore function-valued contributed guards without weakening policy");
+      }
+      if (extensionManifestDigest(reg.manifest) !== reg.digest) {
+        throw new Error("cannot restore self-extension registration: manifest digest mismatch");
+      }
+      staged.seq = sequence - 1;
+      registeredAt = reg.registeredAt;
+      const result = staged.register({ manifest: reg.manifest, origin: reg.origin });
+      if (!result.ok) {
+        throw new Error(`cannot restore self-extension registration: ${result.errors.join("; ")}`);
+      }
+      if (result.record.pluginId !== reg.pluginId || result.record.manifestBytes !== reg.manifestBytes) {
+        throw new Error("cannot restore self-extension registration: manifest metadata mismatch");
+      }
+    }
+    this.live.push(...staged.live);
+    this.seq = snapshot.seq;
+    for (const event of staged.auditLog) this.emit(event);
+  }
+
   // ── internals ──
 
   private liveCount(): number {
@@ -659,6 +880,7 @@ export class SelfExtensionRegistry {
       tools: entry.record.tools,
       guardCount: entry.record.guardCount,
       manifestBytes: entry.record.manifestBytes,
+      digest: entry.digest,
     });
     return true;
   }

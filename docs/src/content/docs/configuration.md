@@ -309,8 +309,9 @@ The static runner uses `foxguard` from `PATH` when provisioned. Otherwise it
 launches `npx --yes foxguard@v0.12.0`, which requires Node/npm and access to the
 package and release download on first use. Native v1 JSON reports and legacy
 finding arrays are accepted. Launch failures, invalid reports, and scanner
-error exits trigger a warning and a Semgrep fallback; exit 1 with a valid
-report means findings were detected.
+error exits are surfaced as failures; the default path does not silently invoke
+Semgrep or report a failed scan as clean. Exit 1 with a valid report means
+findings were detected.
 Scans run from the requested source root, so an explicitly selected installed
 package is not skipped just because an ancestor directory is `node_modules`.
 Finding paths are resolved back to that source root.
@@ -324,6 +325,13 @@ of exploitability.
 ```bash
 env 0SEC_STATIC=semgrep 0sec review ./repo --depth quick
 ```
+
+Semgrep is required only when explicitly selected. Legacy report fields named
+`semgrepFindings` and the `SemgrepFinding` type describe the existing wire shape,
+not a runtime dependency. FoxGuard cross-validation remains opt-in; it does not
+turn scanner agreement into independent exploit verification. The historical
+ablation baseline is still unmeasured, so equal coverage or a speed advantage
+over Semgrep is not established by the integration alone.
 
 ## Stateful authorization and fix verification
 

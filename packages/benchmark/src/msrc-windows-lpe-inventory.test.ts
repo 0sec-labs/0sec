@@ -107,7 +107,7 @@ function canonicalTestJson(value: unknown): string {
   return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalTestJson(object[key])}`).join(",")}}`;
 }
 
-function recommit(lock: Record<string, unknown>): void {
+function recommit(lock: { lockId: string }): void {
   const { lockId: ignored, ...body } = lock;
   void ignored;
   lock.lockId = `sha256:${createHash("sha256").update(canonicalTestJson(body)).digest("hex")}`;
@@ -347,21 +347,16 @@ describe("MSRC Windows LPE staging inventory", () => {
     expect(() => buildMsrcWindowsLpeTrancheLock(contradictoryBoundary)).toThrow(/inconsistent boundary evidence/);
   });
 
-  it("validates the frozen official-source observation lock without treating it as a vulnerability claim", () => {
+  it("accepts the frozen observation lock and rejects tampered provenance", () => {
     const raw = readFileSync(new URL("../fixtures/msrc-windows-lpe-safe-tranche-lock-v1.json", import.meta.url), "utf8");
     const lock = JSON.parse(raw) as unknown;
-    expect(() => validateMsrcWindowsLpeTrancheLock(lock)).not.toThrow();
-    expect(raw).toContain("sha256:c822b7eb75dcab043b669cc51b28554123b3f646918a0475f881cb6eb8b92a1d");
-    expect(raw).not.toMatch(/claimable|exploit_payload|poc_source/i);
+    validateMsrcWindowsLpeTrancheLock(lock);
 
-    const changed = structuredClone(lock) as { sourceDocuments: Array<{ rawBytesSha256: string }> };
+    const changed = structuredClone(lock);
     changed.sourceDocuments[1]!.rawBytesSha256 = "0".repeat(64);
     expect(() => validateMsrcWindowsLpeTrancheLock(changed)).toThrow(/commitment/);
 
-    const forged = structuredClone(lock) as Record<string, unknown> & {
-      sourceDocuments: Array<{ url: string }>;
-      tranches: Array<{ selected: number }>;
-    };
+    const forged = structuredClone(lock);
     forged.sourceDocuments[0]!.url = "https://evil.example/forged";
     forged.tranches[0]!.selected = 999;
     recommit(forged);

@@ -35,7 +35,7 @@
  */
 
 import type { Command } from "commander";
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve, join, sep, relative } from "node:path";
 import type { Finding, RuntimeMode, ScanReport } from "@0sec/shared";
 import type { FinderLens, ThreatLane, VerifyLens } from "@0sec/core";
@@ -43,9 +43,10 @@ import type { FinderLens, ThreatLane, VerifyLens } from "@0sec/core";
 // preparation. That creates a stable lens snapshot for the engagement while
 // allowing the next review in a long-lived CLI process to observe a completed
 // durable-registry promotion.
-import { eventBus, loadAppsecFinderLenses, ScanCostLedger } from "@0sec/core";
+import { eventBus, loadAppsecFinderLenses, ScanCostLedger, captureObservation } from "@0sec/core";
 import { leadToCandidateFinding, type HuntOutcome } from "./hunt.js";
 import { resolveOsecRunStorage, writeOsecRunReport } from "@0sec/db";
+import { createHash, randomUUID } from "node:crypto";
 
 export interface DeepReviewOutcome extends HuntOutcome {
   report?: ScanReport;
@@ -164,6 +165,13 @@ const genericFinderLenses: FinderLens[] = [
       "Hunt CROSS-COMPONENT bugs only: a bug whose exploit path spans two or more subsystems touching DIFFERENT trust boundaries — e.g. an API layer that passes unvalidated user input to a kernel driver, a storage layer whose consistency assumptions are violated by a separate async path, or a UX component whose state bleeds into an auth decision in a sibling module. Trace the path ACROSS the boundary and prove the attacker can reach BOTH sides. Ignore bugs fully contained within a single component.",
   },
 ];
+
+/** Compute the lens set digest for outcome attribution. */
+export function lensSetDigest(lenses: FinderLens[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(lenses.map(({ id, challengeHint }) => ({ id, challengeHint }))))
+    .digest("hex");
+}
 
 /**
  * Build a default-profile finder snapshot. Baked and durable appsec lenses are
@@ -740,9 +748,25 @@ export async function runDeepReview(
         ? selectDefaultFinderLensesForStack(candidatePaths, selectedFinderLenses)
         : selectedFinderLenses;
 
+    const lensDigest = lensSetDigest(finderLenses);
+    const scanId = randomUUID();
+    let sourceRevisionDigest: string | null = null;
+    let sourceFingerprintWarning: string | undefined;
+    try {
+      const files = [...candidatePaths].sort().map((path) => ({
+        path: relative(sourceRoot, path),
+        digest: createHash("sha256").update(readFileSync(path)).digest("hex"),
+      }));
+      sourceRevisionDigest = `sha256:${createHash("sha256").update(JSON.stringify(files)).digest("hex")}`;
+    } catch (error) {
+      sourceFingerprintWarning = `learning feedback skipped: reviewed inputs could not be fingerprinted (${error instanceof Error ? error.message : String(error)})`;
+      log(`[deep-review] ${sourceFingerprintWarning}`);
+    }
+
     log(
       `[deep-review] ${candidatePaths.length} candidate file(s) (of ${totalFiles}${overCap ? "+" : ""}) ` +
-        `× ${finderLenses.length} finder-lens(es); verify quorum over ${verifyLenses.length} lens(es); profile=${matchedProfile}`,
+        `× ${finderLenses.length} finder-lens(es); verify quorum over ${verifyLenses.length} lens(es); profile=${matchedProfile}; ` +
+        `lens-snapshot=${lensDigest.slice(0, 12)}`,
     );
 
     const verify = makeMultiLensVerifier(verifyLenses, {
@@ -797,6 +821,41 @@ export async function runDeepReview(
 
     const leads = res.confirmed;
 
+    // A dropped lead is not a confirmed miss. Retain coverage metadata only;
+    // independent fixtures and explicit consent are required before learning.
+    if (sourceFingerprintWarning) res.warnings.push(sourceFingerprintWarning);
+    if (sourceRevisionDigest) {
+      try {
+        for (const gap of res.incompleteCoverage ?? []) {
+          captureObservation({
+            classHint: gap.lensId || "generic-finder-timeout", sinkPattern: "",
+            exampleFileLine: gap.file,
+            whyMissed: `finder ${gap.reason}; budget ${gap.budgetMs}ms`,
+            source: "incomplete-coverage", scanId, sourceRevisionDigest, consent: false,
+            detectorLensId: gap.lensId || undefined,
+            detectorLensVersionDigest: gap.lensVersionDigest,
+          });
+        }
+        // Only unadjudicated coverage failures qualify as learning observations;
+        // refuted findings (verify_refuted) and novelty duplicates are NOT coverage gaps.
+        for (const dropped of res.dropped ?? []) {
+          if (dropped.dropReason === "verify_refuted" || dropped.dropReason === "novelty_duplicate"
+            || dropped.dropReason === "judge_truncation" || dropped.dropReason === "late_resolution") continue;
+          captureObservation({
+            classHint: dropped.lensId || "unknown-lens", sinkPattern: "",
+            exampleFileLine: dropped.candidatePath, whyMissed: `dropped: ${dropped.dropReason}`,
+            source: "incomplete-coverage", scanId, sourceRevisionDigest, consent: false,
+            detectorLensId: dropped.lensId || undefined,
+            detectorLensVersionDigest: dropped.lensVersionDigest,
+          });
+        }
+      } catch (error) {
+        const warning = `learning feedback was not persisted: ${error instanceof Error ? error.message : String(error)}`;
+        res.warnings.push(warning);
+        log(`[deep-review] ${warning}`);
+      }
+    }
+
     // Safety net: post any confirmed lead the incremental hook didn't already
     // stream (deduped by id via postLead). In the normal path onConfirmed has
     // already posted every confirmed lead, so this is a no-op — it only covers
@@ -837,6 +896,9 @@ export async function runDeepReview(
         result: {
           mode: "deep_review",
           profile: matchedProfile,
+          scan_id: scanId,
+          source_revision_digest: sourceRevisionDigest,
+          lens_snapshot_digest: lensDigest,
           source: sourceRoot,
           subsystem: opts.subsystem ?? null,
           scope_files: totalFiles,
@@ -889,9 +951,12 @@ export async function runDeepReview(
       result: {
         mode: "deep_review",
         profile: matchedProfile,
+        scan_id: scanId,
+        source_revision_digest: sourceRevisionDigest,
         source: sourceRoot,
         subsystem: opts.subsystem ?? null,
         scope_files: totalFiles,
+        lens_snapshot_digest: lensDigest,
         candidates: candidatePaths.length,
         finder_lenses: finderLenses.map((l) => l.id),
         verify_lenses: verifyLenses.map((l) => l.id),

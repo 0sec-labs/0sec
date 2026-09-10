@@ -50,4 +50,5 @@ export { registerAgentAssureCommand } from "./agent-assure.js";
 export { registerBinaryCommand } from "./binary.js";
 export { registerPluginCommand } from "./plugin.js";
 export { registerThemeCommand } from "./theme.js";
+export { registerEvolveCommand } from "./evolve.js";
 export { registerConfigCommand } from "./config.js";

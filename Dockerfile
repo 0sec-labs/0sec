@@ -151,6 +151,10 @@ RUN set -eux; \
     chmod +x /usr/local/bin/azurehound; \
     rm -f /tmp/azurehound.zip
 
+# Provision the checksum-pinned scanner without a runtime Node/npm download.
+COPY scripts/provision-foxguard.sh /tmp/provision-foxguard.sh
+RUN sh /tmp/provision-foxguard.sh && rm /tmp/provision-foxguard.sh
+
 WORKDIR /app
 
 # Copy the bundled CLI + its production node_modules from the builder

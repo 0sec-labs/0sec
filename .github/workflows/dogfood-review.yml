@@ -42,6 +42,12 @@ jobs:
           fetch-depth: 2
       - name: Bootstrap runner
         run: bash "$GITHUB_WORKSPACE/scripts/ci-runner-bootstrap.sh"
+      - name: Provision FoxGuard binary
+        env:
+          INSTALL_DIR: ${{ runner.temp }}/0sec-tools/bin
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/provision-foxguard.sh"
+          echo "$INSTALL_DIR" >> "$GITHUB_PATH"
       - name: Require dogfood credential
         env:
           OPENAI_API_KEY: ${{ secrets.DOGFOOD_OPENAI_API_KEY }}

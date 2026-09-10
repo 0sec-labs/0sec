@@ -3,18 +3,31 @@
  * an injected fake model + fake probe (no LLM, no finder), proving the manual
  * entry point wires miss-capture → synthesize → validate → register, defaults
  * to no write, and validates the miss-input shape.
+ *
+ * All fixture paths reference real temp files with proper identity metadata
+ * (expectedCwe, expectedFile, expectedLine, cleanProvenance) matching the
+ * validateCandidateLens contract.
  */
 
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { LensProbe, LensSynthesisModel } from "@0sec/core";
+import { canonicalEvolutionJson } from "@0sec/core";
+import type { FinderLens, NativeRuntimeResult, LensBaselineSnapshot, LensProbe, LensProbeOutcome, LensSynthesisModel, ValidationFixture } from "@0sec/core";
 import {
   parseMissInputFile,
   runLensSynthCommand,
   watchLensSynthCommand,
 } from "../lens-synth.js";
+
+const hashBytes = (bytes: Buffer): string => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+const jsonCopy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const digestFn = (value: unknown): string => hashBytes(Buffer.from(canonicalEvolutionJson(jsonCopy(value))));
+
+const CLI_BASELINE_LENSES: FinderLens[] = [{ id: "seed", challengeHint: "h" }];
+const CLI_BASELINE_SNAPSHOT: LensBaselineSnapshot = { lenses: structuredClone(CLI_BASELINE_LENSES), digest: digestFn(CLI_BASELINE_LENSES) };
 
 const GOOD_CONTENT = {
   id: "ssrf-url-fetch",
@@ -34,21 +47,47 @@ const toolModel: LensSynthesisModel = async () =>
     content: [{ type: "tool_use", id: "t", name: "propose_appsec_lens", input: GOOD_CONTENT }],
     stopReason: "tool_use",
     durationMs: 1,
-  }) as Awaited<ReturnType<LensSynthesisModel>>;
+  }) as NativeRuntimeResult;
 
 // Challenger catches the positive; baseline + all negatives stay clean.
-const cleanProbe: LensProbe = async (candidateLens, fixture) => ({
-  surfaced: candidateLens !== null && fixture.id === "pos",
-});
+// Returns findings matching the fixture's expected identity.
+const cleanProbe: LensProbe = Object.assign(
+  async (candidateLens: FinderLens | null, fixture: ValidationFixture): Promise<LensProbeOutcome> => {
+    if (!candidateLens) return { surfaced: false, findings: [], costUsd: 0, durationMs: 5 };
+    const isPosMatch = fixture.id === "pos" || fixture.id === "ho";
+    if (isPosMatch) {
+      return {
+        surfaced: true,
+        findings: [{
+          cwe: fixture.expectedCwe ?? "CWE-918",
+          file: fixture.expectedFile ?? fixture.path,
+          line: fixture.expectedLine ?? 2,
+          lensId: candidateLens.id,
+        }],
+        costUsd: 0.01,
+        durationMs: 10,
+      };
+    }
+    return { surfaced: false, findings: [], costUsd: 0, durationMs: 5 };
+  },
+  { baselineSnapshot: () => structuredClone(CLI_BASELINE_SNAPSHOT) },
+);
 
 let tmpDir: string;
 let registryPath: string;
 let missInputPath: string;
+let fixtureDir: string;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "lens-cli-"));
   registryPath = join(tmpDir, "registry.json");
   missInputPath = join(tmpDir, "miss-input.json");
+  fixtureDir = join(tmpDir, "fixtures");
+  mkdirSync(fixtureDir, { recursive: true });
+  writeFileSync(join(fixtureDir, "app.py"), "import requests\nrequests.get(user_input)\n", "utf8");
+  writeFileSync(join(fixtureDir, "api.py"), "import urllib.request\nurllib.request.urlopen(user_url)\n", "utf8");
+  writeFileSync(join(fixtureDir, "safe.py"), 'print("hello")\n', "utf8");
+
   writeFileSync(
     registryPath,
     `${JSON.stringify(
@@ -71,7 +110,27 @@ beforeEach(() => {
     missInputPath,
     JSON.stringify({
       misses: { confirmedMisses: [{ classHint: "SSRF (CWE-918)", sinkPattern: "requests.get(u)", file: "app.py", line: 7, whyMissed: "gap" }] },
-      corpus: { positives: [{ id: "pos", path: "/x/pos" }], negativeControls: [{ id: "n1", path: "/x/n1" }] },
+      corpus: {
+        positives: [{
+          id: "pos",
+          path: join(fixtureDir, "app.py"),
+          expectedCwe: "CWE-918",
+          expectedFile: join(fixtureDir, "app.py"),
+          expectedLine: 2,
+        }],
+        negativeControls: [{
+          id: "n1",
+          path: join(fixtureDir, "safe.py"),
+          cleanProvenance: "manual-review:clean",
+        }],
+        heldOut: [{
+          id: "ho",
+          path: join(fixtureDir, "api.py"),
+          expectedCwe: "CWE-918",
+          expectedFile: join(fixtureDir, "api.py"),
+          expectedLine: 2,
+        }],
+      },
     }),
     "utf8",
   );
@@ -80,6 +139,7 @@ beforeEach(() => {
 afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
 function registry(): { archetypes: Array<Record<string, unknown>> } {
+  const { readFileSync } = require("node:fs");
   return JSON.parse(readFileSync(registryPath, "utf8"));
 }
 
@@ -136,8 +196,25 @@ describe("watchLensSynthCommand", () => {
                   }],
                 },
                 corpus: {
-                  positives: [{ id: "pos", path: "/x/pos" }],
-                  negativeControls: [{ id: "n1", path: "/x/n1" }],
+                  positives: [{
+                    id: "pos",
+                    path: join(fixtureDir, "app.py"),
+                    expectedCwe: "CWE-918",
+                    expectedFile: join(fixtureDir, "app.py"),
+                    expectedLine: 2,
+                  }],
+                  negativeControls: [{
+                    id: "n1",
+                    path: join(fixtureDir, "safe.py"),
+                    cleanProvenance: "manual-review:clean",
+                  }],
+                  heldOut: [{
+                    id: "ho",
+                    path: join(fixtureDir, "api.py"),
+                    expectedCwe: "CWE-918",
+                    expectedFile: join(fixtureDir, "api.py"),
+                    expectedLine: 2,
+                  }],
                 },
               }),
               "utf8",
@@ -156,15 +233,17 @@ describe("watchLensSynthCommand", () => {
 
 describe("parseMissInputFile", () => {
   it("rejects a miss-input with no positive fixtures (fail-closed)", () => {
-    expect(() => parseMissInputFile({ misses: {}, corpus: { positives: [] } })).toThrow(/at least one fixture/);
+    expect(() => parseMissInputFile({
+      misses: {},
+      corpus: { positives: [], negativeControls: [{ id: "n", path: "/n" }] },
+    })).toThrow(/at least one fixture/);
   });
 
-  it("normalizes a valid miss-input", () => {
-    const input = parseMissInputFile({
-      misses: { confirmedMisses: [{ classHint: "x", sinkPattern: "y", file: "f", whyMissed: "w" }] },
-      corpus: { positives: [{ id: "p", path: "/p" }], negativeControls: [{ id: "n", path: "/n" }] },
-    });
-    expect(input.corpus.positives).toHaveLength(1);
-    expect(input.corpus.negativeControls).toHaveLength(1);
+  it("rejects a miss-input with no negative controls (fail-closed)", () => {
+    expect(() => parseMissInputFile({
+      misses: {},
+      corpus: { positives: [{ id: "p", path: "/p" }], negativeControls: [] },
+    })).toThrow(/FP regression/);
   });
+
 });

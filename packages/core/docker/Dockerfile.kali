@@ -59,6 +59,10 @@ RUN apt-get update -qq && \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
+# Use the same checksum-pinned scanner provisioner as the CLI image and CI.
+COPY scripts/provision-foxguard.sh /tmp/provision-foxguard.sh
+RUN sh /tmp/provision-foxguard.sh && rm /tmp/provision-foxguard.sh
+
 # Create a non-root user for running pentesting commands
 RUN useradd -m -s /bin/bash pentester \
     && mkdir -p /shared /work \

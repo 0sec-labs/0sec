@@ -53,9 +53,13 @@ Usage:
     # validate a candidate YAML with the runtime loader and exit
     python3 skill_refine_loop.py --check-skill path/to/candidate.yaml
 
-    # gated promotion (operator-driven): flag must hold + load-check must pass
+    # gated promotion (operator-driven): flag must hold + load-check + evolution
+    # registry proof (--evolution-store, --evolution-version, --evolution-artifact)
     python3 skill_refine_loop.py --dataset ... \
-        --candidate-yaml refined.yaml --operator alice --promote
+        --candidate-yaml refined.yaml --operator alice --promote \
+        --evolution-store /path/to/evolution-store \
+        --evolution-version <uuid> \
+        --evolution-artifact agent/skills/vulnerabilities/foo.yaml
 
     # run the built-in fixtures (no pytest needed); exits non-zero on failure
     python3 skill_refine_loop.py --selftest
@@ -87,6 +91,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from artifact_install import install_authorized_artifact
 
 HERE = Path(__file__).resolve().parent
 # scripts/train -> scripts -> benchmark
@@ -468,9 +473,16 @@ def run_analysis(args) -> int:
     return 0
 
 
+
+
 def _gate_promotion(args, entries: list[dict], now: str) -> list[dict]:
     """Gate an operator-supplied refined YAML. Never autonomous: the skill must
-    already be flagged AND the candidate must pass the runtime load-check."""
+    already be flagged AND the candidate must pass the runtime load-check AND
+    evolution registry authorization must be provided.
+
+    When --promote is passed, --evolution-store, --evolution-version, and
+    --evolution-artifact are MANDATORY. Without them the script exits with
+    actionable instructions to use the `0sec evolve` workflow."""
     cand = args.candidate_yaml
     ok, msg = load_check(cand, args.core_dist)
     # Resolve which skill this refines: explicit flag or the YAML's id line.
@@ -520,7 +532,27 @@ def _gate_promotion(args, entries: list[dict], now: str) -> list[dict]:
         base["reason"] = "missing_operator_signoff"
         return [base]
 
-    # Real promotion: write the validated candidate into the destination.
+    # Evolution registry authorization is MANDATORY with --promote.  Without
+    # it a load-check-only approval would bypass behavior evaluation.
+    if not args.evolution_store or not args.evolution_version or not args.evolution_artifact:
+        print(
+            "\n[promote] --promote requires --evolution-store, --evolution-version and\n"
+            "  --evolution-artifact to verify the candidate's artifact identity against\n"
+            "  the evolution registry.  A load-check alone is insufficient proof of\n"
+            "  evaluated behavior.\n\n"
+            "  To promote through the 0sec evolution lifecycle, run:\n"
+            "    0sec evolve promote <store-path> <version-id>\n\n"
+            "  Or use the standalone tool with a valid evaluated version:\n"
+            "    node scripts/train/artifact-bridge.mjs authorize …\n",
+            file=sys.stderr,
+        )
+        base["decision"] = DECISION_SKIPPED
+        base["reason"] = "missing_evolution_proof"
+        return [base]
+
+    # Real promotion: run evolution authorization, then write the validated
+    # candidate YAML into the destination — ONLY if the artifact bytes
+    # match the evaluated snapshot in the evolution registry.
     dest = args.promote_dest
     if dest is None:
         print(
@@ -531,11 +563,18 @@ def _gate_promotion(args, entries: list[dict], now: str) -> list[dict]:
         base["decision"] = DECISION_SKIPPED
         base["reason"] = "missing_promote_dest"
         return [base]
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(cand.read_text())
-    print(f"\n[promote] PROMOTED — validated candidate written to {dest}")
+
+    file_digest = install_authorized_artifact(
+        args.evolution_store, args.evolution_version, cand,
+        args.evolution_artifact, "skill", dest,
+    )
+    print(f"\n[promote] PROMOTED — validated + authorized candidate written to {dest}")
+    print(f"         digest={file_digest}  version={args.evolution_version}")
     base["decision"] = DECISION_PROMOTED
     base["promoted_to"] = str(dest)
+    base["evolution_version"] = args.evolution_version
+    base["evolution_artifact"] = args.evolution_artifact
+    base["artifact_digest"] = file_digest
     return [base]
 
 
@@ -585,10 +624,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Validate a single YAML via the runtime loader and exit.",
     )
+    # Evolution registry proof (MANDATORY with --promote)
+    ap.add_argument(
+        "--evolution-store",
+        type=Path,
+        help="Path to the evolution store directory (required with --promote).",
+    )
+    ap.add_argument(
+        "--evolution-version",
+        help="Evolution registry version ID that authorized this artifact (required with --promote).",
+    )
+    ap.add_argument(
+        "--evolution-artifact",
+        help="Relative artifact path within the version's snapshot (e.g. "
+        "agent/skills/vulnerabilities/foo.yaml) (required with --promote).",
+    )
     promote_group = ap.add_mutually_exclusive_group()
     promote_group.add_argument(
         "--promote", dest="promote", action="store_true",
-        help="Allow writing a validated candidate YAML (default: dry-run).",
+        help="Allow writing a validated + evolution-authorized candidate YAML (default: dry-run).",
     )
     promote_group.add_argument(
         "--dry-run", dest="promote", action="store_false",

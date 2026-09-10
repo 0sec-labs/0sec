@@ -17,7 +17,7 @@ export {
   SYNTH_TOOL_NAME,
 } from "./synthesize.js";
 export type { LensSynthesisModel, LensCandidateCluster, SynthesizeOptions } from "./synthesize.js";
-export { validateCandidateLens, makeFinderLensProbe } from "./validate.js";
+export { validateCandidateLens, makeFinderLensProbe, prepareValidationCorpus } from "./validate.js";
 export type { FinderLensProbeOptions, ValidateOptions } from "./validate.js";
 export {
   registerArchetype,
@@ -30,6 +30,32 @@ export type {
   RegisterOutcome,
   RetireOutcome,
 } from "./register.js";
+export {
+  captureObservation,
+  listObservations,
+  approveObservation,
+  rejectObservation,
+  observationQueueSummary,
+  claimForProcessing,
+  markProcessed,
+  getObservation,
+  observationDigest,
+  releaseClaim,
+  parseObservationInput,
+  parseApprovedObservationShape,
+} from "./feedback.js";
+export type {
+  LearningObservation,
+  ObservationStatus,
+  ObservationSource,
+  ObservationFilter,
+  CaptureObservationInput,
+  ApprovedObservationShape,
+  EvidenceRef,
+  ObservationQueueSummary,
+  ObservationQueueOptions,
+  ClaimedApprovedObservation,
+} from "./feedback.js";
 export { runLensSynthesisLoop } from "./loop.js";
 export type {
   LensCandidate,
@@ -40,8 +66,13 @@ export type {
   SynthesizedArchetypeContent,
   ValidationFixture,
   ValidationCorpus,
+  PreparedValidationCorpus,
+  LensBaselineSnapshot,
   LensProbe,
+  LensProbeFinding,
   LensProbeOutcome,
+  LensTrialSummary,
+  LensValidationReceipt,
   LensValidationReport,
   LensScorecardSummary,
   RegisteredLens,

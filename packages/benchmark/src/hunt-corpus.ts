@@ -47,6 +47,8 @@ export interface HuntSample {
   pattern?: string;
   fixReference?: string;
   model: string;
+  lensId?: string;
+  lensVersionDigest?: string;
   attempt: number;
   judgeScore?: number;
   judgeReason?: string;
@@ -65,6 +67,8 @@ export function resultToHuntSample(record: HuntFindingRecord, brief?: HuntBrief)
     ...(brief?.pattern ? { pattern: brief.pattern } : {}),
     ...(brief?.fixReference ? { fixReference: brief.fixReference } : {}),
     model: record.model ?? "default",
+    ...(record.lensId ? { lensId: record.lensId } : {}),
+    ...(record.lensVersionDigest ? { lensVersionDigest: record.lensVersionDigest } : {}),
     attempt: record.attempt,
     ...(record.judgeScore !== undefined ? { judgeScore: record.judgeScore } : {}),
     ...(record.judgeReason !== undefined ? { judgeReason: record.judgeReason } : {}),

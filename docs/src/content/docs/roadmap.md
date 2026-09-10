@@ -92,6 +92,28 @@ Trust-track implications:
 See [TypeScript/Rust Boundary](/research/typescript-rust-boundary/) and
 [Foxguard ablation baseline](/research/foxguard-ablation/2026-05-22-baseline/).
 
+## Implemented, pending release
+
+- **Isolated improvement workers and promotion canaries.** The `0sec evolve`
+  CLI provides config-driven source candidate
+  proposals with explicit `allowModelSourceAccess` consent, three-lane
+  evaluation (development/held-out/negative-control) in network-none Docker
+  containers, content-addressed immutable snapshots, pure-function promotion
+  gates, canary trials, rollback, and hash-chained registries with atomic
+  artifact publication. Config replaces the previous blanket "no automatic
+  source-code promotion" with configured autonomy (`autoPromote`). Executed as
+  sandboxed versioned workers — never live in-process self-patching. See
+  [Improvement Plane](/improvement-plane/).
+- **Operational feedback curation.** `0sec evolve feedback capture/approve/status/release`
+  for evidence-backed observations with operator-curated `ValidationFixture`
+  arrays (positives, heldOut, negativeControls), source access consent, and
+  content-digest drift detection.
+- **Skill/router artifact bridge.** `artifact-bridge.mjs` authorizes candidate
+  artifacts against the evolution registry before skill-refine or active-learning
+  loops may promote them.
+- `0sec lens-synth --status` and `--rollback` for inspecting and retiring
+  promoted overlay lenses.
+
 ## Recently shipped (April 2026)
 
 - **Retained artifact-backed XBOW aggregate at 103/104.** Only XBEN-030 remains
@@ -238,16 +260,6 @@ alerts; "what changed since last green run."
 
 Remote queue workers; large campaign execution; shared artifact store; eventually
 a hosted control plane if adoption justifies it.
-
-### 12. Isolated improvement workers and promotion canaries
-
-The improvement plane must create a new immutable worker version, never rewrite a
-target-facing worker during an engagement: sealed development/held-out/
-negative-control lanes; candidate, evaluator, CI, artifact, and evidence digests
-bound into a promotion decision; disposable candidate workers with no engagement
-credentials or production egress; source candidates held for human approval;
-signed policy-bundle canaries, rollback, and retained decision ledgers before any
-automated policy promotion. See [Improvement Plane](/improvement-plane/).
 
 ## Non-goals right now
 

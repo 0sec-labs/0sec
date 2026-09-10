@@ -117,6 +117,8 @@ export interface FinderLens {
   id: string;
   /** The focused hunt angle, appended to the brief/candidate finder hint. */
   challengeHint: string;
+  /** Content-addressed registry version, retained with every attributable outcome. */
+  versionDigest?: string;
 }
 
 /**
@@ -300,7 +302,7 @@ export interface HuntScanOptions {
    */
   onLateFinderResult?: (
     finding: Finding,
-    ctx: { candidate: HuntCandidate; lensId: string; model?: string },
+    ctx: { candidate: HuntCandidate; lensId: string; lensVersionDigest?: string; model?: string },
   ) => void | Promise<void>;
   log?: (msg: string) => void;
 }
@@ -316,6 +318,9 @@ export interface HuntFindingRecord {
   candidatePath: string;
   /** The finder model that produced it (undefined → provider default). */
   model?: string;
+  /** Captured finder lens and exact registry version; absent on legacy records. */
+  lensId?: string;
+  lensVersionDigest?: string;
   /** Which attempt (0-indexed) at this (candidate, model) pair produced it. */
   attempt: number;
   /** The full finding, including `evidence.request/response/analysis`. */
@@ -355,6 +360,7 @@ export interface CoverageGap {
   file: string;
   /** Specialized-lens id for this cell ("" for the default sentinel lens). */
   lensId: string;
+  lensVersionDigest?: string;
   /** Why the cell is incomplete. Currently only the finder wall-clock timeout. */
   reason: "timeout";
   /** The per-finder wall-clock budget (ms) that was exceeded (see huntFinderTimeoutMs). */
@@ -375,6 +381,7 @@ export interface HuntDroppedFinding {
   candidatePath: string;
   /** The lens id that produced this finding. */
   lensId: string;
+  lensVersionDigest?: string;
   /** Why the finding did NOT reach `confirmed`. */
   dropReason:
     | "finder_timeout"
@@ -1235,7 +1242,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // resolve afterwards. Its findings are recorded here (and flushed via
   // opts.onLateFinderResult) instead of vanishing. Mutated from fire-and-
   // forget continuations; reads happen single-threaded after the verify gate.
-  const lateArrivals: Array<{ finding: Finding; candidatePath: string; lensId: string }> = [];
+  const lateArrivals: Array<{ finding: Finding; candidatePath: string; lensId: string; lensVersionDigest?: string }> = [];
 
   // Memory-flywheel priming (0SEC_HUNT_FLYWHEEL=1, hunt-flywheel.ts): OFF by
   // default (`priming` stays `null`, every use below is a no-op and the run
@@ -1265,7 +1272,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // challengeHint is "" (huntHint appends nothing), so the loop order, run
   // count, finder hint, and group keys below are all byte-identical to today.
   const lenses: FinderLens[] =
-    opts.lenses && opts.lenses.length > 0 ? opts.lenses : [{ id: "", challengeHint: "" }];
+    opts.lenses && opts.lenses.length > 0 ? structuredClone(opts.lenses) : [{ id: "", challengeHint: "" }];
 
   // (candidate × model × lens × attempt) finder runs — the parallel coverage
   // sweep. With the sentinel lens (default), the loop reduces to the original
@@ -1294,6 +1301,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   const effectiveConcurrency = costCeilingEnabled ? 1 : aimd ?? concurrency;
 
   const reports = await pool(runs, effectiveConcurrency, async (run) => {
+    const version = run.lens.versionDigest ? { lensVersionDigest: run.lens.versionDigest } : {};
     if (costCeilingReached()) {
       return {
         candidate: run.candidate,
@@ -1366,7 +1374,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       warnings.push(
         `hunt: finder timed out on ${run.candidate.path} after ${finderTimeoutMs}ms — abandoned${recovered}`,
       );
-      coverageGaps.push({ file: run.candidate.path, lensId: run.lens.id, reason: "timeout", budgetMs: finderTimeoutMs });
+      coverageGaps.push({ file: run.candidate.path, lensId: run.lens.id, ...version, reason: "timeout", budgetMs: finderTimeoutMs });
       // Late-resolution flush: the abandoned call may still finish after we've
       // recorded the cell as timed-out. Harvest whatever it eventually produces
       // — surfaced via opts.onLateFinderResult (cloud sink) and, if it lands
@@ -1378,8 +1386,8 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           (lateReport) => {
             const lateFindings = lateReport?.findings ?? [];
             for (const late of lateFindings) {
-              lateArrivals.push({ finding: late, candidatePath: run.candidate.path, lensId: run.lens.id });
-              void opts.onLateFinderResult?.(late, { candidate: run.candidate, lensId: run.lens.id, model: run.model });
+              lateArrivals.push({ finding: late, candidatePath: run.candidate.path, lensId: run.lens.id, ...version });
+              void opts.onLateFinderResult?.(late, { candidate: run.candidate, lensId: run.lens.id, ...version, model: run.model });
             }
           },
           () => { /* a late rejection carries no recoverable findings */ },
@@ -1395,6 +1403,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       candidate: run.candidate,
       model: run.model,
       lensId: run.lens.id,
+      ...version,
       attempt: run.attempt,
       status: outcome.status,
       findings,
@@ -1423,9 +1432,9 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // siteGroupKey. Without this, refine deepening two DISTINCT findings to the
   // SAME path collapses them into one group, and the no-brief truncation to
   // `judgeTopK` then silently drops the confirmed extra.
-  const all: Array<{ finding: Finding; candidate: HuntCandidate; originPath: string; model?: string; lensId: string; attempt: number }> = [];
+  const all: Array<{ finding: Finding; candidate: HuntCandidate; originPath: string; model?: string; lensId: string; lensVersionDigest?: string; attempt: number }> = [];
   for (const r of reports)
-    if (r && r.status !== "skipped") for (const finding of r.findings) all.push({ finding, candidate: r.candidate, originPath: r.candidate.path, model: r.model, lensId: r.lensId, attempt: r.attempt });
+    if (r && r.status !== "skipped") for (const finding of r.findings) all.push({ finding, candidate: r.candidate, originPath: r.candidate.path, model: r.model, lensId: r.lensId, ...(r.lensVersionDigest ? { lensVersionDigest: r.lensVersionDigest } : {}), attempt: r.attempt });
   log(`[hunt] finders surfaced ${all.length} candidate finding(s)`);
   if (costCeilingReached()) {
     warnings.push(`hunt: shared $${costCeilingUsd!.toFixed(2)} cost ceiling reached; skipping judge and verification`);
@@ -1443,6 +1452,8 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       records: all.map((entry) => ({
         candidatePath: entry.candidate.path,
         model: entry.model,
+        ...(entry.lensId ? { lensId: entry.lensId } : {}),
+        ...(entry.lensVersionDigest ? { lensVersionDigest: entry.lensVersionDigest } : {}),
         attempt: entry.attempt,
         finding: entry.finding,
         duplicate: false,
@@ -1476,7 +1487,8 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   const records = new Map<string, HuntFindingRecord>(
     all.map((a) => [
       a.finding.id,
-      { candidatePath: a.candidate.path, model: a.model, attempt: a.attempt, finding: a.finding, duplicate: false },
+      { candidatePath: a.candidate.path, model: a.model, attempt: a.attempt, finding: a.finding, duplicate: false,
+        ...(a.lensId ? { lensId: a.lensId } : {}), ...(a.lensVersionDigest ? { lensVersionDigest: a.lensVersionDigest } : {}) },
     ]),
   );
 
@@ -1703,6 +1715,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         finding: item.finding,
         candidatePath: item.candidate.path,
         lensId: item.lensId,
+        ...(item.lensVersionDigest ? { lensVersionDigest: item.lensVersionDigest } : {}),
         dropReason: "novelty_duplicate",
         detail: dupe
           ? `duplicate of ${dupe.novelty.duplicates.map((d) => d.messageId).join(", ")}`
@@ -1719,6 +1732,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           finding: item.finding,
           candidatePath: record.candidatePath,
           lensId: item.lensId,
+          ...(item.lensVersionDigest ? { lensVersionDigest: item.lensVersionDigest } : {}),
           dropReason: isRefuted ? "verify_refuted" : "verify_below_quorum",
           detail: record.skepticReason ?? "verify gate did not confirm",
         });
@@ -1728,6 +1742,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           finding: item.finding,
           candidatePath: record?.candidatePath ?? item.candidate.path,
           lensId: item.lensId,
+          ...(item.lensVersionDigest ? { lensVersionDigest: item.lensVersionDigest } : {}),
           dropReason: "verify_errored",
           detail: "verify gate threw or returned null",
         });
@@ -1741,6 +1756,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         finding: item.finding,
         candidatePath: item.candidate.path,
         lensId: item.lensId,
+        ...(item.lensVersionDigest ? { lensVersionDigest: item.lensVersionDigest } : {}),
         dropReason: "finder_timeout",
         detail: `partial recovered from timed-out finder (${item.lensId})`,
       });
@@ -1749,6 +1765,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         finding: item.finding,
         candidatePath: item.candidate.path,
         lensId: item.lensId,
+        ...(item.lensVersionDigest ? { lensVersionDigest: item.lensVersionDigest } : {}),
         dropReason: "judge_truncation",
         detail: item.finding.id === record?.candidatePath
           ? `did not reach verify gate (judge truncation for ${item.lensId})`
@@ -1765,6 +1782,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       finding: late.finding,
       candidatePath: late.candidatePath,
       lensId: late.lensId,
+      ...(late.lensVersionDigest ? { lensVersionDigest: late.lensVersionDigest } : {}),
       dropReason: "late_resolution",
       detail: "finder resolved after its timeout budget; not re-run through the verify gate",
     });

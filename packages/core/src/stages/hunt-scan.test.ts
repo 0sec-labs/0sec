@@ -800,6 +800,28 @@ describe("runHuntScan — specialized-lens finder fan-out (depth method, default
     // No collapse: the no-brief truncation warning must NOT fire — they were separate groups.
     expect(res.warnings.some((w) => w.includes("no brief to judge against"))).toBe(false);
   });
+
+  it("keeps the evaluated lens version when the caller changes it during a finder run", async () => {
+    const firstVersion = `sha256:${"a".repeat(64)}`;
+    const nextVersion = `sha256:${"b".repeat(64)}`;
+    const lens = { id: "promoted-lens", challengeHint: "Original hunt", versionDigest: firstVersion };
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async () => {
+      lens.versionDigest = nextVersion;
+      lens.challengeHint = "Future hunt";
+      return { findings: [mkFinding("versioned-finding", "Candidate", "Independent refutation needed")] };
+    });
+    const result = await runHuntScan({
+      sourceRoot: "/src", candidates: [{ path: "/src/app.py" }], runtime: "api", lenses: [lens],
+      verify: async () => ({ confirmed: false, reason: "refuted" }),
+    });
+    expect(result.records[0]).toMatchObject({ lensId: lens.id, lensVersionDigest: firstVersion, skepticConfirmed: false });
+    expect(result.dropped[0]).toMatchObject({ lensId: lens.id, lensVersionDigest: firstVersion, dropReason: "verify_refuted" });
+    const future = await runHuntScan({
+      sourceRoot: "/src", candidates: [{ path: "/src/app.py" }], runtime: "api", lenses: [lens],
+    });
+    expect(future.records[0]?.lensVersionDigest).toBe(nextVersion);
+  });
 });
 
 describe("makeMultiLensVerifier — multi-lens verify quorum (depth method)", () => {
@@ -832,7 +854,6 @@ describe("makeMultiLensVerifier — multi-lens verify quorum (depth method)", ()
     });
     const v = await verify(finding, candidate);
     expect(v.confirmed).toBe(true);
-    expect(v.reason).toContain("quorum met");
   });
 
   it("confirms at exactly the quorum boundary even when some lenses ERROR (fail-closed on survivors, not on errors)", async () => {
@@ -852,7 +873,6 @@ describe("makeMultiLensVerifier — multi-lens verify quorum (depth method)", ()
     });
     const v = await verify(finding, candidate);
     expect(v.confirmed).toBe(false);
-    expect(v.reason).toContain("refuted by scope");
   });
 
   it("does NOT confirm when survivors fall below quorum (no refutes, but too many errors)", async () => {

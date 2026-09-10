@@ -10,17 +10,18 @@
  * malformed overlay, or an unbound hand-edited entry cannot affect a review.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   activeAppsecLensRegistryPath,
   appsecArchetypeDigest,
@@ -30,7 +31,9 @@ import {
   type RawAppsecArchetype,
 } from "../appsec-catalog.js";
 import { isCrossLanguageHint } from "./synthesize.js";
-import type { RegisteredLens, SynthesizedArchetype } from "./types.js";
+import { publishEvolutionArtifact } from "../../improvement/artifacts.js";
+import { canonicalEvolutionJson } from "../../improvement/config.js";
+import type { LensValidationReport, RegisteredLens, SynthesizedArchetype } from "./types.js";
 
 interface RegistryFile extends AppsecLensRegistry {
   archetypes: RawAppsecArchetype[];
@@ -192,6 +195,13 @@ function ensureRegistry(path: string): void {
   }
 }
 
+function withRegistryLock<T>(path: string, operation: () => T): T {
+  const lock = `${path}.lockdir`;
+  mkdirSync(lock, { mode: 0o700 });
+  try { return operation(); }
+  finally { rmdirSync(lock); }
+}
+
 function appendLedgerEntry(
   registry: RegistryFile,
   type: AppsecLensLedgerEntry["type"],
@@ -221,6 +231,8 @@ export interface RegisterOutcome {
   registered?: RegisteredLens;
   /** Hash-chain receipt for the accepted promotion. */
   promotionDigest?: string;
+  /** sha256 digest of the registered lens archetype for consumer propagation. */
+  lensVersionDigest?: string;
   /** Why nothing was written (idempotent skip, or unreachable — errors throw). */
   reason?: string;
 }
@@ -295,39 +307,54 @@ export function inspectLensRegistry(registryPath?: string): LensRegistryStatus {
  */
 export function registerArchetype(
   archetype: SynthesizedArchetype,
-  opts: { registryPath?: string; validatedAt: string },
+  opts: { registryPath?: string; validatedAt: string; validation?: LensValidationReport },
 ): RegisterOutcome {
   const entry = buildRegistryEntry(archetype, opts.validatedAt);
+  if (opts.validation) {
+    const { receipt, passed, lensId } = opts.validation;
+    if (!passed || lensId !== entry.id || !receipt?.passed || receipt.schemaVersion !== 1) {
+      throw new Error("automated lens registration requires its passing validation receipt");
+    }
+    const hash = (value: unknown) => `sha256:${createHash("sha256").update(canonicalEvolutionJson(JSON.parse(JSON.stringify(value)))).digest("hex")}`;
+    const { receiptDigest, ...unsigned } = receipt;
+    if (receiptDigest !== hash(unsigned) || receipt.candidateDigest !== hash(archetype)
+      || receipt.baselineSnapshotDigest !== hash(receipt.baselineLenses) || receipt.fixtureCorpusDigest !== hash(receipt.corpus)
+      || receipt.trials.length < 2 || receipt.heldOutTrials.length !== receipt.trials.length
+      || receipt.rejectionReasons.length > 0) {
+      throw new Error("lens validation receipt is altered, incomplete, or belongs to another candidate");
+    }
+  }
   const path = opts.registryPath ?? activeAppsecLensRegistryPath();
   ensureRegistry(path);
-  const registry = readRegistry(path);
-  if (registry.archetypes.some((existing) => existing.id === entry.id || existing.uid === entry.uid)) {
-    return { written: false, reason: `id '${entry.id}' already present — idempotent skip` };
-  }
-  const promoted = appendLedgerEntry(
-    registry,
-    "promoted",
-    entry.id,
-    appsecArchetypeDigest(entry),
-    opts.validatedAt,
-  );
-  const next: RegistryFile = {
-    schemaVersion: 1,
-    provenance: registry.provenance,
-    archetypes: [...registry.archetypes, entry],
-    ledger: [...registry.ledger, promoted],
-  };
-  writeAtomic(path, serialize(next));
-  return {
-    written: true,
-    promotionDigest: promoted.entryDigest,
-    registered: {
-      id: entry.id,
-      uid: entry.uid,
-      validatedAt: opts.validatedAt,
-      missRefs: [...(entry.miss_refs ?? [])],
-    },
-  };
+  return withRegistryLock(path, () => {
+    const registry = readRegistry(path);
+    if (registry.archetypes.some((existing) => existing.id === entry.id || existing.uid === entry.uid)) {
+      return { written: false, reason: `id '${entry.id}' already present — idempotent skip` };
+    }
+    const versionDigest = appsecArchetypeDigest(entry);
+    if (opts.validation) {
+      publishEvolutionArtifact(
+        resolve(dirname(path), "validation-receipts", `${versionDigest.replace(/^sha256:/, "")}.json`),
+        JSON.parse(JSON.stringify({ schemaVersion: 1, archetype: entry, validation: opts.validation })),
+      );
+    }
+    const promoted = appendLedgerEntry(registry, "promoted", entry.id, versionDigest, opts.validatedAt);
+    writeAtomic(path, serialize({
+      schemaVersion: 1,
+      provenance: registry.provenance,
+      archetypes: [...registry.archetypes, entry],
+      ledger: [...registry.ledger, promoted],
+    }));
+    return {
+      written: true,
+      promotionDigest: promoted.entryDigest,
+      lensVersionDigest: versionDigest,
+      registered: {
+        id: entry.id, uid: entry.uid, validatedAt: opts.validatedAt,
+        missRefs: [...(entry.miss_refs ?? [])], lensVersionDigest: versionDigest,
+      },
+    };
+  });
 }
 
 /**
@@ -339,43 +366,26 @@ export function retireArchetype(
   opts: { registryPath?: string; retiredAt?: string } = {},
 ): RetireOutcome {
   const path = opts.registryPath ?? activeAppsecLensRegistryPath();
-  if (!KEBAB_ID.test(id)) {
-    return { retired: false, id, registryPath: path, reason: "lens id must be kebab-case" };
-  }
-  if (!existsSync(path)) {
-    return { retired: false, id, registryPath: path, reason: "registry does not exist" };
-  }
-  const registry = readRegistry(path);
-  const index = registry.archetypes.findIndex((archetype) => archetype.id === id);
-  if (index < 0) {
-    return { retired: false, id, registryPath: path, reason: "lens is not active in this registry" };
-  }
-  const archetype = registry.archetypes[index]!;
-  if (archetype.source !== "synthesized") {
-    return { retired: false, id, registryPath: path, reason: "only synthesized overlay lenses can be retired" };
-  }
-  const archetypeDigest = appsecArchetypeDigest(archetype);
-  if (activeLedgerEntries(registry.ledger).get(id) !== archetypeDigest) {
-    return { retired: false, id, registryPath: path, reason: "lens is not bound by the promotion ledger" };
-  }
-  const retired = appendLedgerEntry(
-    registry,
-    "retired",
-    id,
-    archetypeDigest,
-    opts.retiredAt ?? new Date().toISOString(),
-  );
-  const next: RegistryFile = {
-    schemaVersion: 1,
-    provenance: registry.provenance,
-    archetypes: registry.archetypes.filter((entry) => entry.id !== id),
-    ledger: [...registry.ledger, retired],
-  };
-  writeAtomic(path, serialize(next));
-  return {
-    retired: true,
-    id,
-    registryPath: path,
-    retirementDigest: retired.entryDigest,
-  };
+  if (!KEBAB_ID.test(id)) return { retired: false, id, registryPath: path, reason: "lens id must be kebab-case" };
+  if (!existsSync(path)) return { retired: false, id, registryPath: path, reason: "registry does not exist" };
+  return withRegistryLock(path, () => {
+    const registry = readRegistry(path);
+    const archetype = registry.archetypes.find((entry) => entry.id === id);
+    if (!archetype) return { retired: false, id, registryPath: path, reason: "lens is not active in this registry" };
+    if (archetype.source !== "synthesized") {
+      return { retired: false, id, registryPath: path, reason: "only synthesized overlay lenses can be retired" };
+    }
+    const versionDigest = appsecArchetypeDigest(archetype);
+    if (activeLedgerEntries(registry.ledger).get(id) !== versionDigest) {
+      return { retired: false, id, registryPath: path, reason: "lens is not bound by the promotion ledger" };
+    }
+    const retired = appendLedgerEntry(registry, "retired", id, versionDigest, opts.retiredAt ?? new Date().toISOString());
+    writeAtomic(path, serialize({
+      schemaVersion: 1,
+      provenance: registry.provenance,
+      archetypes: registry.archetypes.filter((entry) => entry.id !== id),
+      ledger: [...registry.ledger, retired],
+    }));
+    return { retired: true, id, registryPath: path, retirementDigest: retired.entryDigest };
+  });
 }

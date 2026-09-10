@@ -23,7 +23,8 @@
  * ============================================================================
  */
 
-import type { FinderLens } from "../hunt-scan.js";
+import type { Finding } from "@0sec/shared";
+import type { CoverageGap, FinderLens } from "../hunt-scan.js";
 
 // ── Stage 1: miss capture ─────────────────────────────────────────────────
 
@@ -68,9 +69,17 @@ export interface ConfirmedMiss {
 /** The two miss inputs stage 1 ingests. */
 export interface MissInput {
   /** hunt-scan's structured "(file × lens) cell never fully hunted" signal. */
-  incompleteCoverage?: import("../hunt-scan.js").CoverageGap[];
+  incompleteCoverage?: CoverageGap[];
   /** Bugs confirmed real that the finder didn't surface. */
   confirmedMisses?: ConfirmedMiss[];
+  /**
+   * Independently approved feedback candidates, preserving their original
+   * source — NOT a finding confirmation. These are LensCandidates that
+   * passed human or automated review and are ready for synthesis alongside
+   * coverage-gap and confirmed-miss candidates. The source field is
+   * preserved as-is from the originating feedback pipeline.
+   */
+  curatedCandidates?: LensCandidate[];
 }
 
 // ── Stage 2: synthesis ────────────────────────────────────────────────────
@@ -119,19 +128,90 @@ export interface ValidationFixture {
   path: string;
   /** Optional human note (what the fixture exhibits). */
   note?: string;
+  /**
+   * The independent expected CWE code, e.g. "CWE-918". Required for positives.
+   * The host evaluator compares this with reported finding identity;
+   * a probe's own match assertion is not evidence.
+   */
+  expectedCwe?: string;
+  /**
+   * Expected source-root-relative path, or absolute path within the fixture.
+   * A file fixture uses its parent as source root; a directory uses itself.
+   * Required for positives. Comparison preserves the complete relative path.
+   */
+  expectedFile?: string;
+  /** Expected 1-based line where the intended finding should be raised. */
+  expectedLine?: number;
+  /** Inclusive [start, end]; takes precedence over expectedLine when both exist. */
+  expectedRange?: [number, number];
+  /**
+   * sha256 content digest of the fixture at validation time. When set, the
+   * validation compares it against the current file content to detect drift,
+   * rejecting the run on mismatch (fail-closed).
+   */
+  contentDigest?: string;
+  /**
+   * For negative controls: provenance evidence that this fixture was clean
+   * at the time it was added (e.g. a scan receipt, ledger entry, or prior
+   * validation report digest).
+   */
+  cleanProvenance?: string;
 }
 
-/** The validation corpus split. */
+/** The validation corpus split. At least one positive and one negative control are required. */
 export interface ValidationCorpus {
   /** Must-catch fixtures — exhibit the missed bug. At least one is required. */
   positives: ValidationFixture[];
-  /** Must-stay-clean fixtures — the FP-regression guard. */
+  /**
+   * Must-stay-clean fixtures — the FP-regression guard. At least one is
+   * required; an empty array is rejected as fail-closed (without controls
+   * the loop cannot measure FP regression).
+   */
   negativeControls: ValidationFixture[];
+  /**
+   * Held-out positives the candidate must also catch but was not developed
+   * or synthesized against. These are evaluated separately from the
+   * development positives and reported as an additional gate: the candidate
+   * must demonstrate lift on held-out cases to be a champion.
+   */
+  heldOut?: ValidationFixture[];
+  /**
+   * Baseline lens snapshot digest — sha256 of the canonical baseline lens
+   * array at tournament start. The validation re-computes this from the
+   * current probe baseline and rejects on drift (fail-closed).
+   */
+  baselineDigest?: string;
+}
+
+/** Validated corpus with every required evaluation lane present. */
+export interface PreparedValidationCorpus extends ValidationCorpus {
+  heldOut: ValidationFixture[];
+}
+
+/**
+ * A finding that the probe detected at a fixture, with the identifying
+ * characteristics the gate uses to verify it matches the intended
+ * vulnerability.
+ */
+export interface LensProbeFinding {
+  /** The CWE or attack category the probe matched, if available. */
+  cwe?: string;
+  /** File path where the finding was raised. */
+  file?: string;
+  /** 1-based line where the finding was raised. */
+  line?: number;
+  /** The lens id that triggered this finding. */
+  lensId?: string;
+  lensVersionDigest?: string;
+  /** sha256 content digest of the finding evidence for the validation receipt. */
+  findingDigest?: string;
+  /** Original finder evidence retained by the production probe, not a confirmation. */
+  evidence?: Finding;
 }
 
 /** Outcome of probing one fixture with (or without) the candidate lens. */
 export interface LensProbeOutcome {
-  /** True when the finder surfaced a finding at this fixture. */
+  /** Informational discovery flag. The host grades findings, not this assertion. */
   surfaced: boolean;
   /**
    * Set when the probe could not run to completion. A fixture that errored is
@@ -140,6 +220,25 @@ export interface LensProbeOutcome {
    * fail-closed.
    */
   error?: string;
+  /**
+   * All discoveries, including unrelated findings on clean controls.
+   * Never filter these using the expected answer. The host independently
+   * matches positive identity and counts every negative-control discovery.
+   */
+  findings?: LensProbeFinding[];
+  /** Actual measured cost in USD for probing this fixture. */
+  costUsd?: number;
+  /** Actual measured wall-clock duration in ms for probing this fixture. */
+  durationMs?: number;
+  /** Input tokens consumed during probing. */
+  inputTokens?: number;
+  /** Output tokens consumed during probing. */
+  outputTokens?: number;
+}
+
+export interface LensBaselineSnapshot {
+  lenses: readonly FinderLens[];
+  digest: string;
 }
 
 /**
@@ -147,11 +246,86 @@ export interface LensProbeOutcome {
  * is the lens under test, or `null` for the BASELINE (current registry only).
  * Injectable: the default {@link makeFinderLensProbe} runs the real finder;
  * tests inject a deterministic fake.
+ *
+ * A LensProbe is ALSO a callable — the same async function signature — so
+ * callers invoke it as `probe(candidateLens, fixture)`. Concrete probes
+ * additionally expose `baselineSnapshot` for the validator to detect drift
+ * of the baseline lens set across multi-trial validation.
  */
-export type LensProbe = (
-  candidateLens: FinderLens | null,
-  fixture: ValidationFixture,
-) => Promise<LensProbeOutcome>;
+export interface LensProbe {
+  (candidateLens: FinderLens | null, fixture: ValidationFixture): Promise<LensProbeOutcome>;
+  /**
+   * Returns a frozen, structured-cloned snapshot of the baseline lens set
+   * (the lenses active WITHOUT the candidate) at the time the probe was
+   * created, along with its content digest. The validator uses this to
+   * detect baseline drift across validation trials — if the digest changes
+   * mid-validation the run fails closed.
+   *
+   * Required for every probe, including deterministic test probes.
+   */
+  baselineSnapshot: () => LensBaselineSnapshot;
+}
+
+/** Per-trial summary of a multi-trial validation. */
+export interface LensTrialSummary {
+  /** 0-based trial index. */
+  trialIndex: number;
+  /** Did the challenger catch ALL positives in this trial? */
+  caughtMiss: boolean;
+  /** Did the challenger avoid FP regression in this trial? */
+  noFpRegression: boolean;
+  /** Challenger success rate (verified positives / total positives). */
+  challengerSuccessRate: number;
+  /** Baseline success rate for this trial. */
+  baselineSuccessRate: number;
+  /** Challenger false-positive rate for this trial. */
+  challengerFpRate: number;
+  /** Baseline false-positive rate for this trial. */
+  baselineFpRate: number;
+  /** Actual challenger cost in USD, or null if unknown. */
+  challengerCostUsd: number | null;
+  /** Actual baseline cost in USD, or null if unknown. */
+  baselineCostUsd: number | null;
+}
+
+/**
+ * Content-addressed validation receipt. Provides a tamper-evident record
+ * of the full validation state at the time of evaluation.
+ */
+export interface LensValidationReceipt {
+  schemaVersion: 1;
+  candidateDigest: string;
+  baselineLenses: readonly FinderLens[];
+  corpus: ValidationCorpus;
+  passed: boolean;
+  rejectionReasons: string[];
+  heldOutTrials: LensTrialSummary[];
+  cases: Array<{
+    trialIndex: number;
+    lane: "development" | "held-out";
+    variant: "baseline" | "challenger";
+    fixtureId: string;
+    negativeControl: boolean;
+    outcome: LensProbeOutcome;
+  }>;
+  /** sha256 of the full canonical validation state. */
+  receiptDigest: string;
+  /** sha256 of the baseline lens snapshot at validation time. */
+  baselineSnapshotDigest: string;
+  /** sha256 of the fixture corpus bytes at validation time. */
+  fixtureCorpusDigest: string;
+  /** Per-trial results. */
+  trials: LensTrialSummary[];
+}
+
+/** The scan-level numbers the gate reads off a variant's scorecard. */
+export interface LensScorecardSummary {
+  variantId: string;
+  successRate: number;
+  fpRate: number;
+  verified: number;
+  falsePositives: number;
+}
 
 /** The full, auditable validation record for one candidate lens. */
 export interface LensValidationReport {
@@ -168,15 +342,10 @@ export interface LensValidationReport {
   reason: string;
   baseline: LensScorecardSummary;
   challenger: LensScorecardSummary;
-}
-
-/** The scan-level numbers the gate reads off a variant's scorecard. */
-export interface LensScorecardSummary {
-  variantId: string;
-  successRate: number;
-  fpRate: number;
-  verified: number;
-  falsePositives: number;
+  /** Content-addressed evaluation receipt. */
+  receipt?: LensValidationReceipt;
+  /** Held-out corpus result. Always present — held-out fixtures are required. */
+  heldOut: { caught: boolean; details: string };
 }
 
 // ── Stage 4: registration ─────────────────────────────────────────────────
@@ -187,6 +356,8 @@ export interface RegisteredLens {
   uid: string;
   validatedAt: string;
   missRefs: string[];
+  /** sha256 digest of the registered lens archetype. Propagated to consumers. */
+  lensVersionDigest: string;
 }
 
 // ── Loop orchestration ────────────────────────────────────────────────────
@@ -214,6 +385,10 @@ export interface LensSynthesisDeps {
   modelId?: string;
   /** Clock for the `validated_at` provenance stamp. Defaults to `Date.now`-based ISO. */
   now?: () => string;
+  /** Number of repeated validation trials. Default 2. Bounded at 10. Minimum 2 ensures independent replication. */
+  trials?: number;
+  /** AbortSignal to cancel a long-running loop. Checked before each expensive stage and immediately before registration. */
+  signal?: AbortSignal;
   log?: (msg: string) => void;
 }
 

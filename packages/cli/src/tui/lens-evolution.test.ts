@@ -24,10 +24,21 @@ const PROMOTED_RESULT: LensSynthesisResult = {
     uid: "appsec/ssrf-url-fetch",
     validatedAt: "2026-08-30T00:00:00.000Z",
     missRefs: ["app.py:7"],
+    lensVersionDigest: `sha256:${"0".repeat(64)}`,
   }],
   rejected: [],
   warnings: [],
 };
+
+/** Mock queue consumer that immediately resolves. */
+async function mockQueueConsumer(
+  _opts: { promote: boolean; pollIntervalMs: number },
+  deps: { signal: AbortSignal; log: (msg: string) => void; onResult: (result: LensSynthesisResult) => void; onError: (error: Error) => void },
+): Promise<void> {
+  await new Promise<void>((resolve) => {
+    deps.signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
 
 describe("TUI lens evolution controller", () => {
   it("stays inert until the Security setting explicitly enables automatic evaluation", () => {
@@ -36,6 +47,7 @@ describe("TUI lens evolution controller", () => {
       settings: () => DEFAULT_SETTINGS,
       subscribeSettings: () => () => {},
       watch: async () => { watchCalls += 1; },
+      consumeApprovedObservations: mockQueueConsumer,
     });
 
     expect(watchCalls).toBe(0);
@@ -66,6 +78,7 @@ describe("TUI lens evolution controller", () => {
       },
       env: { [TUI_LENS_SYNTH_INPUT_ENV]: "/tmp/curated-misses.json" },
       watch: watcher,
+      consumeApprovedObservations: mockQueueConsumer,
     });
 
     expect(calls).toHaveLength(1);

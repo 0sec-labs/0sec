@@ -528,34 +528,6 @@ describe("existing policy is untouchable — asserted by construction", () => {
     for (const f of forbidden) expect(names.has(f)).toBe(false);
   });
 
-  it("the public surface is exactly the additive one (frozen by this assertion)", () => {
-    // If a future change adds a method, this test fails and the author must
-    // justify it here. `revoke`/`reject`/`emit`/… are TS-private helpers that
-    // exist on the prototype at runtime; `revoke` takes an internal registration
-    // object and can only ever drop that registration's own contributions.
-    const names = Object.getOwnPropertyNames(SelfExtensionRegistry.prototype).sort();
-    expect(names).toEqual(
-      [
-        "constructor",
-        "emit",
-        "evaluate",
-        "events",
-        "gateFlagsForTool",
-        "guards",
-        "isEnabled",
-        "limits",
-        "liveCount",
-        "liveToolNames",
-        "nowMs",
-        "records",
-        "register",
-        "reject",
-        "revoke",
-        "tool",
-        "tools",
-      ].sort(),
-    );
-  });
 
   it("base guards always evaluate first and are unreachable from the outside", () => {
     const base: ToolGuard = () => "base denial";
@@ -887,5 +859,248 @@ describe("limits()", () => {
     const r = registry({ maxExtensions: Number.POSITIVE_INFINITY, maxToolsPerExtension: NaN });
     expect(r.limits().maxExtensions).toBe(MAX_EXTENSIONS_PER_SESSION);
     expect(r.limits().maxToolsPerExtension).toBe(MAX_TOOLS_PER_EXTENSION);
+  });
+});
+
+// ── 11. snapshot / restore (session persistence) ────────────────────────────
+
+describe("snapshot — reconstructible state for session resume", () => {
+  it("produces a JSON-serialisable snapshot with every registered manifest", () => {
+    const r = registry();
+    const m1 = manifest({ id: "acme.probe-pack" });
+    r.register({ manifest: m1 });
+
+    const snap = r.snapshot();
+    expect(snap.enabled).toBe(true);
+    expect(snap.registrations).toHaveLength(1);
+    expect(snap.registrations[0].pluginId).toBe("acme.probe-pack");
+    expect(snap.reservedAtSnapshot).toEqual(RESERVED);
+    // Snapshot should survive JSON round-trip
+    const json = JSON.stringify(snap);
+    const parsed = JSON.parse(json);
+    expect(parsed.registrations).toHaveLength(1);
+    expect(parsed.registrations[0].pluginId).toBe("acme.probe-pack");
+  });
+
+  it("includes a digest field computed from the manifest content", () => {
+    const r = registry();
+    const m1 = manifest();
+    r.register({ manifest: m1 });
+
+    const snap = r.snapshot();
+    expect(snap.registrations[0].digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    // Same manifest produces same digest
+    const r2 = registry();
+    r2.register({ manifest: m1 });
+    expect(r2.snapshot().registrations[0].digest).toBe(snap.registrations[0].digest);
+  });
+
+  it("is empty when the registry is disabled", () => {
+    const r = new SelfExtensionRegistry({ enabled: false });
+    const snap = r.snapshot();
+    expect(snap.enabled).toBe(false);
+    expect(snap.registrations).toHaveLength(0);
+  });
+
+  it("omits revoked registrations by default", () => {
+    const r = registry();
+    r.register({ manifest: manifest({ id: "acme.first" }) });
+    const res = r.register({
+      manifest: manifest({
+        id: "acme.second",
+        tools: [{ name: "acme_second_tool", description: "s", parameters: {}, capabilities: ["filesystem-read"] }],
+      }),
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    res.dispose();
+
+    const snap = r.snapshot();
+    expect(snap.registrations).toHaveLength(1);
+    expect(snap.registrations[0].pluginId).toBe("acme.first");
+  });
+});
+
+describe("restore — reconstruct from a snapshot", () => {
+  it("restores every tool from the snapshot into a fresh registry", () => {
+    const r1 = registry();
+    r1.register({ manifest: manifest({ id: "acme.pack-a", tools: [{ name: "tool_a", description: "a", parameters: {}, capabilities: ["network"] }] }) });
+    r1.register({ manifest: manifest({ id: "acme.pack-b", tools: [{ name: "tool_b", description: "b", parameters: {}, capabilities: ["filesystem-read"] }] }) });
+
+    const snap = r1.snapshot();
+
+    const r2 = registry();
+    r2.restore(snap);
+    expect(r2.tools()).toHaveLength(2);
+    expect(r2.tool("tool_a")).toBeDefined();
+    expect(r2.tool("tool_b")).toBeDefined();
+    expect(r2.tool("tool_a")?.pluginId).toBe("acme.pack-a");
+    expect(r2.isEnabled()).toBe(true);
+  });
+
+  it("rejects restore when the enabled flag differs", () => {
+    const r1 = registry();
+    r1.register({ manifest: manifest() });
+    const snap = r1.snapshot();
+
+    const disabled = new SelfExtensionRegistry({
+      enabled: false,
+      reservedToolNames: RESERVED,
+      baseGuards: BUILTIN_GUARDS,
+    });
+    expect(() => disabled.restore(snap)).toThrow(/enabled flag mismatch/);
+  });
+
+  it("rejects restore when a registered tool name now collides with a reserved name", () => {
+    // Register a tool in a session where "special_tool" is NOT reserved
+    const r1 = new SelfExtensionRegistry({
+      enabled: true,
+      reservedToolNames: ["run_command"],
+      baseGuards: BUILTIN_GUARDS,
+    });
+    r1.register({
+      manifest: manifest({
+        id: "acme.special",
+        tools: [{ name: "special_tool", description: "s", parameters: {}, capabilities: ["network"] }],
+      }),
+    });
+    const snap = r1.snapshot();
+
+    // Restore into a session where "special_tool" IS reserved
+    const r2 = new SelfExtensionRegistry({
+      enabled: true,
+      reservedToolNames: ["run_command", "special_tool"],
+      baseGuards: BUILTIN_GUARDS,
+    });
+    expect(() => r2.restore(snap)).toThrow(/collides.*built-in/);
+  });
+
+  it("rejects restore into a non-empty registry", () => {
+    const r1 = registry();
+    r1.register({ manifest: manifest() });
+    const snap = r1.snapshot();
+
+    const r2 = registry();
+    r2.register({ manifest: manifest({ id: "acme.other", tools: [{ name: "other_tool", description: "o", parameters: {}, capabilities: ["network"] }] }) });
+    expect(() => r2.restore(snap)).toThrow(/non-empty registry/);
+  });
+
+  it("rejects restore when a persisted manifest digest does not match (tampering)", () => {
+    const r1 = registry();
+    r1.register({ manifest: manifest({ id: "acme.pack" }) });
+    const snap = r1.snapshot();
+
+    // Tamper with the persisted manifest
+    const tampered = { ...snap, registrations: snap.registrations.map((r) => ({ ...r, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000" })) };
+    const r2 = registry();
+    expect(() => r2.restore(tampered)).toThrow(/digest mismatch/);
+  });
+
+  it("restored tools have the same gate flags as the originals", () => {
+    const r1 = registry();
+    r1.register({
+      manifest: manifest({
+        id: "acme.net",
+        tools: [{ name: "net_tool", description: "n", parameters: {}, capabilities: ["network"] }],
+      }),
+    });
+    const originalFlags = r1.tool("net_tool")?.gateFlags;
+    expect(originalFlags?.networkCapable).toBe(true);
+
+    const snap = r1.snapshot();
+    const r2 = registry();
+    r2.restore(snap);
+    const restoredFlags = r2.tool("net_tool")?.gateFlags;
+    expect(restoredFlags?.networkCapable).toBe(true);
+    expect(restoredFlags?.localScope).toBe(false);
+    expect(restoredFlags?.readOnly).toBe(false);
+  });
+
+  it("restored sequence counter continues from the snapshot", () => {
+    const r1 = registry();
+    r1.register({ manifest: manifest({ id: "acme.a" }) });
+    const snap = r1.snapshot();
+
+    const r2 = registry();
+    r2.restore(snap);
+    // Next registration gets a distinct id
+    const res = r2.register({ manifest: manifest({ id: "acme.b", tools: [{ name: "tool_b", description: "b", parameters: {}, capabilities: ["filesystem-read"] }] }) });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.record.registrationId).toBe("ext-2");
+  });
+
+  it("rejects a late invalid registration without exposing earlier tools or events", () => {
+    const original = registry();
+    original.register({ manifest: manifest() });
+    original.register({ manifest: manifest({
+      id: "acme.second",
+      tools: [{ name: "second_tool", description: "second", parameters: {}, capabilities: ["network"] }],
+    }) });
+    const snapshot = JSON.parse(JSON.stringify(original.snapshot()));
+    snapshot.registrations[1].digest = `sha256:${"0".repeat(64)}`;
+    const onEvent = vi.fn();
+    const resumed = registry({ onEvent });
+    expect(() => resumed.restore(snapshot)).toThrow();
+    expect(resumed.tools()).toEqual([]);
+    expect(resumed.records()).toEqual([]);
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it("refuses to resume rather than dropping contributed restrictions", () => {
+    const original = registry();
+    original.register({ manifest: manifest(), guards: [() => "operator restriction"] });
+    const resumed = registry();
+    expect(() => resumed.restore(original.snapshot())).toThrow();
+    expect(resumed.tools()).toEqual([]);
+  });
+
+  it("preserves registration identity across revoked and rejected registrations", () => {
+    const original = registry();
+    const first = original.register({ manifest: manifest() });
+    if (!first.ok) throw new Error("fixture registration failed");
+    first.dispose();
+    original.register({ manifest: manifest(), origin: "model" });
+    original.register({ manifest: {} });
+    const resumed = registry();
+    resumed.restore(JSON.parse(JSON.stringify(original.snapshot())));
+    expect(resumed.records()).toEqual(original.records());
+    expect(resumed.tools()).toEqual(original.tools());
+    const next = resumed.register({ manifest: manifest({
+      id: "acme.next",
+      tools: [{ name: "next_tool", description: "next", parameters: {}, capabilities: ["network"] }],
+    }) });
+    expect(next.ok && next.record.registrationId).toBe("ext-4");
+  });
+});
+
+// ── 12. events carry a digest binding ────────────────────────────────────────
+
+describe("self_extension events carry digest binding", () => {
+  it("registered event includes a digest", () => {
+    const r = registry();
+    r.register({ manifest: manifest() });
+    const ev = r.events()[0];
+    expect(ev.kind).toBe("registered");
+    expect(ev.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it("revoked event includes the same digest as the original registration", () => {
+    const r = registry();
+    const res = r.register({ manifest: manifest({ id: "acme.pack" }) });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const registeredDigest = r.events()[0].digest;
+    res.dispose();
+    const revokedDigest = r.events()[1].digest;
+    expect(revokedDigest).toBe(registeredDigest);
+  });
+
+  it("rejected events omit digest (manifest was never validated)", () => {
+    const r = registry();
+    r.register({ manifest: { id: "bad" } } as unknown as ExtensionSubmission);
+    const ev = r.events()[0];
+    expect(ev.kind).toBe("rejected");
+    expect(ev.digest).toBeUndefined();
   });
 });

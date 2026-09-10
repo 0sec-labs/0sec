@@ -113,7 +113,7 @@ For each dependency advisory above:
 5. Treat advisories as leads, not automatic findings
 
 ### Phase 3: Manual Vulnerability Hunting
-Look for patterns semgrep misses. Focus on:
+Look for patterns automated scanners miss. Focus on:
 
 **Prototype Pollution**
 - Object merge/extend without hasOwnProperty checks
@@ -201,7 +201,7 @@ template source") rather than silently inflating it to \`critical\`.
 
 ## Rules
 - Use read_file to examine source code
-- Use run_command with rg/foxguard/semgrep for targeted searches
+- Use run_command with rg and an available static scanner for targeted searches. FoxGuard is the default; Semgrep is optional, not a required tool.
 - Use save_finding for EVERY confirmed vulnerability — include:
   - Clear title describing the bug
   - The vulnerable code path
@@ -453,7 +453,7 @@ template source") rather than silently inflating it to \`critical\`.
 
 ## Rules
 - Use read_file to examine source code — read enough context (50+ lines) to understand the code
-- Use run_command with rg/find/foxguard/semgrep for searching patterns across the codebase
+- Use run_command with rg/find and an available static scanner for searching patterns across the codebase. FoxGuard is the default; Semgrep is optional, not a required tool.
 - Use save_finding for EVERY confirmed vulnerability with:
   - Clear title describing the bug type and location
   - The vulnerable code path (file:line)
