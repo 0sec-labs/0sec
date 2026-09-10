@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { maybeLoadCodexAuth } from "../packages/cli/dist/codex-auth.js";
@@ -21,7 +21,17 @@ process.env["0SEC_CLOUD_SINK"] = "";
 const root = mkdtempSync(join(tmpdir(), "0sec-source-e2e-"));
 const sourceRoot = join(root, "source");
 const storePath = join(root, "store");
-const cleanup = () => rmSync(root, { recursive: true, force: true });
+const cleanup = () => {
+  if (!existsSync(root)) return;
+  const unlock = (directory) => {
+    chmodSync(directory, 0o700);
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) unlock(join(directory, entry.name));
+    }
+  };
+  unlock(root);
+  rmSync(root, { recursive: true, force: true });
+};
 process.on("exit", cleanup);
 const controller = new AbortController();
 const deadline = setTimeout(() => controller.abort(new Error("Source evolution E2E exceeded its ten-minute deadline")), 600000);
@@ -55,6 +65,7 @@ console.log(JSON.stringify({schemaVersion:'0sec.finder.output/v1', findings}));
     makeCase("held-token", "held-out", 'const token = "hold-a";', true),
     makeCase("held-camel", "held-out", 'let apiKey = "hold-b";', true),
     makeCase("held-snake", "held-out", 'var api_key = "hold-c";', true),
+    makeCase("held-existing", "held-out", 'settings.password = "hold-d";', true),
     makeCase("clean-name", "negative-control", 'const name = "example";', false),
     makeCase("clean-env", "negative-control", 'const password = process.env.PASSWORD;', false),
     makeCase("clean-empty", "negative-control", 'const token = "";', false),
@@ -66,7 +77,7 @@ console.log(JSON.stringify({schemaVersion:'0sec.finder.output/v1', findings}));
     objective: "Improve literal credential detection for password, passwd, secret, token, apiKey, and api_key assignments. Detect only nonempty quoted string assignments to credential keys, never ordinary names, environment reads, or empty strings. Preserve the existing output schema and finding title, severity, analysis, and line-number convention. Generalize the recognition logic rather than matching fixture identities.",
     allowModelSourceAccess: true, autoPromote: false, repeats: 2, canaryTrials: 2,
     maxIterations: 2, maxModelTurns: 6, maxModelCostUsd: 2, maxEvaluationCostUsd: 2,
-    computeUsdPerSecond: 0.001, timeoutMs: 10000, maxChangedBytes: 8192,
+    computeUsdPerSecond: 0.001, timeoutMs: 30000, maxChangedBytes: 8192,
     promotionPolicy: { minimumCases: 3 },
   });
   const result = await runEvolution(config, { signal: controller.signal, log: (message) => console.error(message) });
