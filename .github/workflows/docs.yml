@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "packages/cli/**"
+      - "packages/shared/**"
+      - "scripts/sync-cli-docs.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -23,6 +28,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build CLI registrations
+        run: pnpm --filter '0sec-cli...' build
+      - name: Check CLI documentation freshness
+        run: pnpm docs:check
       - run: pnpm --filter @0sec/docs build
       # Publish docs/dist to the Cloudflare Pages project `0sec-docs`
       # (custom domain docs.0.security). Uses npx to avoid wrangler-action's

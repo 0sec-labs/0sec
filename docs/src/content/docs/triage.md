@@ -130,7 +130,7 @@ foxguard on the same code and cross-checks each finding against its SARIF:
 
 ```bash
 env 0SEC_FEATURE_MULTIMODAL=1 \
-  0sec scan --target https://example.com --repo ./source
+  0sec scan --target https://example.com --scope ./scope.json --repo ./source
 ```
 
 ## 6. PoV generation gate
@@ -165,11 +165,10 @@ for confidence on ambiguous findings.
 
 ## 9. Assistant memories
 
-`triage/memories.ts` — `0SEC_FEATURE_TRIAGE_MEMORIES=1`. Semgrep-style per-target
-FP context that learns from human triage. When a user marks a finding FP (and
-says why), the reason is stored as a `TriageMemory`. On later scans, memories are
-injected as few-shot examples into the verify prompt, and a strong match
-auto-rejects without a verify call.
+`triage/memories.ts` stores false-positive context from human triage. Use
+`0sec triage mark-fp` and `0sec triage memory` to manage that feedback.
+`0SEC_FEATURE_TRIAGE_MEMORIES` is not a current feature toggle. Memory context
+can inform verification; it is not independent reproduction evidence.
 
 Scope hierarchy: `global` (every scan), `package` (targets under a package
 prefix), `target` (exact URL or path). Relevance is a token-overlap heuristic
@@ -240,9 +239,9 @@ roughly flat. Enable it to re-measure, not to score better.
 Every gate is off by default. `fp-moat` names the set:
 
 ```bash
-0sec scan --features fp-moat --target https://example.com
+0sec scan --features fp-moat --target https://example.com --scope ./scope.json
 # or, for templated CI:
-env 0SEC_FEATURE_PRESET=fp-moat 0sec scan --target https://example.com
+env 0SEC_FEATURE_PRESET=fp-moat 0sec scan --target https://example.com --scope ./scope.json
 ```
 
 It expands to `REACHABILITY_GATE`, `MULTIMODAL`, `PUBLISHABILITY_GATE`,

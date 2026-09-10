@@ -7,6 +7,11 @@ description: "One harness, two evidence engines, and one rule: reproduce before 
 trusting.** Models propose findings; only reproducible evidence decides what is
 real.
 
+For practical setup, start with [Scan Workflows](/scan-workflows/),
+[Console](/console/), or [Research Workflows](/research-workflows/).
+This page describes the engine's structure, not a managed-service availability
+commitment. The public CLI and [Cloud](/cloud/) share this documentation site.
+
 Two engines produce that evidence:
 
 - **0sec** runs the agentic hunt against source and live targets — repos,
@@ -42,7 +47,7 @@ Only **discover** and **verify** are mandatory. Unsupported optional stages are
 marked `skipped`; failed or unavailable proof stays `inconclusive`. Discovery
 output can never promote itself.
 
-Every result carries independent evidence dimensions:
+Research evidence envelopes track independent dimensions:
 
 | Dimension | Meaning |
 |---|---|
@@ -78,8 +83,9 @@ closed**:
 
 These are trusted-orchestrator bindings (VM kernel, guest init, launcher), not
 hardware-backed attestation of a hostile worker. Human review remains
-mandatory. See [Verification Results](/verification-result/) for the evidence
-contract.
+mandatory. See [Research Workflows](/research-workflows/) for the research
+contracts. The deterministic replay JSON in [Verification Results](/verification-result/)
+is a separate contract, not the schema for every research envelope.
 
 ### Adapters
 
@@ -109,11 +115,10 @@ builds, configs, or implementations; a failed side is `inconclusive`, never
 `divergent`. Novelty providers are pluggable per ecosystem, and zero checked
 records can never produce a `novel` verdict.
 
-Each run writes compact evidence envelopes under its artifact directory. The
-research CLI emits envelope-bearing findings through the cloud sink, and the
-orchestrator stores them as versioned JSONB receipts. Deduplicated retries
-backfill the stronger receipt. **Legacy scans are not backfilled** — don't
-assume every older finding has an envelope.
+Research CLI paths emit evidence envelopes and can send findings through a
+configured cloud sink. Envelope availability depends on the producing path;
+do not assume a legacy finding or a different command's output has the same
+schema. Managed storage and access are outside this repository.
 
 Two import paths handle kernel proofs the generic VM runner can't safely
 rebuild:
@@ -222,10 +227,11 @@ Tool set depends on target type:
 - **Source/npm:** `read_file`, `search_code`, `list_files`, `run_command`,
   `save_finding`.
 
-**Budget-aware reflection.** As the turn budget is consumed, the loop injects
-escalating continue prompts (summarize → switch approach → final push) so the
-agent doesn't burn all its turns on one dead end. Deep mode uses a 40-turn
-budget. See [Agent Loop](/agent-loop/) for the full loop.
+**Budget-aware reflection.** As the turn budget is consumed, the loop can inject
+continue prompts so the agent does not spend every turn on one dead end.
+The budget depends on the workflow, role, and depth; it is not one universal
+40-turn setting. See [Agent Loop](/agent-loop/) and
+[Budget Management](/budget-management/).
 
 ### 2. Triage stage
 
@@ -243,16 +249,18 @@ token is spent. Full detail: [Finding Triage](/triage/).
 
 ### 3. Verify agent (blind validation)
 
-The verify agent gets **only** the PoC code and file path — never the research
-agent's reasoning or strategy. It independently traces data flow, tries to
-reproduce, and confirms or kills the finding. If it can't reproduce, the finding
-dies as a false positive. See [Blind Verification](/blind-verification/).
+Independent verification receives a bounded reproduction task rather than the
+original conversation. The exact input and verifier differ by workflow.
+An unavailable or inconclusive verifier is not proof that a finding is false.
+See [Blind Verification](/blind-verification/) for the distinctions between
+model-assisted validation, deterministic replay, and unverified candidates.
 
 ### 4. Report
 
-Only confirmed findings ship. Formats: terminal (default, with share URL),
-HTML, PDF, SARIF (GitHub Security tab), Markdown, JSON. Each finding carries a
-severity score, category, PoC, and remediation.
+Reports retain findings and their evidence/verification state; consumers must
+not assume every row has the same proof grade. Formats vary by command and
+include terminal, HTML, PDF, SARIF, Markdown, and JSON. A local report is not
+automatically published or assigned a public share URL.
 
 ## Presentation contract
 
@@ -318,18 +326,22 @@ Desktop migration is deliberately one-way:
 4. retain OpenTUI until desktop parity covers durable resume, every approval
    path, reconnect, transcript, and replay; then remove the duplicate path.
 
+See [Desktop](/desktop/) for current setup and interaction instructions, and
+[Console](/console/) for the terminal interface.
+
 ## Scan modes
 
 | Mode | Target | What it does |
 |------|--------|-------------|
-| `deep` | LLM API URL | Prompt injection, jailbreaks, tool poisoning, data exfil, multi-turn escalation (40-turn budget) |
+| `deep` | LLM API URL | Multi-turn prompt injection, jailbreak, tool poisoning, and exfiltration investigation |
 | `probe` | LLM API URL | Lightweight surface scan of an LLM API |
 | `web` | Web app URL | CORS, headers, exposed files, SSRF, XSS, path traversal, fingerprinting |
 | `mcp` | MCP server | Tool poisoning, schema abuse, permission escalation |
-| `audit` | Package or image | Supply-chain analysis, malicious-code detection, dependency risk across `npm`, `pypi`, `cargo`, `oci` |
-| `review` | Local path or GitHub URL | AI source-code vulnerability analysis |
+| `http_audit` | Authenticated HTTP target | Worker-oriented scoped web assessment using `0SEC_TARGET_*` configuration |
 
-Mode is auto-detected from the target when possible, or set with `--mode`.
+Package audits and source reviews use separate `audit` and `review` commands,
+not `scan --mode audit` or `scan --mode review`. Mode inference and explicit
+options are documented in [Configuration](/configuration/).
 
 ## Runtime adapters
 
@@ -345,9 +357,9 @@ interface over a different provider:
 | `McpRuntime` | MCP servers | Connects to MCP servers |
 | `AutoRuntime` | Best available | Detects installed CLIs, picks the best per stage |
 
-`--runtime` selects the adapter; `auto` probes installed CLIs and picks the most
-capable one per stage (e.g. Claude for deep reasoning, API for quick
-classification).
+`--runtime` selects an adapter. Auto-selection and direct-provider fallback are
+path-specific; see [Configuration](/configuration/) and [API Keys](/api-keys/)
+for the current resolution rules.
 
 ## MCP integration
 
@@ -376,11 +388,11 @@ classification).
 
 ## Product model
 
-Two surfaces, split on purpose:
+Two execution surfaces, one public documentation home:
 
-- **0sec CLI** — the execution surface for local runs, CI, replay, exports.
-- **Managed control plane** — a separate hosted product for scoped, multi-worker
-  engagements (not in this repo).
+- **0sec CLI** — local runs, CI, replay, exports, console, and desktop.
+- **Managed control plane** — the separately operated engagement layer (not in
+  this repo). See [Cloud](/cloud/) for access and engagement preparation.
 
 Every fresh local run owns `~/.0sec/runs/<scan-id>/state.db`, its journal, and
 its report. The local dashboard can inspect one run via `--db-path`; it is not a
@@ -403,7 +415,7 @@ results.
 
 | Tool | Used in | Purpose |
 |------|---------|---------|
-| `bash` | Web, LLM, Verify | **Primary web tool.** Any shell command (curl, python3, sqlmap, nmap, …). |
+| `bash` | Web, LLM, Verify | Shell commands subject to tool, scope, and engagement restrictions; host execution by default. |
 | `browser` | Web | Playwright headless browser for XSS and JS-rendered pages. |
 | `save_finding` | All | Record a vulnerability with PoC. |
 | `done` | All | Signal completion. |

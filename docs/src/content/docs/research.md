@@ -1,49 +1,58 @@
 ---
 title: Research
-description: How 0sec makes its decisions, what data backs them, and the experiments behind the open cybersecurity harness.
+description: Design decisions, experiments, and technical rationale behind the 0sec engine.
 ---
 
-0sec is built by the Swiss Applied AI Cybersecurity Research Lab. Our approach is evidence-first. This section documents the reasoning and the data behind that design.
+Design decisions, experiments, and technical rationale for the 0sec engine. Real
+disclosed CVEs at [0.security](https://0.security). Most experiments run against
+the [XBOW benchmark](https://github.com/xbow-engineering/validation-benchmarks)
+(104 Docker CTF challenges) as a reproducible harness.
 
-Real, disclosed CVEs at [0.security](https://0.security) — not vendor benchmarks. Most experiments here run against the [XBOW benchmark](https://github.com/xbow-engineering/validation-benchmarks) (104 Docker CTF challenges) as a reproducible harness.
+For benchmark scores, methodology, and competitor comparisons, see
+[Benchmarks](/benchmark/). For mechanism docs (agent loop, triage, verification),
+see [Architecture](/architecture/).
 
-For benchmark scores, methodology, and competitor comparisons, see the [Benchmarks](/benchmark/) section. For product-facing mechanism docs (agent loop, triage, verification), see [Architecture](/architecture/).
+**Looking for practical workflows?** Start with
+[Research Workflows](/research-workflows/) — variant hunting, deep review,
+specification checks, fuzzing, kernel evidence, binary analysis, and the
+distinction between live execution and imported evidence. The pages below
+document design rationale and experiment history.
 
 ## Essays & rationale
 
-Evergreen writeups on design decisions and techniques that shipped.
+Design decisions and shipped techniques.
 
 ### [Shell-First Rationale](/research/shell-first/)
 
-Why bash beats structured tools for pentesting, with A/B test data on prompt length, reasoning effort, tool routing, concurrent subagents, and multi-checkpoint budgets.
+Why the agent uses bash over structured tools, with A/B test data on prompt length, reasoning effort, tool routing, concurrent subagents, and multi-checkpoint budgets.
 
 ### [Agent Techniques](/research/agent-techniques/)
 
-What shipped in the agent loop: early-stop retry, exploit templates, loop detection, context compaction, dynamic playbooks, attack-tree search, strategy racing, and progress handoff.
+Shipped agent loop features: early-stop retry, exploit templates, loop detection, context compaction, dynamic playbooks, attack-tree search, strategy racing, and progress handoff.
 
 ### [Model Comparison](/research/model-comparison/)
 
-Head-to-head testing of gpt-5.4, Kimi K2.5, Qwen3 Coder, DeepSeek, GLM, and free OpenRouter models. Cost, speed, and flag extraction across multiple XBOW challenges.
+Head-to-head testing of gpt-5.4, Kimi K2.5, Qwen3 Coder, DeepSeek, GLM, and free OpenRouter models. Cost, speed, and flag extraction across XBOW challenges.
 
 ### [FP Reduction Moat](/research/fp-reduction-moat/)
 
-The full false-positive reduction stack, measured effects per benchmark slice, why the layers are ordered the way they are, and how the dataset / feature foundation supports the shipped runtime layers.
+False-positive reduction stack, measured effects per benchmark slice, layer ordering rationale, and how the dataset and feature foundation supports the shipped runtime layers.
 
 ### [TypeScript/Rust Boundary](/research/typescript-rust-boundary/)
 
-Why 0sec keeps TypeScript for orchestration while moving deterministic engines such as FoxGuard into Rust behind stable contracts.
+Why 0sec uses TypeScript for orchestration while moving deterministic engines such as FoxGuard into Rust behind stable contracts.
 
 ## Triage ML
 
-Design and reference material for the learned triage pipeline.
+Learned triage pipeline design and reference material.
 
 ### [Finding Triage ML](/research/finding-triage-ml/)
 
-Implementation notes for reachability, consensus verify, PoV generation, memories, adversarial debate, and multi-modal agreement with foxguard.
+Implementation notes: reachability, consensus verify, PoV generation, memories, adversarial debate, and multi-modal agreement with foxguard.
 
 ### [Dynamic Routing Design](/research/dynamic-routing-design/)
 
-A learned per-finding classifier that picks which subset of triage layers to run, motivated by the 2026-04-11 ablation finding that no static policy wins on all three benchmark slices.
+A learned per-finding classifier that picks which subset of triage layers to run, motivated by the finding that no static policy wins on all benchmark slices.
 
 ### [Dynamic Triage Routing (v0)](/research/dynamic-triage-routing/)
 
@@ -59,15 +68,17 @@ The 45 handcrafted features exposed by `extractFeatures()` and how they fit into
 
 ### [Journal + Orchestrator Design](/research/journal-orchestrator-design/)
 
-Design doc for an append-only execution journal and an orchestrator that separates "what to do next" from "what has been done."
+Design for an append-only execution journal and an orchestrator that separates what to do next from what has been done.
 
 ## Experiment logs
 
-Dated, archival records of specific experiments. Kept for transparency and auditability — not necessarily current guidance.
+Dated, archival records of specific experiments. Kept for transparency and
+auditability — not necessarily current guidance.
 
 ### [2026-05-09 Control Flow, Not Prompts](/research/2026-05-09-control-flow-not-prompts/)
 
-Audit of 0sec's agent loop against the "agents need control flow, not more prompts" thesis, and the five deterministic-chokepoint fixes it produced.
+Audit of the agent loop against the "agents need control flow, not more prompts"
+thesis, and the five deterministic-chokepoint fixes it produced.
 
 ### [2026-05-08 Cost per Flag](/research/2026-05-08-cost-per-flag/)
 
@@ -89,6 +100,4 @@ Root-cause investigation into why XBEN-099 failed on the patched fork and the pr
 
 Source-level investigation into an earlier 8-challenge XBOW holdout set. Useful for exploit-path reasoning, but not the canonical current unsolved list.
 
-## The big picture
 
-The framework runs agents in a terminal, explores in parallel, and reproduces every reported finding with an independent blind agent before it ships.

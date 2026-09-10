@@ -32,18 +32,21 @@ fine for your own infrastructure, wrong for a monitored production estate.
 Jitter is paced on the non-blocking path too: a perfectly periodic 1 rps train
 is a stronger automation signal to a behavioural SOC than bursty traffic.
 
-**Precedence:** scope file > environment > CLI flag. The scope file binds to the
-engagement, so an ad-hoc flag can't loosen it. Rate resolves to the minimum, so
-a profile can only make a scan quieter.
+**Profile-field precedence:** scope file > environment > CLI flag. The
+conservative profile lowers the scan's fallback request rate; it is **not a
+hard ceiling over an explicit `scan --rate-limit` value**. Review both the
+profile and rate specification before executing an engagement. The MCP server
+uses a stricter clamp over its rate specification; do not assume those two
+entry points resolve rates identically.
 
 The WAF-evasion ladder can be disabled independently — this stops the automatic
 escalation into encoding-mutated payloads, not detection or reporting of the
 block:
 
 ```bash
-0sec scan --target https://app.example.com --no-waf-evasion
+0sec scan --target https://app.example.com --scope ./engagement-scope.json --no-waf-evasion
 # or
-env 0SEC_WAF_EVASION=0 0sec scan --target https://app.example.com
+env 0SEC_WAF_EVASION=0 0sec scan --target https://app.example.com --scope ./engagement-scope.json
 ```
 
 Env vars: `0SEC_ENGAGEMENT_PROFILE`, `0SEC_WAF_EVASION`,
@@ -60,12 +63,17 @@ fact. Runs without a profile are unchanged.
 `0sec timeline` builds a chronological record from the immutable pipeline-event
 audit trail:
 
+`timeline` uses the selected SQLite database rather than searching all
+run-local databases. Pass `--db-path` for the run you are inspecting; the
+examples below use the default state root.
+
 ```bash
-0sec timeline <scanId>                     # markdown, for a report appendix
-0sec timeline <scanId> --format json       # machine-readable
-0sec timeline <scanId> --format csv        # spreadsheet / SIEM import
-0sec timeline <scanId> --attack-only       # only events with a technique mapping
-0sec timeline <scanId> --since 2026-09-15T09:00:00Z --until 2026-09-15T17:00:00Z
+0sec timeline <scanId> --db-path ~/.0sec/runs/<scanId>/state.db
+0sec timeline <scanId> --db-path ~/.0sec/runs/<scanId>/state.db --format json
+0sec timeline <scanId> --db-path ~/.0sec/runs/<scanId>/state.db --format csv
+0sec timeline <scanId> --db-path ~/.0sec/runs/<scanId>/state.db --attack-only
+0sec timeline <scanId> --db-path ~/.0sec/runs/<scanId>/state.db \
+  --since 2026-09-01T09:00:00Z --until 2026-09-01T17:00:00Z
 ```
 
 Every row carries a UTC ISO-8601 timestamp, stage, event type, agent role, an

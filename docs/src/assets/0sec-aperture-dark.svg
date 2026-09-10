@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 20" fill="none" role="img" aria-label="0sec">
+  <path fill="#DC2626" d="M12.5 2 H17.5 L7.5 18 H2.5 Z" />
+  <path fill="#1A1815" fill-rule="evenodd" d="M4 0 H16 L20 4 V16 L16 20 H4 L0 16 V4 Z M4 5 V15 L5 16 H15 L16 15 V5 L15 4 H5 Z" />
+  <path fill="#1A1815" transform="translate(28,0)" d="M0 0 H20 V4 H0 Z M0 4 H4 V8 H0 Z M0 8 H20 V12 H0 Z M16 12 H20 V16 H16 Z M0 16 H20 V20 H0 Z" />
+  <path fill="#1A1815" transform="translate(56,0)" d="M0 0 H20 V4 H0 Z M0 0 H4 V20 H0 Z M0 8 H16 V12 H0 Z M0 16 H20 V20 H0 Z" />
+  <path fill="#1A1815" transform="translate(84,0)" d="M0 0 H20 V4 H0 Z M0 0 H4 V20 H0 Z M0 16 H20 V20 H0 Z" />
+</svg>
