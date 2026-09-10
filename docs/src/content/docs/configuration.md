@@ -436,6 +436,21 @@ Docker isolation controls; provision images locally first. HTTP replay additiona
 requires `--scope <scope.json>` and an explicit `--docker-network <name>`.
 Local replay supports shell actions; Docker supports shell, container, and scoped
 HTTP actions. Notes are not executable bundle steps.
+Shell `cwd` is relative to the mounted workspace; absolute paths and traversal
+outside it are rejected before a container is launched.
+
+The `0sec: Docker replay` CI workflow runs real containers, not a Docker CLI mock.
+It covers isolation, writable workspaces, relative cwd and escape rejection,
+pinned-image execution, timeout cleanup, scoped HTTP, and vulnerable/patched
+negative controls. To run the same checks against the default local Docker daemon:
+
+```bash
+pnpm --filter @0sec/core... -r build
+node scripts/smoke-docker-replay.mjs
+```
+
+The smoke script pulls its fixture images, resolves their digests, and removes
+its test containers, network, and temporary workspaces afterward.
 
 
 ### Docker executor overrides

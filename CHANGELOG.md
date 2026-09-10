@@ -22,6 +22,8 @@ on the published npm package and the GitHub Release tag.
 - Two-phase `verify --create-bundle` and `verify --bundle` with allowlisted
   snapshots, integrity and runtime checks, explicit runner selection, and
   vulnerable/patched negative controls. Failed processes never confirm a fix.
+- Real Docker replay CI covering container isolation, workspace paths, timeout
+  cleanup, scoped HTTP, and vulnerable/patched negative controls.
 
 ### Fixed
 
@@ -30,6 +32,8 @@ on the published npm package and the GitHub Release tag.
   before falling back to Semgrep.
 - Finding and PoC JSON validation is shared between CLI ingestion and bundle
   replay rather than maintained as divergent schemas.
+- Docker shell replay honors workspace-relative `cwd` and rejects absolute
+  paths or traversal outside the mounted workspace before launch.
 
 
 ## [0.16.2] - 2026-09-09
