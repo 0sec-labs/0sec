@@ -6,7 +6,7 @@
  * this minimal — it's a deterministic file walker, not a tool-driven scan.
  */
 
-import { readdirSync, statSync } from "node:fs";
+import { lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const DEFAULT_SOURCE_EXTS = new Set([
@@ -38,6 +38,7 @@ const DEFAULT_MAX_FILE_SIZE = 200_000;
  *
  * Skips:
  *  - vendored / build-output directories (`node_modules`, `dist`, `target`, …)
+ *  - symbolic links and multiply linked files (outside-scope aliases)
  *  - files larger than `maxFileSize` bytes
  *  - non-source extensions
  *
@@ -67,10 +68,10 @@ export function collectScopeFiles(
       if (SKIP_DIRS.has(entry)) continue;
       const full = join(d, entry);
       try {
-        const st = statSync(full);
+        const st = lstatSync(full);
         if (st.isDirectory()) {
           walk(full);
-        } else if (st.isFile() && st.size < maxFileSize) {
+        } else if (st.isFile() && st.nlink === 1 && st.size < maxFileSize) {
           const ext = full.slice(full.lastIndexOf("."));
           if (exts.has(ext)) {
             files.push(full);
@@ -120,10 +121,10 @@ export function countScopeFilesUpTo(
       if (SKIP_DIRS.has(entry)) continue;
       const full = join(d, entry);
       try {
-        const st = statSync(full);
+        const st = lstatSync(full);
         if (st.isDirectory()) {
           walk(full);
-        } else if (st.isFile() && st.size < maxFileSize) {
+        } else if (st.isFile() && st.nlink === 1 && st.size < maxFileSize) {
           const ext = full.slice(full.lastIndexOf("."));
           if (exts.has(ext)) {
             count += 1;

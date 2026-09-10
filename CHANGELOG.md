@@ -78,6 +78,9 @@ on the published npm package and the GitHub Release tag.
 
 ### Fixed
 
+- Source enumeration no longer follows repository symlinks or includes
+  multiply linked files. Deep-review also checks resolved subsystem paths
+  against the prepared source tree before exposing source to a finder.
 - Foxguard integration now consumes native v1 JSON reports instead of silently
   dropping their findings. The npm fallback is pinned to v0.12.0; provisioned
   binaries are used directly, and multi-path scans use valid CLI invocations.

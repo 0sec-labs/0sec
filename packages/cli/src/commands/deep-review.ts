@@ -35,7 +35,7 @@
  */
 
 import type { Command } from "commander";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve, join, sep, relative } from "node:path";
 import type { Finding, RuntimeMode, ScanReport } from "@0sec/shared";
 import type { EvolutionConfig, FinderLens, ThreatLane, VerifyLens } from "@0sec/core";
@@ -612,7 +612,17 @@ export async function runDeepReview(
       prepared.cleanup();
       throw new Error(`--subsystem '${opts.subsystem}' escapes the source tree`);
     }
-    scopeRoot = scoped;
+    try {
+      const realRoot = realpathSync(sourceRoot);
+      const realScoped = realpathSync(scoped);
+      if (realScoped !== realRoot && !realScoped.startsWith(realRoot + sep)) {
+        throw new Error(`--subsystem '${opts.subsystem}' escapes the source tree`);
+      }
+      scopeRoot = scoped;
+    } catch (error) {
+      prepared.cleanup();
+      throw error;
+    }
   }
 
   // Capture the cloud-sink config BEFORE suppressing the env (same reasoning as

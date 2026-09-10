@@ -788,6 +788,23 @@ describe("runDeepReview — seedless lens-driven review", () => {
     await expect(runDeepReview({ target: "/repo", subsystem: "../../etc" })).rejects.toThrow(/escapes/);
   });
 
+  it.skipIf(process.platform === "win32")("rejects a subsystem link that resolves outside the prepared target", async () => {
+    const { mkdtempSync, mkdirSync, rmSync, symlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "0sec-review-subsystem-"));
+    try {
+      const target = join(root, "target");
+      const outside = join(root, "outside");
+      mkdirSync(target);
+      mkdirSync(outside);
+      symlinkSync(outside, join(target, "src"));
+      await expect(runDeepReview({ target, subsystem: "src" })).rejects.toThrow(/escapes/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("B6: useThreatModel calls the planner and falls back when it returns nothing", async () => {
     // The mock planner returns null by default (fail-closed). The review should
     // proceed with the normal module-spread candidate selection.
