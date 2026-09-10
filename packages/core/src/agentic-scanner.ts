@@ -1263,9 +1263,9 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       findingsForFlagCount?: Finding[];
     },
   ): void => {
-    if (opts.emitTerminalEvent === false || emittedScanCompleted) return;
-    emittedScanCompleted = true;
     try {
+      if (opts.emitTerminalEvent === false || emittedScanCompleted) return;
+      emittedScanCompleted = true;
       // Caller-provided summary (from the loop's `state.summary` field)
       // wins over the bus-derived `lastDoneSummary` because the loop's
       // version may aggregate retries; fall back to the bus capture for
