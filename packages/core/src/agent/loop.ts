@@ -202,6 +202,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
   const heartbeatEnabled = !!(process.env.CI || process.env["0SEC_HEARTBEAT"] || process.env["0SEC_DEBUG"]);
   const loopStartedAt = Date.now();
   let lastToolName: string | null = null;
+  let lastHeartbeatAt = 0;
 
   // Two-stage budget warnings (Strix-inspired, 0sec#408). Same
   // closure-state pattern as native-loop.ts so unit tests share the
@@ -219,10 +220,14 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
     state.turnCount++;
 
     if (heartbeatEnabled) {
-      const elapsed = ((Date.now() - loopStartedAt) / 1000).toFixed(1);
-      process.stderr.write(
-        `[0sec:hb] t=${elapsed}s role=${config.role} turn=${state.turnCount}/${config.maxTurns} runtime=${runtime.type} last_tool=${lastToolName ?? "-"}\n`,
-      );
+      const now = Date.now();
+      if (now - lastHeartbeatAt >= 200) {
+        lastHeartbeatAt = now;
+        const elapsed = ((now - loopStartedAt) / 1000).toFixed(1);
+        process.stderr.write(
+          `[0sec:hb] t=${elapsed}s role=${config.role} turn=${state.turnCount}/${config.maxTurns} runtime=${runtime.type} last_tool=${lastToolName ?? "-"}\n`,
+        );
+      }
     }
 
     // ── Two-stage budget warnings (#408, Strix-inspired) ──

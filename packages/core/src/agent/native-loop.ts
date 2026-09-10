@@ -923,6 +923,7 @@ export async function runNativeAgentLoop(
   const heartbeatEnabled = !!(process.env.CI || process.env["0SEC_HEARTBEAT"] || process.env["0SEC_DEBUG"]);
   const loopStartedAt = Date.now();
   let lastToolName: string | null = null;
+  let lastHeartbeatAt = 0;
 
   // Context window compaction — allow re-compaction as context regrows
   let compactionCount = 0;
@@ -1409,13 +1410,17 @@ export async function runNativeAgentLoop(
     });
 
     if (heartbeatEnabled) {
-      const elapsed = ((Date.now() - loopStartedAt) / 1000).toFixed(1);
-      const inTok = state.totalUsage.inputTokens;
-      const outTok = state.totalUsage.outputTokens;
-      const cost = state.estimatedCostUsd.toFixed(4);
-      process.stderr.write(
-        `[0sec:hb] t=${elapsed}s role=${config.role} turn=${state.turnCount}/${config.maxTurns} tokens=${inTok}/${outTok} cost=$${cost} last_tool=${lastToolName ?? "-"}\n`,
-      );
+      const now = Date.now();
+      if (now - lastHeartbeatAt >= 200) {
+        lastHeartbeatAt = now;
+        const elapsed = ((now - loopStartedAt) / 1000).toFixed(1);
+        const inTok = state.totalUsage.inputTokens;
+        const outTok = state.totalUsage.outputTokens;
+        const cost = state.estimatedCostUsd.toFixed(4);
+        process.stderr.write(
+          `[0sec:hb] t=${elapsed}s role=${config.role} turn=${state.turnCount}/${config.maxTurns} tokens=${inTok}/${outTok} cost=$${cost} last_tool=${lastToolName ?? "-"}\n`,
+        );
+      }
     }
 
     try {
