@@ -25,12 +25,13 @@ sealed candidate artifacts
 
 ## Engagement boundary
 
-Every live run stays pinned to its own code, model, policy, scope, and
-model-visible tool set; resume and replay reuse that identity. A candidate can be
-evaluated while an engagement is active, but it cannot change the active worker.
-Provider model identifiers are not attestations of immutable model weights.
-An upstream alias or serving change can alter behavior without changing that
-identifier; re-evaluate observed outcomes before assuming equivalent performance.
+An improvement-plane promotion cannot replace the code, model configuration,
+policy, scope, or tools of an active worker. Resume and replay retain the
+recorded worker identity; evaluating a candidate does not replace that worker.
+This is not an attestation of immutable model weights: upstream aliases,
+serving changes, or configured runtime fallbacks can change model behavior.
+A requested model name alone is insufficient provenance; re-evaluate observed
+outcomes before assuming equivalent performance.
 
 Non-negotiable:
 
@@ -52,6 +53,22 @@ outcomes remain **unresolved** in the shared hunt ledger; model-only rejection
 must not become a known negative that anchors later research. Existing ledger
 files are not rewritten: re-evaluate any older model-only disprovals before
 reusing them as settled evidence.
+
+### Revision-aware codebase learning
+
+Scoped native-API research runs can call `remember_codebase` to retain architecture
+and dataflow notes. The host selects the repository root and hashes the cited
+files; the model cannot supply its own root or evidence digests. Notes use the
+existing private, redacted hunt-memory store, not source edits or model training.
+
+A fresh eligible run receives up to six still-current notes as **untrusted
+hints**. Changed, missing, out-of-scope, symlinked, or multiply linked evidence
+invalidates the note. File hashes establish which source the note refers to,
+not whether the model's interpretation is correct.
+
+Verification runs neither receive these notes nor get the learning capability.
+`0SEC_DISABLE_HUNT_MEMORY=1` disables recall and persistence. Resumed runs keep
+their existing context rather than silently receiving new notes.
 
 ### Source access consent
 
@@ -784,6 +801,7 @@ After building the CLI and its dependencies, run the real provider-backed checks
 ```bash
 node scripts/smoke-source-evolution.mjs
 node scripts/smoke-lens-evolution.mjs
+node scripts/smoke-codebase-learning.mjs
 ```
 
 The source check requires a non-root account with Docker access and the
@@ -793,6 +811,9 @@ small credential-detector benchmark. It does not measure general scanner quality
 The lens check exercises synthesis, labelled positive/held-out/clean fixtures,
 promotion, next-reader reload, and retirement. Both consume real provider usage,
 disable cross-run hunt memory, and fail rather than reporting skipped work as success.
+The codebase-learning check uses a separate temporary memory store and real model
+runs to learn a source-grounded note, recall it in a later run, and invalidate it
+after a cited file changes. It tests the lifecycle, not a measured accuracy gain.
 
 The trusted-main **Live evolution E2E** workflow accepts `lane=source`,
-`lane=lens`, or `lane=all` and retains measured outcomes and failure logs.
+`lane=lens`, `lane=codebase`, or `lane=all` and retains measured outcomes and failure logs.

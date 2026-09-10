@@ -232,6 +232,13 @@ import type { GuardContext } from "../plugins/guards.js";
 
 export { sanitizedEnv } from "./sanitized-env.js";
 
+const rememberCodebaseArgsSchema = z.object({
+  title: z.string().trim().min(1).max(2000),
+  summary: z.string().trim().min(1).max(4000),
+  paths: z.array(z.string().min(1).max(1024)).min(1).max(16),
+  tags: z.array(z.string().max(100)).max(16).optional(),
+}).strip();
+
 // ── Model self-extension: the `self_extend` front door ────────────────────────
 //
 // AIxCC T9 structured-output discipline (mirrors kernel_run): the tool-call
@@ -541,6 +548,7 @@ const SCOPED_SOURCE_AUDIT_TOOLS: Record<string, true> = {
   save_finding: true,
   update_finding: true,
   done: true,
+  remember_codebase: true,
   // Structured full-state plan (TodoWrite shape). Mutates only the run's plan
   // tracker, authorizes nothing, grants no capability — safe inside the scoped
   // source-audit trust boundary.
@@ -3226,6 +3234,17 @@ export class ToolExecutor {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: null, error: msg };
     }
+  }
+
+  private rememberCodebase(args: Record<string, unknown>): ToolResult {
+    if (!this.ctx.rememberCodebase) {
+      return { success: false, output: null, error: "Codebase learning is unavailable in this session" };
+    }
+    const parsed = rememberCodebaseArgsSchema.safeParse(args);
+    if (!parsed.success) {
+      return { success: false, output: null, error: parsed.error.issues[0]?.message ?? "Invalid codebase note" };
+    }
+    return { success: true, output: this.ctx.rememberCodebase(parsed.data) };
   }
 
   /**
@@ -8831,10 +8850,10 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     // role. It is a runtime-gated capability (`allowModelSelfExtension`, default
     // OFF), not a feature flag, so native-loop injects it into the model-facing
     // tool set explicitly when enabled — it must never leak in by omission here.
-    && name !== "self_extend",
+    && name !== "self_extend" && name !== "remember_codebase",
   );
   const scopedSourceTools = Object.keys(SCOPED_SOURCE_AUDIT_TOOLS).filter((name) =>
-    featureFlags.zeroverse || name !== "analyze_binary",
+    name !== "remember_codebase" && (featureFlags.zeroverse || name !== "analyze_binary"),
   );
 
 

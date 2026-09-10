@@ -7,7 +7,7 @@ on:
       lane:
         description: Lifecycle to exercise
         type: choice
-        options: [all, source, lens]
+        options: [all, source, lens, codebase]
         default: all
 
 permissions:
@@ -21,11 +21,11 @@ jobs:
   evolution:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
-        lane: ${{ fromJSON(inputs.lane == 'source' && '["source"]' || inputs.lane == 'lens' && '["lens"]' || '["source","lens"]') }}
+        lane: ${{ fromJSON(inputs.lane == 'source' && '["source"]' || inputs.lane == 'lens' && '["lens"]' || inputs.lane == 'codebase' && '["codebase"]' || '["source","lens","codebase"]') }}
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
@@ -59,7 +59,11 @@ jobs:
             echo "::error::DOGFOOD_OPENAI_API_KEY is required for live evolution."
             exit 1
           }
-          node scripts/smoke-${{ matrix.lane }}-evolution.mjs 2>&1 | tee evolution-${{ matrix.lane }}.jsonl
+          script="scripts/smoke-${{ matrix.lane }}-evolution.mjs"
+          if [ "${{ matrix.lane }}" = "codebase" ]; then
+            script="scripts/smoke-codebase-learning.mjs"
+          fi
+          node "$script" 2>&1 | tee evolution-${{ matrix.lane }}.jsonl
       - name: Retain measured lifecycle outcomes
         if: always()
         uses: actions/upload-artifact@v7
