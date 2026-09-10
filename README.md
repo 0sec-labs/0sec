@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://0.security/harness/">
-    <img src="assets/readme-cover.png" alt="Security research. Under your control. An ivory paper sculpture with a crimson edge." width="100%">
+    <img src="assets/readme-cover.png" alt="The open-source cybersecurity team. An ivory paper sculpture with a crimson edge." width="100%">
   </a>
 </p>
 
