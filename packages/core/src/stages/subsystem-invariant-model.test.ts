@@ -32,10 +32,8 @@ vi.mock("../runtime/llm-api.js", () => ({
 }));
 
 // Finder boundary — used only when candidates flow through runHuntScan.
-const agenticScanMock = vi.fn();
-vi.mock("../agentic-scanner.js", () => ({
-  agenticScan: (...args: unknown[]) => agenticScanMock(...args),
-}));
+const analysisAgentMock = vi.fn();
+vi.mock("../agent-runner.js", () => ({ runAnalysisAgent: (...args: unknown[]) => analysisAgentMock(...args) }));
 
 const {
   buildInvariantModel,
@@ -131,7 +129,7 @@ function fixtureModel(): InvariantModel {
 
 beforeEach(() => {
   mockModelLlm();
-  agenticScanMock.mockReset();
+  analysisAgentMock.mockReset();
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -291,7 +289,7 @@ describe("violationsToHuntPlan → runHuntScan (seedless → verified → ranked
     const v = findInvariantViolations(fixtureModel(), [{ file: "foo.c", text: FIXTURE_C }]);
     const plan = violationsToHuntPlan(fixtureModel(), v);
 
-    agenticScanMock.mockImplementation(async ({ config }: { config: { target: string } }) => ({
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { target: string } }) => ({
       findings: [mkFinding("f1", `bug at ${config.target}`)],
     }));
 
@@ -321,7 +319,7 @@ describe("runSubsystemInvariantHunt", () => {
     const root = makeSourceRoot();
     const modelPath = join(root, "model.json");
 
-    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding("g1", "bug")] }));
+    analysisAgentMock.mockImplementation(async () => ({ findings: [mkFinding("g1", "bug")] }));
     const verify = async () => ({ confirmed: true, reason: "ok" });
 
     const out = await runSubsystemInvariantHunt({

@@ -24,16 +24,15 @@
  *    refute → build+run+sanitizer reproduce). Injected, so prod wires the real
  *    verify pipeline and this stage stays generic.
  *
- * Reuses the finder (`agenticScan`) verbatim; the new part is the fan-out +
- * candidate model + the verify gate.
+ * Reuses the scoped source-analysis agent; fan-out and independent verification
+ * stay separate from network discovery and attack execution.
  */
 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import type { Finding, RuntimeMode, ScanConfig, ScanReport } from "@0sec/shared";
-import { agenticScan } from "../agentic-scanner.js";
+import type { Finding, RuntimeMode, ScanConfig } from "@0sec/shared";
 import { ScanCostLedger } from "../agent/cost-ledger.js";
 import { stampDeploymentContext } from "./deployment-context.js";
 import {
@@ -62,12 +61,16 @@ import {
   type CrossFamilyStatus,
 } from "./hunt-cross-family.js";
 import { scoreGeometry } from "../kernel/geometry-score.js";
+import { osecDB } from "@0sec/db";
+import { type AnalysisAgentResult, runAnalysisAgent } from "../agent-runner.js";
+import { reviewAgentPrompt } from "../analysis-prompts.js";
+import type { ScanListener } from "../scanner.js";
 
 // Per-scan throwaway SQLite DB. The finders/skeptics run concurrently and the
 // default DB is a single shared ~/.0sec/0sec.db — at any real fan-out width
 // they contend on its write lock ("SQLite database is locked"), which crashed
 // verify steps mid-sweep (NOT a refute — a crash, silently dropping the gate).
-// Each agenticScan gets its own DB so there is zero cross-scan contention.
+// Each source-analysis pass gets its own DB so there is zero cross-scan contention.
 let huntDbCounter = 0;
 function freshHuntDb(): string {
   return join(tmpdir(), `0sec-hunt-${process.pid}-${huntDbCounter++}.db`);
@@ -75,6 +78,39 @@ function freshHuntDb(): string {
 function cleanupHuntDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm"]) {
     try { rmSync(path + suffix, { force: true }); } catch { /* best-effort */ }
+  }
+}
+
+async function runSourceHunt(
+  config: ScanConfig,
+  hint: string,
+  purpose: "research" | "verify",
+  emit: ScanListener = () => {},
+): Promise<AnalysisAgentResult> {
+  const dbPath = freshHuntDb();
+  const db = new osecDB(dbPath);
+  try {
+    const sourceRoot = resolve(config.repoPath!);
+    const scanId = db.createScan(config);
+    const prompt = reviewAgentPrompt(sourceRoot, [], undefined, false, hint);
+    const result = await runAnalysisAgent({
+      role: "review",
+      purpose,
+      scopePath: sourceRoot,
+      target: config.target,
+      scanId,
+      config,
+      db,
+      emit,
+      cliPrompt: prompt,
+      cliSystemPrompt: "Perform an authorized, source-grounded security review within the supplied scope.",
+      agentSystemPrompt: prompt,
+    });
+    if (result.costCeilingExceeded) throw new Error("source analysis cost ceiling exceeded");
+    return result;
+  } finally {
+    db.close();
+    cleanupHuntDb(dbPath);
   }
 }
 
@@ -910,7 +946,7 @@ export function makeSkepticVerifier(opts: {
     const baseConfig = {
       ...(opts.costCeilingUsd !== undefined ? { costCeilingUsd: opts.costCeilingUsd } : {}),
       ...(opts.costLedger ? { costLedger: opts.costLedger } : {}),
-      target: candidate.path,
+      target: resolve(opts.sourceRoot, candidate.path),
       depth: "quick",
       format: "json",
       mode: "deep",
@@ -922,13 +958,8 @@ export function makeSkepticVerifier(opts: {
     /** Run one refute pass on `model`, in its own throwaway DB. */
     const refutePass = async (model?: string): Promise<boolean> => {
       const config: ScanConfig = { ...baseConfig, ...(model ? { model } : {}) };
-      const dbPath = freshHuntDb();
-      try {
-        const report = await agenticScan({ config, dbPath, challengeHint: hint });
-        return (report.findings ?? []).length > 0;
-      } finally {
-        cleanupHuntDb(dbPath);
-      }
+      const report = await runSourceHunt(config, hint, "verify");
+      return report.findings.length > 0;
     };
 
     let choice: CrossFamilyRefuteChoice = refuter;
@@ -1324,7 +1355,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         findings: [],
       };
     }
-    // Partial-evidence capture. agenticScan streams a `finding` event per
+    // Partial-evidence capture. Source analysis streams a `finding` event per
     // save_finding tool call as the finder works. When the finder HANGS and is
     // abandoned at the timeout, its returned promise never resolves — but the
     // findings it already streamed are real leads we must NOT silently discard
@@ -1333,7 +1364,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     // instead of an empty array. Reset at the top of each attempt so only the
     // LAST attempt's partials survive a transient-error retry.
     let partials: Finding[] = [];
-    // The raw agenticScan promise of the current attempt, captured so a
+    // The raw source-analysis promise of the current attempt, captured so a
     // finder abandoned at the timeout can still be harvested if it resolves
     // late (see the timed-out branch below). A ref object because assignments
     // happen inside the attemptOnce closure, invisible to TS's narrowing.
@@ -1353,36 +1384,30 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         lateRef.current = scanPromise;
         return await scanPromise;
       }
-      const dbPath = freshHuntDb();
-      try {
-        const config: ScanConfig = {
-          target: resolve(opts.sourceRoot, run.candidate.path),
-          depth,
-          format: "json",
-          mode: "deep",
-          timeout: 60_000,
-          runtime: opts.runtime,
-          repoPath: opts.sourceRoot,
-          ...(run.model ? { model: run.model } : {}),
-          ...(costCeilingUsd !== undefined ? { costCeilingUsd } : {}),
-          ...(costLedger ? { costLedger } : {}),
-        };
-        const scanPromise = agenticScan({
-          config,
-          dbPath,
-          emitTerminalEvent: false,
-          challengeHint: huntHint(opts.brief, run.candidate, run.lens.challengeHint),
-          onEvent: (event) => {
-            if (event.type !== "finding") return;
-            const partial = partialFindingFromEvent(event.data);
-            if (partial) partials.push(partial);
-          },
-        });
-        lateRef.current = scanPromise;
-        return await scanPromise;
-      } finally {
-        cleanupHuntDb(dbPath);
-      }
+      const config: ScanConfig = {
+        target: resolve(opts.sourceRoot, run.candidate.path),
+        depth,
+        format: "json",
+        mode: "deep",
+        timeout: 60_000,
+        runtime: opts.runtime,
+        repoPath: opts.sourceRoot,
+        ...(run.model ? { model: run.model } : {}),
+        ...(costCeilingUsd !== undefined ? { costCeilingUsd } : {}),
+        ...(costLedger ? { costLedger } : {}),
+      };
+      const scanPromise = runSourceHunt(
+        config,
+        huntHint(opts.brief, run.candidate, run.lens.challengeHint),
+        "research",
+        (event) => {
+          if (event.type !== "finding") return;
+          const partial = partialFindingFromEvent(event.data);
+          if (partial) partials.push(partial);
+        },
+      );
+      lateRef.current = scanPromise;
+      return await scanPromise;
     };
     const outcome = await runFinderResilient(attemptOnce, { timeoutMs: finderTimeoutMs, maxRetries: finderMaxRetries });
     if (outcome.status === "timed-out") finderAbort?.abort();

@@ -63,7 +63,7 @@ try {
   assert.deepEqual(claimForProcessing(queue), [], "a second consumer cannot steal the live claim");
   const before = loadAppsecFinderLenses();
   const seed = [{ id: "os-command-injection", challengeHint: "Hunt only OS command injection through child_process or subprocess. HTTP fetches are outside this lens; do not report SSRF under this lens." }];
-  const realProbe = makeFinderLensProbe({ runtime: "api", models: [modelId], depth: "quick", concurrency: 1, costCeilingUsd: 0.5, baseLenses: () => seed });
+  const realProbe = makeFinderLensProbe({ runtime: "api", models: [modelId], depth: "quick", concurrency: 1, costCeilingUsd: 0.5, baseLenses: () => seed, log: (message) => console.error(message) });
   let probeCalls = 0;
   let validationCostUsd = 0;
   const probe = Object.assign(async (...args) => {

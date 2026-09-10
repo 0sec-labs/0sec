@@ -83,6 +83,9 @@ on the published npm package and the GitHub Release tag.
 - Source-evolution confidence intervals no longer treat repeated executions of
   the same fixtures as independent evidence; unstable repeats cannot produce
   an informative interval.
+- Source hunt finders and refuters use the scoped source-analysis runner instead
+  of launching network discovery, attack, and verification phases for each file.
+  Source prompts now describe the scoped enumeration/search tools actually available.
 - The DeepSeek MCP profile now disables the web-fetch provider alongside its
   web service, preventing headless startup from waiting on a disabled service.
 - Source enumeration no longer follows repository symlinks or includes
