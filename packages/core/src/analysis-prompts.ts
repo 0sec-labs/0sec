@@ -4,7 +4,7 @@ import type { NpmAuditFinding, SemgrepFinding } from "@0sec/shared";
  * Build the system prompt for the package audit agent.
  *
  * The agent receives static scanner findings as context and has access to the source
- * code via read_file + run_command. Its job is to:
+ * code via read_file, list_files, and search_files. Its job is to:
  * 1. Triage static scanner findings — determine real exploitability
  * 2. Hunt for vulnerabilities automated scanners missed
  * 3. Map data flow from untrusted input to sensitive sinks
@@ -201,7 +201,7 @@ template source") rather than silently inflating it to \`critical\`.
 
 ## Rules
 - Use read_file to examine source code
-- Use run_command with rg and an available static scanner for targeted searches. FoxGuard is the default; Semgrep is optional, not a required tool.
+- Use list_files and search_files for scoped enumeration and targeted pattern searches. Shell execution and scanner launches are not available in this source-review loop.
 - Use save_finding for EVERY confirmed vulnerability — include:
   - Clear title describing the bug
   - The vulnerable code path
@@ -245,8 +245,6 @@ pass the gate, satisfy any one of:
   \`.js\`, \`.mjs\`, \`.cjs\`, \`.py\`, \`.rs\`, \`.go\`, \`.c\`,
   \`.cpp\`, or \`.sh\`) — start with the ecosystem's manifest and public
   entry points.
-- OR run at least one \`run_command\` (e.g. \`rg --files\` to map files,
-  or a targeted grep for a sink pattern).
 - OR spend > 60s with at least 5 tool calls of real investigation.
 
 If you genuinely cannot find anything to audit after the gate is
@@ -259,7 +257,7 @@ API surface").`;
  * Build the system prompt for the source code review agent.
  *
  * The agent receives static scanner findings as context and has access to the full
- * repo via read_file + run_command. Its job is to:
+ * repo via read_file, list_files, and search_files. Its job is to:
  * 1. Map the attack surface — public APIs, entry points, untrusted input
  * 2. Triage static scanner findings for real exploitability
  * 3. Hunt for vulnerabilities automated scanners missed using deep code analysis
@@ -453,7 +451,7 @@ template source") rather than silently inflating it to \`critical\`.
 
 ## Rules
 - Use read_file to examine source code — read enough context (50+ lines) to understand the code
-- Use run_command with rg/find and an available static scanner for searching patterns across the codebase. FoxGuard is the default; Semgrep is optional, not a required tool.
+- Use list_files and search_files for scoped enumeration and pattern searches across the codebase. Shell execution and scanner launches are not available in this source-review loop.
 - Use save_finding for EVERY confirmed vulnerability with:
   - Clear title describing the bug type and location
   - The vulnerable code path (file:line)

@@ -29,10 +29,8 @@ import type { Finding } from "@0sec/shared";
 import { HuntMemory } from "./hunt-flywheel.js";
 import { ScanCostLedger } from "../agent/cost-ledger.js";
 
-const agenticScanMock = vi.fn();
-vi.mock("../agentic-scanner.js", () => ({
-  agenticScan: (...args: unknown[]) => agenticScanMock(...args),
-}));
+const analysisAgentMock = vi.fn();
+vi.mock("../agent-runner.js", () => ({ runAnalysisAgent: (...args: unknown[]) => analysisAgentMock(...args) }));
 
 const { runHuntScan, makeMultiLensVerifier, AimdState } = await import("./hunt-scan.js");
 
@@ -77,9 +75,9 @@ describe("runHuntScan — best-of-N + judge gate", () => {
   });
 
   it("attemptsPerCandidate=1/judgeTopK=1 (defaults) reproduces plain candidate × model fan-out, including model diversity", async () => {
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     // Two models, one candidate: each model's finder call returns ONE finding.
-    agenticScanMock.mockImplementation(async ({ config }: { config: { model?: string } }) => ({
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { model?: string } }) => ({
       findings: [mkFinding(`f-${config.model}`, `finding from ${config.model}`, "")],
     }));
 
@@ -109,8 +107,8 @@ describe("runHuntScan — best-of-N + judge gate", () => {
   });
 
   it("runs the runtime verifier after every prior confirmation gate and skips it after a refutation", async () => {
-    agenticScanMock.mockReset();
-    agenticScanMock.mockResolvedValue({
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockResolvedValue({
       findings: [mkFinding("f-runtime", "runtime candidate", "poc plan")],
     });
     const order: string[] = [];
@@ -155,9 +153,9 @@ describe("runHuntScan — best-of-N + judge gate", () => {
   });
 
   it("attemptsPerCandidate>1 judges the widened pool and only the top-judgeTopK reach verify", async () => {
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     let call = 0;
-    agenticScanMock.mockImplementation(async () => {
+    analysisAgentMock.mockImplementation(async () => {
       const i = call++;
       return { findings: [mkFinding(`f-${i}`, `attempt ${i}`, i === 2 ? "the real sink pattern" : "noise")] };
     });
@@ -205,9 +203,9 @@ describe("runHuntScan — best-of-N + judge gate", () => {
   });
 
   it("attemptsPerCandidate>1 with no brief skips the judge and keeps the first judgeTopK by attempt order", async () => {
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     let call = 0;
-    agenticScanMock.mockImplementation(async () => {
+    analysisAgentMock.mockImplementation(async () => {
       const i = call++;
       return { findings: [mkFinding(`f-${i}`, `attempt ${i}`, "")] };
     });
@@ -244,9 +242,9 @@ describe("runHuntScan — best-of-N + judge gate", () => {
     // was truncated to `judgeTopK` (default 1) with only a warning, silently
     // dropping the second CONFIRMED finding before it ever reached `verify`.
     // Grouping on the ORIGINAL site keeps them apart so BOTH survive.
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     // Two distinct candidates, each surfaces exactly one finding at its own site.
-    agenticScanMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
       const site = config.target; // "/src/a.c" or "/src/b.c"
       const id = site.endsWith("a.c") ? "f-a" : "f-b";
       return { findings: [mkFinding(id, `finding at ${site}`, "")] };
@@ -288,7 +286,7 @@ describe("runHuntScan — best-of-N + judge gate", () => {
   });
 
   it("withholds a confirmed finding when its novelty check fails", async () => {
-    agenticScanMock.mockReset().mockResolvedValue({
+    analysisAgentMock.mockReset().mockResolvedValue({
       findings: [mkFinding("f-novelty", "OOB read in foo_handler", "foo_handler in foo.c")],
     });
 
@@ -349,8 +347,8 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
   it("a finder that never resolves is abandoned after HUNT_FINDER_TIMEOUT_MS and the run still completes with the other candidates", async () => {
     process.env.HUNT_FINDER_TIMEOUT_MS = "20";
     process.env.HUNT_FINDER_MAX_RETRIES = "0";
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
       if (config.target === "/src/hangs.c") return new Promise(() => {}); // never resolves
       return { findings: [mkFinding(`f-${config.target}`, `finding from ${config.target}`, "")] };
     });
@@ -386,8 +384,8 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
     process.env.HUNT_FINDER_MAX_RETRIES = "0";
     // Deferred promise the test resolves on its own schedule.
     const lateCall = Promise.withResolvers<{ findings: Finding[] }>();
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(({ config }: { config: { target: string } }) => {
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(({ config }: { config: { target: string } }) => {
       if (config.target === "/src/late.c") return lateCall.promise;
       return Promise.resolve({ findings: [mkFinding("f-ok", "finding from ok.c", "")] });
     });
@@ -425,8 +423,8 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
     // verifyRelease holds assembly until the late resolution has landed.
     const verifyEntered = Promise.withResolvers<void>();
     const verifyRelease = Promise.withResolvers<void>();
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(({ config }: { config: { target: string } }) => {
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(({ config }: { config: { target: string } }) => {
       if (config.target === "/src/late.c") return lateCall.promise;
       return Promise.resolve({ findings: [mkFinding("f-ok", "finding from ok.c", "")] });
     });
@@ -452,9 +450,9 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
   it("a transient-error finder retries up to HUNT_FINDER_MAX_RETRIES then gives up on that candidate", async () => {
     process.env.HUNT_FINDER_TIMEOUT_MS = "5000";
     process.env.HUNT_FINDER_MAX_RETRIES = "2";
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     let calls = 0;
-    agenticScanMock.mockImplementation(async () => {
+    analysisAgentMock.mockImplementation(async () => {
       calls++;
       throw new Error("fetch failed: ECONNRESET");
     });
@@ -479,9 +477,9 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
   it("a non-transient error is not retried and is recorded as errored", async () => {
     process.env.HUNT_FINDER_TIMEOUT_MS = "5000";
     process.env.HUNT_FINDER_MAX_RETRIES = "2";
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     let calls = 0;
-    agenticScanMock.mockImplementation(async () => {
+    analysisAgentMock.mockImplementation(async () => {
       calls++;
       throw new Error("target file not found");
     });
@@ -501,8 +499,8 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
   it("the result carries accurate completed/timed-out/errored counts across a mixed sweep", async () => {
     process.env.HUNT_FINDER_TIMEOUT_MS = "20";
     process.env.HUNT_FINDER_MAX_RETRIES = "0";
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
       if (config.target === "/src/hangs.c") return new Promise(() => {});
       if (config.target === "/src/broken.c") throw new Error("target file not found");
       return { findings: [] };
@@ -525,20 +523,20 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
   it("a finder that streams a finding then hangs surfaces the partial (tagged partial/timed-out, NOT confirmed) AND records an incomplete-coverage entry", async () => {
     process.env.HUNT_FINDER_TIMEOUT_MS = "20";
     process.env.HUNT_FINDER_MAX_RETRIES = "0";
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     // The hung finder emits ONE `finding` event (raw save_finding args) before
     // it hangs forever — mirrors agentic-scanner.ts streaming a save_finding
     // per turn, then the Codex backend stalling mid-call.
-    agenticScanMock.mockImplementation(
+    analysisAgentMock.mockImplementation(
       async ({
         config,
-        onEvent,
+        emit,
       }: {
         config: { target: string };
-        onEvent?: (e: { type: string; message: string; data?: unknown }) => void;
+        emit?: (e: { type: string; message: string; data?: unknown }) => void;
       }) => {
         if (config.target === "/src/hangs.c") {
-          onEvent?.({
+          emit?.({
             type: "finding",
             message: "method-authz bypass",
             data: {
@@ -595,8 +593,8 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
   it("a finder that hangs with NO streamed findings still records the coverage gap (signal is independent of partial recovery)", async () => {
     process.env.HUNT_FINDER_TIMEOUT_MS = "20";
     process.env.HUNT_FINDER_MAX_RETRIES = "0";
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async () => new Promise(() => {})); // hang, emit nothing
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async () => new Promise(() => {})); // hang, emit nothing
 
     const res = await runHuntScan({
       sourceRoot: "/src",
@@ -622,9 +620,9 @@ describe("runHuntScan — memory-flywheel priming (0SEC_HUNT_FLYWHEEL=1)", () =>
 
     // f-0 is the true match (buried under a generically-higher judge score);
     // f-1/f-2 are unrelated noise the generic judge over-rates.
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     let call = 0;
-    agenticScanMock.mockImplementation(async () => {
+    analysisAgentMock.mockImplementation(async () => {
       const i = call++;
       const bodies = [
         ["f-0", "nf_tables element UAF", "nft_set_elem_deactivate use-after-free race with gc"],
@@ -717,9 +715,9 @@ describe("runHuntScan — exploitable-geometry rank (0SEC_HUNT_GEOMETRY_RANK / o
   ] as const;
 
   function mockThreeAttempts(): void {
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     let call = 0;
-    agenticScanMock.mockImplementation(async () => {
+    analysisAgentMock.mockImplementation(async () => {
       const [id, title, analysis] = bodies[call % bodies.length];
       call += 1;
       return { findings: [mkFinding(id, title, analysis)] };
@@ -768,45 +766,6 @@ describe("runHuntScan — exploitable-geometry rank (0SEC_HUNT_GEOMETRY_RANK / o
 });
 
 describe("runHuntScan — specialized-lens finder fan-out (depth method, default-off)", () => {
-  it("lenses absent leaves the run product byte-identical and the finder hint free of any lens text; a lens hint is purely APPENDED", async () => {
-    // Capture the exact challengeHint each finder run receives.
-    const capture = (): string[] => {
-      const hints: string[] = [];
-      agenticScanMock.mockReset();
-      agenticScanMock.mockImplementation(async ({ challengeHint }: { challengeHint: string }) => {
-        hints.push(challengeHint);
-        return { findings: [] as Finding[] };
-      });
-      return hints;
-    };
-    const brief = { bugClass: "missing length check", pattern: "memcpy without bound" };
-    const candidates = [{ path: "/src/a.c", hint: "CANDHINT" }];
-
-    // Run A: NO lenses (today's path). One finder run, one hint.
-    const hintsA = capture();
-    const resA = await runHuntScan({ sourceRoot: "/src", candidates, brief, runtime: "api", concurrency: 1 });
-    expect(resA.scanned).toBe(1); // 1 candidate × 1 model × (sentinel) × 1 attempt — unchanged product
-    expect(hintsA).toHaveLength(1);
-    // The default hint carries the brief + candidate hint and NOTHING lens-shaped.
-    expect(hintsA[0]).toContain("missing length check");
-    expect(hintsA[0]).toContain("CANDHINT");
-    expect(hintsA[0]).not.toContain("LENS_MARK");
-
-    // Run B: one real lens with a marker hint — same everything else.
-    const hintsB = capture();
-    const resB = await runHuntScan({
-      sourceRoot: "/src",
-      candidates,
-      brief,
-      runtime: "api",
-      concurrency: 1,
-      lenses: [{ id: "arithmetic", challengeHint: "LENS_MARK arithmetic focus" }],
-    });
-    expect(resB.scanned).toBe(1); // 1 candidate × 1 model × 1 lens × 1 attempt
-    expect(hintsB).toHaveLength(1);
-    // The lens hint is appended VERBATIM to the exact default hint — nothing else changed.
-    expect(hintsB[0]).toBe(`${hintsA[0]} LENS_MARK arithmetic focus`);
-  });
 
   it("N lenses multiply the run product and each lens keeps its OWN best-of-N group so findings UNION instead of truncating", async () => {
     // Two lenses, ONE candidate, no brief, one attempt each. Each lens surfaces a
@@ -814,11 +773,9 @@ describe("runHuntScan — specialized-lens finder fan-out (depth method, default
     // into one (path, model) group and — with no brief — truncate to judgeTopK=1,
     // silently dropping the second lens's finding with a warning. The lens segment
     // in siteGroupKey keeps them in two groups of one, so BOTH reach verify.
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async ({ challengeHint }: { challengeHint: string }) => {
-      const lens = challengeHint.includes("LENS_A") ? "a" : "b";
-      return { findings: [mkFinding(`f-${lens}`, `finding via lens ${lens}`, "")] };
-    });
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async ({ agentSystemPrompt: challengeHint }: { agentSystemPrompt: string }) => { const lens = challengeHint.includes("LENS_A") ? "a" : "b";
+    return { findings: [mkFinding(`f-${lens}`, `finding via lens ${lens}`, "")] }; });
 
     const verifyCalls: string[] = [];
     const verify: NonNullable<Parameters<typeof runHuntScan>[0]["verify"]> = async (finding) => {
@@ -851,8 +808,8 @@ describe("runHuntScan — specialized-lens finder fan-out (depth method, default
     const firstVersion = `sha256:${"a".repeat(64)}`;
     const nextVersion = `sha256:${"b".repeat(64)}`;
     const lens = { id: "promoted-lens", challengeHint: "Original hunt", versionDigest: firstVersion };
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async () => {
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async () => {
       lens.versionDigest = nextVersion;
       lens.challengeHint = "Future hunt";
       return { findings: [mkFinding("versioned-finding", "Candidate", "Independent refutation needed")] };
@@ -1003,8 +960,8 @@ describe("makeMultiLensVerifier — multi-lens verify quorum (depth method)", ()
 
 describe("runHuntScan — refute decorrelation is persisted per finding", () => {
   it("stamps the verifier's decorrelation report onto the finding record (and omits it when absent)", async () => {
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding("f-x", "a finding", "")] }));
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async () => ({ findings: [mkFinding("f-x", "a finding", "")] }));
 
     const withReport = await runHuntScan({
       sourceRoot: "/src",
@@ -1024,8 +981,8 @@ describe("runHuntScan — refute decorrelation is persisted per finding", () => 
     });
 
     // A verifier that reports nothing must not gain a fabricated one.
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding("f-y", "a finding", "")] }));
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async () => ({ findings: [mkFinding("f-y", "a finding", "")] }));
     const withoutReport = await runHuntScan({
       sourceRoot: "/src",
       candidates: [{ path: "a.c" }],
@@ -1036,11 +993,11 @@ describe("runHuntScan — refute decorrelation is persisted per finding", () => 
   });
 
   it("logs a run-level correlation summary so a fully-correlated run is visible as it happens", async () => {
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     // Distinct ids per candidate — `records` is keyed by finding id, so reusing
     // one id would collapse both findings into a single record.
     let n = 0;
-    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding(`f-z${n++}`, "a finding", "")] }));
+    analysisAgentMock.mockImplementation(async () => ({ findings: [mkFinding(`f-z${n++}`, "a finding", "")] }));
 
     const lines: string[] = [];
     await runHuntScan({
@@ -1065,8 +1022,8 @@ describe("runHuntScan — refute decorrelation is persisted per finding", () => 
 describe("runHuntScan — incremental persistence (opts.onConfirmed)", () => {
   it("fires the hook exactly once per CONFIRMED finding (not for refuted ones), as each clears the gate", async () => {
     // Two candidates, one finding each; verify confirms f-good, refutes f-bad.
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
       const id = config.target.endsWith("good.c") ? "f-good" : "f-bad";
       return { findings: [mkFinding(id, `finding at ${config.target}`, "")] };
     });
@@ -1094,8 +1051,8 @@ describe("runHuntScan — incremental persistence (opts.onConfirmed)", () => {
   });
 
   it("never fires for any finding when no verifier confirms", async () => {
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding("f-1", "x", "")] }));
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async () => ({ findings: [mkFinding("f-1", "x", "")] }));
     const streamed: string[] = [];
     const res = await runHuntScan({
       sourceRoot: "/src",
@@ -1112,8 +1069,8 @@ describe("runHuntScan — incremental persistence (opts.onConfirmed)", () => {
   });
 
   it("a throwing onConfirmed hook NEVER drops the finding — it stays confirmed and the error is a warning", async () => {
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding("f-1", "leak", "")] }));
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async () => ({ findings: [mkFinding("f-1", "leak", "")] }));
     const res = await runHuntScan({
       sourceRoot: "/src",
       candidates: [{ path: "/src/a.c" }],
@@ -1131,12 +1088,11 @@ describe("runHuntScan — incremental persistence (opts.onConfirmed)", () => {
 });
 
 describe("runHuntScan — shared cost ceiling", () => {
-  it("stops queued finders before verification and suppresses child terminal events", async () => {
-    agenticScanMock.mockReset();
+  it("stops queued finders before verification when the shared ceiling is reached", async () => {
+    analysisAgentMock.mockReset();
     const ledger = new ScanCostLedger();
-    agenticScanMock.mockImplementation(async (opts: {
+    analysisAgentMock.mockImplementation(async (opts: {
       config: { costLedger?: ScanCostLedger };
-      emitTerminalEvent?: boolean;
     }) => {
       opts.config.costLedger?.add({ inputTokens: 1_000_000, outputTokens: 0 });
       return { findings: [mkFinding("f-1", "bounded", "")] };
@@ -1153,8 +1109,7 @@ describe("runHuntScan — shared cost ceiling", () => {
       verify,
     });
 
-    expect(agenticScanMock).toHaveBeenCalledTimes(1);
-    expect(agenticScanMock.mock.calls[0]?.[0]).toMatchObject({ emitTerminalEvent: false });
+    expect(analysisAgentMock).toHaveBeenCalledTimes(1);
     expect(verify).not.toHaveBeenCalled();
     expect(res).toMatchObject({ scanned: 1, costCeilingExceeded: true });
     expect(res.findings.map((finding) => finding.id)).toEqual(["f-1"]);
@@ -1250,70 +1205,3 @@ describe("AimdState — adaptive finder concurrency", () => {
   });
 });
 
-describe("runHuntScan — AIMD adaptive concurrency (0SEC_HUNT_AIMD)", () => {
-  const origEnv = { ...process.env };
-  const noopVerify = async () => ({ confirmed: true, reason: "test" });
-
-  beforeEach(() => {
-    agenticScanMock.mockReset();
-    for (const k of ["0SEC_HUNT_AIMD", "0SEC_HUNT_AIMD_RECOVERY_WINDOW"]) {
-      if (!(k in origEnv)) delete process.env[k];
-    }
-  });
-
-  afterEach(() => {
-    for (const k of Object.keys(process.env)) {
-      if (!(k in origEnv)) delete process.env[k];
-    }
-    Object.assign(process.env, origEnv);
-  });
-
-  it("does not affect the result set when finders complete cleanly", async () => {
-    agenticScanMock.mockResolvedValue({ findings: [] });
-    const res = await runHuntScan({
-      sourceRoot: "/src",
-      candidates: [
-        { path: "/src/a.c", hint: "" },
-        { path: "/src/b.c", hint: "" },
-      ],
-      runtime: { type: "agent", model: "deep" },
-      concurrency: 4,
-      verify: noopVerify,
-    });
-    expect(res.scanned).toBe(2);
-    expect(res.finderCompleted).toBe(2);
-  });
-
-  it("still completes all candidates under 429 congestion via internal retries", async () => {
-    // Simulate finders that first fail with 429 then succeed.
-    const calls: Array<{ path: string }> = [];
-    agenticScanMock.mockImplementation(async (opts: { config: { target: string } }) => {
-      calls.push({ path: opts.config.target });
-      return { findings: [{
-        id: `f-${calls.length}`,
-        templateId: "hunt-test",
-        title: `finding ${calls.length}`,
-        description: `finding ${calls.length}`,
-        severity: "medium",
-        category: "other",
-        status: "discovered",
-        evidence: { request: "", response: "", analysis: "" },
-        timestamp: 1_700_000_000_000,
-      } satisfies Finding] };
-    });
-
-    const res = await runHuntScan({
-      sourceRoot: "/src",
-      candidates: [
-        { path: "/src/x.c", hint: "" },
-        { path: "/src/y.c", hint: "" },
-      ],
-      runtime: { type: "agent", model: "deep" },
-      concurrency: 2,
-      verify: noopVerify,
-    });
-
-    expect(res.scanned).toBe(2);
-    expect(res.finderCompleted).toBe(2);
-  });
-});

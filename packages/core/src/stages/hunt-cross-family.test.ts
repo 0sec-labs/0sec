@@ -30,10 +30,8 @@ import {
   selectCrossFamilyRefuter,
 } from "./hunt-cross-family.js";
 
-const agenticScanMock = vi.fn();
-vi.mock("../agentic-scanner.js", () => ({
-  agenticScan: (...args: unknown[]) => agenticScanMock(...args),
-}));
+const analysisAgentMock = vi.fn();
+vi.mock("../agent-runner.js", () => ({ runAnalysisAgent: (...args: unknown[]) => analysisAgentMock(...args) }));
 
 const { makeSkepticVerifier } = await import("./hunt-scan.js");
 
@@ -301,9 +299,9 @@ describe("selectCrossFamilyRefuter", () => {
 describe("makeSkepticVerifier — cross-family wiring", () => {
   it("gate explicitly OFF: the finder model and reason string are byte-identical to the pre-#661 path", async () => {
     withProviders({ ANTHROPIC_API_KEY: "sk-ant-x", OPENAI_API_KEY: "sk-x", "0SEC_HUNT_CROSS_FAMILY": "0" });
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     let capturedModel: string | undefined = "sentinel";
-    agenticScanMock.mockImplementation(async ({ config }: { config: { model?: string } }) => {
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { model?: string } }) => {
       capturedModel = config.model;
       return { findings: [mkFinding("survivor", "still real")] };
     });
@@ -331,10 +329,10 @@ describe("makeSkepticVerifier — cross-family wiring", () => {
   it("SINGLE PROVIDER (default flag ON): degrades to the same-family refuter — no error, refutation still runs", async () => {
     // The deployment shape that decides whether default-ON is safe: one key.
     withProviders({ ANTHROPIC_API_KEY: "sk-ant-x" });
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     let calls = 0;
     let capturedModel: string | undefined = "sentinel";
-    agenticScanMock.mockImplementation(async ({ config }: { config: { model?: string } }) => {
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { model?: string } }) => {
       calls++;
       capturedModel = config.model;
       return { findings: [] };
@@ -361,9 +359,9 @@ describe("makeSkepticVerifier — cross-family wiring", () => {
 
   it("TWO PROVIDERS (default flag ON): finder and refuter resolve to DIFFERENT families with no explicit roster", async () => {
     withProviders({ ANTHROPIC_API_KEY: "sk-ant-x", Z_AI_API_KEY: "z-x" });
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     let capturedModel: string | undefined = "sentinel";
-    agenticScanMock.mockImplementation(async ({ config }: { config: { model?: string } }) => {
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { model?: string } }) => {
       capturedModel = config.model;
       return { findings: [mkFinding("survivor", "still real")] };
     });
@@ -392,9 +390,9 @@ describe("makeSkepticVerifier — cross-family wiring", () => {
 
   it("a FAILING cross-family refuter degrades to the original model instead of throwing (a throw drops the finding upstream)", async () => {
     withProviders({ ANTHROPIC_API_KEY: "sk-ant-x", Z_AI_API_KEY: "z-x" });
-    agenticScanMock.mockReset();
+    analysisAgentMock.mockReset();
     const attempted: Array<string | undefined> = [];
-    agenticScanMock.mockImplementation(async ({ config }: { config: { model?: string } }) => {
+    analysisAgentMock.mockImplementation(async ({ config }: { config: { model?: string } }) => {
       attempted.push(config.model);
       // The realistic failure: the key is present but the account cannot reach
       // that model id.
@@ -422,8 +420,8 @@ describe("makeSkepticVerifier — cross-family wiring", () => {
 
   it("a SAME-family refuter failure still propagates — degradation must not swallow real gate errors", async () => {
     withProviders({ ANTHROPIC_API_KEY: "sk-ant-x" });
-    agenticScanMock.mockReset();
-    agenticScanMock.mockImplementation(async () => {
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockImplementation(async () => {
       throw new Error("provider down");
     });
 

@@ -34,10 +34,8 @@ import {
   type KnownNegative,
 } from "./hunt-negatives.js";
 
-const agenticScanMock = vi.fn();
-vi.mock("../agentic-scanner.js", () => ({
-  agenticScan: (...args: unknown[]) => agenticScanMock(...args),
-}));
+const analysisAgentMock = vi.fn();
+vi.mock("../agent-runner.js", () => ({ runAnalysisAgent: (...args: unknown[]) => analysisAgentMock(...args) }));
 
 const { makeSkepticVerifier } = await import("./hunt-scan.js");
 
@@ -205,14 +203,12 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
     const prev = process.env["0SEC_HUNT_NEGATIVES"];
     process.env["0SEC_HUNT_NEGATIVES"] = "1";
     try {
-      agenticScanMock.mockReset();
+      analysisAgentMock.mockReset();
       let capturedHint = "";
-      agenticScanMock.mockImplementation(async ({ challengeHint }: { challengeHint: string }) => {
-        capturedHint = challengeHint;
-        // The finder still runs and can still "confirm" (survive) despite the
-        // negative context — nothing here auto-rejects.
-        return { findings: [mkFinding("survivor", "still real", "")] };
-      });
+      analysisAgentMock.mockImplementation(async ({ agentSystemPrompt: challengeHint }: { agentSystemPrompt: string }) => { capturedHint = challengeHint;
+      // The finder still runs and can still "confirm" (survive) despite the
+      // negative context — nothing here auto-rejects.
+      return { findings: [mkFinding("survivor", "still real", "")] }; });
 
       const negative = mkNegative();
       const verify = makeSkepticVerifier({ sourceRoot: "/src", runtime: "api", negatives: [negative] });
@@ -238,12 +234,10 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
     const prev = process.env["0SEC_HUNT_NEGATIVES"];
     process.env["0SEC_HUNT_NEGATIVES"] = "1";
     try {
-      agenticScanMock.mockReset();
+      analysisAgentMock.mockReset();
       let capturedHint = "";
-      agenticScanMock.mockImplementation(async ({ challengeHint }: { challengeHint: string }) => {
-        capturedHint = challengeHint;
-        return { findings: [] };
-      });
+      analysisAgentMock.mockImplementation(async ({ agentSystemPrompt: challengeHint }: { agentSystemPrompt: string }) => { capturedHint = challengeHint;
+      return { findings: [] }; });
 
       const negative = mkNegative();
       const verify = makeSkepticVerifier({ sourceRoot: "/src", runtime: "api", negatives: [negative] });
@@ -261,12 +255,10 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
     const prev = process.env["0SEC_HUNT_NEGATIVES"];
     delete process.env["0SEC_HUNT_NEGATIVES"];
     try {
-      agenticScanMock.mockReset();
+      analysisAgentMock.mockReset();
       let capturedHint = "";
-      agenticScanMock.mockImplementation(async ({ challengeHint }: { challengeHint: string }) => {
-        capturedHint = challengeHint;
-        return { findings: [mkFinding("survivor", "still real", "")] };
-      });
+      analysisAgentMock.mockImplementation(async ({ agentSystemPrompt: challengeHint }: { agentSystemPrompt: string }) => { capturedHint = challengeHint;
+      return { findings: [mkFinding("survivor", "still real", "")] }; });
 
       const negative = mkNegative();
       const verify = makeSkepticVerifier({ sourceRoot: "/src", runtime: "api", negatives: [negative] });
@@ -292,12 +284,10 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
     const prev = process.env["0SEC_HUNT_NEGATIVES"];
     delete process.env["0SEC_HUNT_NEGATIVES"];
     try {
-      agenticScanMock.mockReset();
+      analysisAgentMock.mockReset();
       let capturedHint = "";
-      agenticScanMock.mockImplementation(async ({ challengeHint }: { challengeHint: string }) => {
-        capturedHint = challengeHint;
-        return { findings: [] };
-      });
+      analysisAgentMock.mockImplementation(async ({ agentSystemPrompt: challengeHint }: { agentSystemPrompt: string }) => { capturedHint = challengeHint;
+      return { findings: [] }; });
 
       const many: KnownNegative[] = Array.from({ length: 50 }, (_, i) => ({
         ...mkNegative(),
@@ -322,12 +312,10 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
     const prev = process.env["0SEC_HUNT_NEGATIVES"];
     process.env["0SEC_HUNT_NEGATIVES"] = "0";
     try {
-      agenticScanMock.mockReset();
+      analysisAgentMock.mockReset();
       let capturedHint = "";
-      agenticScanMock.mockImplementation(async ({ challengeHint }: { challengeHint: string }) => {
-        capturedHint = challengeHint;
-        return { findings: [] };
-      });
+      analysisAgentMock.mockImplementation(async ({ agentSystemPrompt: challengeHint }: { agentSystemPrompt: string }) => { capturedHint = challengeHint;
+      return { findings: [] }; });
 
       const negative = mkNegative();
       const verify = makeSkepticVerifier({ sourceRoot: "/src", runtime: "api", negatives: [negative] });

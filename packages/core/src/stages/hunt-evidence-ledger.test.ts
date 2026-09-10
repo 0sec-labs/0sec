@@ -43,10 +43,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 // The skeptic-wiring block below drives `makeSkepticVerifier` without a real
 // finder — same mock idiom as hunt-negatives.test.ts.
-const agenticScanMock = vi.fn();
-vi.mock("../agentic-scanner.js", () => ({
-  agenticScan: (...args: unknown[]) => agenticScanMock(...args),
-}));
+const analysisAgentMock = vi.fn();
+vi.mock("../agent-runner.js", () => ({ runAnalysisAgent: (...args: unknown[]) => analysisAgentMock(...args) }));
 
 let dir: string;
 let ledger: string;
@@ -366,8 +364,8 @@ describe("append-only and idempotence", () => {
 describe("makeSkepticVerifier wiring", () => {
   it("records its verdict and lets a LATER verdict in the same run see it", async () => {
     // Worker A refutes: the mocked refute pass returns no findings.
-    agenticScanMock.mockReset();
-    agenticScanMock.mockResolvedValue({ findings: [] });
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockResolvedValue({ findings: [] });
     const { makeSkepticVerifier } = await import("./hunt-scan.js");
 
     const candidate = { path: "drivers/net/wireless/foo.c" };
@@ -394,7 +392,7 @@ describe("makeSkepticVerifier wiring", () => {
 
     // Worker B, constructed AFTER worker A already ran (the in-run case the
     // end-of-run corpus cannot cover), gets the prior refute in its prompt.
-    agenticScanMock.mockClear();
+    analysisAgentMock.mockClear();
     const workerB = makeSkepticVerifier({
       sourceRoot: dir,
       runtime: "api",
@@ -403,25 +401,25 @@ describe("makeSkepticVerifier wiring", () => {
       ledgerPath: ledger,
     });
     await workerB(finding, candidate);
-    const hint = agenticScanMock.mock.calls.at(-1)?.[0]?.challengeHint as string;
+    const hint = analysisAgentMock.mock.calls.at(-1)?.[0]?.agentSystemPrompt as string;
     expect(hint).toContain("KNOWN PRIOR REFUTE");
     expect(hint).toContain("adversarial refute pass over drivers/net/wireless/foo.c");
   });
 
   it("leaves the prompt untouched and writes nothing when no ledger is configured", async () => {
-    agenticScanMock.mockReset();
-    agenticScanMock.mockResolvedValue({ findings: [] });
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockResolvedValue({ findings: [] });
     const { makeSkepticVerifier } = await import("./hunt-scan.js");
     const verifier = makeSkepticVerifier({ sourceRoot: dir, runtime: "api", model: "model-a", crossFamilyRefute: false });
     await verifier(mkFinding("some claim", "analysis"), { path: "a.c" });
-    const hint = agenticScanMock.mock.calls.at(-1)?.[0]?.challengeHint as string;
+    const hint = analysisAgentMock.mock.calls.at(-1)?.[0]?.agentSystemPrompt as string;
     expect(hint).not.toContain("KNOWN PRIOR REFUTE");
     expect(existsSync(ledger)).toBe(false);
   });
 
   it("does not let a ledger I/O failure change the verdict", async () => {
-    agenticScanMock.mockReset();
-    agenticScanMock.mockResolvedValue({ findings: [{ id: "x" }] });
+    analysisAgentMock.mockReset();
+    analysisAgentMock.mockResolvedValue({ findings: [{ id: "x" }] });
     const { makeSkepticVerifier } = await import("./hunt-scan.js");
     // A directory is not a writable ledger file.
     const verifier = makeSkepticVerifier({

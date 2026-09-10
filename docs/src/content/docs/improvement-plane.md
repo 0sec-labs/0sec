@@ -28,6 +28,9 @@ sealed candidate artifacts
 Every live run stays pinned to its own code, model, policy, scope, and
 model-visible tool set; resume and replay reuse that identity. A candidate can be
 evaluated while an engagement is active, but it cannot change the active worker.
+Provider model identifiers are not attestations of immutable model weights.
+An upstream alias or serving change can alter behavior without changing that
+identifier; re-evaluate observed outcomes before assuming equivalent performance.
 
 Non-negotiable:
 
@@ -760,3 +763,23 @@ DSH, Codex, and Claude Code are optional MCP clients. They may present a narrow
 0sec tool profile, but they don't own promotion, scope, evidence, or replay. See
 [Architecture](/architecture/#mcp-integration) and
 [Benchmark methodology](/methodology/).
+
+## Live lifecycle checks
+
+After building the CLI and its dependencies, run the real provider-backed checks:
+
+```bash
+node scripts/smoke-source-evolution.mjs
+node scripts/smoke-lens-evolution.mjs
+```
+
+The source check requires a non-root account with Docker access and the
+`node:22-alpine` image. It exercises generated source, independent evaluation,
+approval, canaries, deployment, existing-reader pinning, and rollback using a
+small credential-detector benchmark. It does not measure general scanner quality.
+The lens check exercises synthesis, labelled positive/held-out/clean fixtures,
+promotion, next-reader reload, and retirement. Both consume real provider usage,
+disable cross-run hunt memory, and fail rather than reporting skipped work as success.
+
+The trusted-main **Live evolution E2E** workflow accepts `lane=source`,
+`lane=lens`, or `lane=all` and retains measured outcomes and failure logs.
