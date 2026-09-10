@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  Open-source and extensible, with your choice of models.
+  The extensible, multi-model, unified cybersecurity harness.
 </p>
 
 <p align="center">
