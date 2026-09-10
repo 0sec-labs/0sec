@@ -317,6 +317,7 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
   const prevRetries = process.env.HUNT_FINDER_MAX_RETRIES;
 
   afterEach(() => {
+    vi.useRealTimers();
     if (prevTimeout === undefined) delete process.env.HUNT_FINDER_TIMEOUT_MS;
     else process.env.HUNT_FINDER_TIMEOUT_MS = prevTimeout;
     if (prevRetries === undefined) delete process.env.HUNT_FINDER_MAX_RETRIES;
@@ -448,21 +449,27 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
   });
 
   it("a transient-error finder retries up to HUNT_FINDER_MAX_RETRIES then gives up on that candidate", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const firstAttempt = Promise.withResolvers<void>();
     process.env.HUNT_FINDER_TIMEOUT_MS = "5000";
     process.env.HUNT_FINDER_MAX_RETRIES = "2";
     analysisAgentMock.mockReset();
     let calls = 0;
     analysisAgentMock.mockImplementation(async () => {
       calls++;
+      firstAttempt.resolve();
       throw new Error("fetch failed: ECONNRESET");
     });
 
-    const res = await runHuntScan({
+    const pending = runHuntScan({
       sourceRoot: "/src",
       candidates: [{ path: "/src/flaky.c" }],
       runtime: "api",
       concurrency: 1,
     });
+    await firstAttempt.promise;
+    await vi.runAllTimersAsync();
+    const res = await pending;
 
     // 1 initial attempt + 2 retries = 3 calls, then gives up.
     expect(calls).toBe(3);
