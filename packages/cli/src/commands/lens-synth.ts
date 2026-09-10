@@ -51,7 +51,20 @@ function parseFixtures(value: unknown, label: string): ValidationFixture[] {
     const path = entry.path;
     if (typeof id !== "string" || id.trim() === "") throw new Error(`${label}[${i}].id must be a non-empty string`);
     if (typeof path !== "string" || path.trim() === "") throw new Error(`${label}[${i}].path must be a non-empty string`);
-    return { id, path, ...(typeof entry.note === "string" ? { note: entry.note } : {}) };
+    const fixture: ValidationFixture = { id, path };
+    if (typeof entry.note === "string") fixture.note = entry.note;
+    if (typeof entry.expectedCwe === "string") fixture.expectedCwe = entry.expectedCwe;
+    if (typeof entry.expectedFile === "string") fixture.expectedFile = entry.expectedFile;
+    if (typeof entry.expectedLine === "number" && Number.isFinite(entry.expectedLine)) {
+      fixture.expectedLine = entry.expectedLine;
+    }
+    if (Array.isArray(entry.expectedRange) && entry.expectedRange.length === 2
+      && typeof entry.expectedRange[0] === "number" && typeof entry.expectedRange[1] === "number") {
+      fixture.expectedRange = [entry.expectedRange[0], entry.expectedRange[1]];
+    }
+    if (typeof entry.contentDigest === "string") fixture.contentDigest = entry.contentDigest;
+    if (typeof entry.cleanProvenance === "string") fixture.cleanProvenance = entry.cleanProvenance;
+    return fixture;
   });
 }
 
@@ -64,13 +77,23 @@ export function parseMissInputFile(raw: unknown): LensSynthesisInput {
   const misses: MissInput = {
     ...(Array.isArray(missesRaw.confirmedMisses) ? { confirmedMisses: missesRaw.confirmedMisses as MissInput["confirmedMisses"] } : {}),
     ...(Array.isArray(missesRaw.incompleteCoverage) ? { incompleteCoverage: missesRaw.incompleteCoverage as MissInput["incompleteCoverage"] } : {}),
+    ...(Array.isArray(missesRaw.curatedCandidates) ? { curatedCandidates: missesRaw.curatedCandidates as MissInput["curatedCandidates"] } : {}),
   };
+  const heldOutFixtures = parseFixtures(corpusRaw.heldOut, "corpus.heldOut");
   const corpus: ValidationCorpus = {
     positives: parseFixtures(corpusRaw.positives, "corpus.positives"),
     negativeControls: parseFixtures(corpusRaw.negativeControls, "corpus.negativeControls"),
+    ...(heldOutFixtures.length > 0 ? { heldOut: heldOutFixtures } : {}),
+    ...(typeof corpusRaw.baselineDigest === "string" ? { baselineDigest: corpusRaw.baselineDigest } : {}),
   };
   if (corpus.positives.length === 0) {
     throw new Error("corpus.positives must contain at least one fixture (the seeded miss) — the loop is fail-closed without it");
+  }
+  if (corpus.negativeControls.length === 0) {
+    throw new Error("corpus.negativeControls must contain at least one fixture — the loop cannot measure FP regression without it");
+  }
+  if (!corpus.heldOut || corpus.heldOut.length === 0) {
+    throw new Error("corpus.heldOut must contain at least one fixture — held-out positives are required to demonstrate generalisation beyond development misses");
   }
   return { misses, corpus };
 }
@@ -83,6 +106,9 @@ export interface LensSynthCommandOptions {
   maxRegister?: number;
   model?: string;
   promote?: boolean;
+  trials?: number;
+  /** AbortSignal to cancel a long-running loop. Checked before registration. */
+  signal?: AbortSignal;
 }
 
 export interface LensSynthCommandDeps {
@@ -104,6 +130,12 @@ export interface LensSynthWatchDeps extends LensSynthCommandDeps {
   onError?: (error: Error) => void;
 }
 
+function trialCount(value: number | undefined): number {
+  const count = value ?? 2;
+  if (!Number.isSafeInteger(count) || count < 2 || count > 10) throw new Error("--trials must be an integer between 2 and 10");
+  return count;
+}
+
 /**
  * Run the loop from a parsed, immutable input revision. The watcher uses this
  * form so the bytes it fingerprints are the bytes it validates and promotes.
@@ -113,6 +145,7 @@ export async function runLensSynthesisInput(
   opts: Omit<LensSynthCommandOptions, "missInput">,
   deps: LensSynthCommandDeps = {},
 ): Promise<LensSynthesisResult> {
+  const trials = trialCount(opts.trials);
   const log = deps.log ?? (() => {});
   const probe = deps.probe ?? makeFinderLensProbe({ log });
   return runLensSynthesisLoop(input, {
@@ -122,6 +155,8 @@ export async function runLensSynthesisInput(
     ...(opts.registry ? { registryPath: resolve(opts.registry) } : {}),
     maxRegistrations: opts.maxRegister ?? 1,
     dryRun: !opts.promote,
+    trials,
+    ...(opts.signal ? { signal: opts.signal } : {}),
     log,
   });
 }
@@ -241,6 +276,7 @@ type LensSynthCliOptions = {
   maxRegister?: number;
   model?: string;
   promote?: boolean;
+  trials?: number;
   watch?: boolean;
   pollInterval?: string;
   status?: boolean;
@@ -257,6 +293,7 @@ export function registerLensSynthCommand(program: Command): void {
     .option("--max-register <n>", "cap promoted champions per input revision", (value) => Number.parseInt(value, 10))
     .option("-m, --model <id>", "synthesis model override")
     .option("--promote", "persist a validated champion to the durable overlay", false)
+    .option("--trials <n>", "repeated validation trials (2–10; default 2)", Number)
     .option("--watch", "poll the miss-input and process each new content revision", false)
     .option("--poll-interval <ms>", "watch polling interval (minimum 100ms)", "2000")
     .option("--status", "show the active durable overlay and promotion ledger", false)
@@ -298,6 +335,7 @@ export function registerLensSynthCommand(program: Command): void {
           ...(opts.maxRegister !== undefined ? { maxRegister: opts.maxRegister } : {}),
           ...(opts.model ? { model: String(opts.model) } : {}),
           promote: Boolean(opts.promote),
+          trials: trialCount(opts.trials),
         };
         const printResult = (result: LensSynthesisResult): void => {
           process.stdout.write(

@@ -35,11 +35,14 @@ ties them together:
   4. Score BOTH the current production model and the candidate on the
      held-out split.
   5. Promote the candidate *only* when its F1 beats production by at
-     least `--min-f1-gain` (default 0.005). Promotion = retrain on the
-     full dataset, write the raw dump, re-export the TS artifact via
-     `export_triage_router.py`, and append a structured entry to the
-     promotion ledger. Anything short of the gain bar is logged and
-     discarded — the flywheel never regresses production on noise.
+     least `--min-f1-gain` (default 0.005). Promotion = export the EXACT
+     candidate model (trained only on the train split, not retrained on
+     all data) via `export_triage_router.py`, verify artifact identity
+     against the evolution registry (`--evolution-store`, `--evolution-version`,
+     `--evolution-artifact`), and append a structured entry to the
+     promotion ledger. The promoted artifact is the SAME one that was
+     A/B-evaluated — no full-dataset refit that would break the identity
+     between evaluated and deployed model.
 
 Like the rest of the benchmark harness (see README "Statistical
 evaluation"), the bias is conservative: a single good number does not
@@ -59,21 +62,34 @@ Usage:
 
 By default the loop is DRY-RUN: it trains, A/B-tests, and logs the
 verdict to the ledger, but does NOT touch the runtime artifact. Pass
-`--promote` to let a winning candidate replace production (the cron in
-`infra/k3s/cronjob-active-learning.yaml` passes `--promote`).
+`--promote` to let a winning candidate replace production.
+**When passing --promote, --evolution-store, --evolution-version, and
+--evolution-artifact are MANDATORY** to verify artifact identity against
+the evolution registry (see REQUIREMENTS below).
+
+EVOLUTION REQUIREMENTS (with --promote):
+  The promoted model must be the EXACT one that was evaluated (trained
+  on the train split only, NOT retrained on all data).  The artifact
+  bytes must match what the evolution registry's active version recorded
+  in its snapshot.  Use the controlled 0sec evolution lifecycle:
+    0sec evolve run --config config.json
+  to create, evaluate, and promote a candidate through the evolution
+  pipeline, then reference that version here.
 
 Exit codes:
     0  ran cleanly (promoted OR held — both are success)
     2  not enough labeled data to retrain (need >= --min-samples)
-    3  training / evaluation error
+    3  training / evaluation / authorization error
 """
 
 import argparse
 import datetime as dt
 import json
+import tempfile
 import subprocess
 import sys
 from pathlib import Path
+from artifact_install import install_authorized_artifact
 
 import numpy as np
 import xgboost as xgb
@@ -97,6 +113,18 @@ DEFAULT_CURRENT_MODEL = BENCH_ROOT / "results" / "triage-router-v1.json"
 DEFAULT_OUT_MODEL = BENCH_ROOT / "results" / "triage-router-v1-candidate.json"
 DEFAULT_LEDGER = BENCH_ROOT / "results" / "active-learning-ledger.json"
 EXPORT_SCRIPT = BENCH_ROOT / "scripts" / "export_triage_router.py"
+
+# The orchestrator runtime install target. The export_triage_router.py default
+# --out writes here; we write to a staging path first, authorize the staged
+# bytes, then atomically copy only the authorized artifact to this destination.
+DEFAULT_ORCHESTRATOR_MODEL = (
+    REPO_ROOT
+    / "services"
+    / "orchestrator"
+    / "src"
+    / "triage"
+    / "triage-router-v1.model.json"
+)
 
 # XGBoost params mirror the v1 production router (100 trees, depth 6).
 # Kept in sync with train_triage_v2.py's tree shape minus the v2-only
@@ -229,13 +257,25 @@ def append_ledger(ledger_path: Path, entry: dict) -> None:
 # ── Promotion ──
 
 
-def reexport_runtime_artifact(raw_model_path: Path, dataset_path: Path) -> bool:
-    """Re-run export_triage_router.py to refresh the orchestrator artifact.
+def reexport_runtime_artifact(
+    raw_model_path: Path, dataset_path: Path, out_path: Path
+) -> bool:
+    """Re-run export_triage_router.py to produce the flattened runtime artifact.
 
-    The export script self-verifies (pure-Python eval matches xgboost to
-    <1e-6) before writing, so a corrupt flatten can't reach production.
+    Writes to *out_path* (a staging file) so the caller can authorize the
+    EXACT exported bytes before installing them. The export script
+    self-verifies (pure-Python eval matches xgboost to <1e-6) before
+    writing, so a corrupt flatten can't reach the staging path.
+
     Returns True on success.
     """
+    if not EXPORT_SCRIPT.exists():
+        print(
+            f"ERROR: export script not found: {EXPORT_SCRIPT}",
+            file=sys.stderr,
+        )
+        return False
+
     cmd = [
         sys.executable,
         str(EXPORT_SCRIPT),
@@ -243,15 +283,30 @@ def reexport_runtime_artifact(raw_model_path: Path, dataset_path: Path) -> bool:
         str(raw_model_path),
         "--dataset",
         str(dataset_path),
+        "--out",
+        str(out_path),
     ]
     print(f"\n[promote] re-exporting runtime artifact: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError as err:
+        print(
+            f"ERROR: python not found on PATH — cannot run export: {err}",
+            file=sys.stderr,
+        )
+        return False
+
     sys.stdout.write(result.stdout)
     if result.returncode != 0:
         sys.stderr.write(result.stderr)
         print(f"[promote] export FAILED (rc={result.returncode}) — NOT promoting")
         return False
     return True
+
+
+# ── Evolution authorization bridge ──
+
+
 
 
 # ── Main ──
@@ -277,12 +332,33 @@ def main() -> int:
         default=200,
         help="Refuse to retrain below this many labeled rows.",
     )
+    # Evolution registry proof (MANDATORY with --promote)
+    ap.add_argument(
+        "--evolution-store",
+        type=Path,
+        help="Path to the evolution store directory (required with --promote).",
+    )
+    ap.add_argument(
+        "--evolution-version",
+        help="Evolution registry version ID that authorized this artifact (required with --promote).",
+    )
+    ap.add_argument(
+        "--evolution-artifact",
+        help="Relative artifact path within the version's snapshot (e.g. "
+        "triage/triage-router-v1.model.json) (required with --promote).",
+    )
+    ap.add_argument(
+        "--orchestrator-model",
+        type=Path,
+        help="Override install destination for the promoted flattened artifact "
+        "(default: services/orchestrator/src/triage/triage-router-v1.model.json).",
+    )
     promote_group = ap.add_mutually_exclusive_group()
     promote_group.add_argument(
         "--promote",
         dest="promote",
         action="store_true",
-        help="Replace the runtime artifact when the candidate wins.",
+        help="Replace the runtime artifact when the candidate wins. Requires --evolution-* flags.",
     )
     promote_group.add_argument(
         "--dry-run",
@@ -390,13 +466,13 @@ def main() -> int:
         append_ledger(args.ledger, entry)
         return 0
 
-    # Winning candidate: retrain on the FULL dataset (train+val) so the
-    # promoted model uses every labeled row, then write the raw dump.
-    print("\nVerdict: candidate WINS — retraining on full dataset for promotion.")
-    final_model = train_candidate(X, y, XGB_PARAMS)
+    # Winning candidate: save the EXACT candidate model that was evaluated
+    # (trained on the train split only).  No full-dataset retrain — the
+    # promoted artifact must be byte-identical to the one that was A/B-tested.
+    print("\nVerdict: candidate WINS — saving exact evaluated candidate model.")
     args.out_model.parent.mkdir(parents=True, exist_ok=True)
-    final_model.get_booster().save_model(str(args.out_model))
-    print(f"  Candidate raw dump written to {args.out_model}")
+    candidate.get_booster().save_model(str(args.out_model))
+    print(f"  Evaluated candidate raw dump written to {args.out_model}")
 
     if not args.promote:
         print(
@@ -407,16 +483,47 @@ def main() -> int:
         append_ledger(args.ledger, entry)
         return 0
 
-    # Real promotion: refresh the orchestrator runtime artifact from the
-    # winning raw dump. The export script self-verifies before writing.
-    exported = reexport_runtime_artifact(args.out_model, args.dataset)
-    if not exported:
-        entry["decision"] = "promotion_export_failed"
+    # Evolution registry authorization is MANDATORY with --promote.  Without
+    # it, an arbitrary model dump could be installed without behavioral proof.
+    if not args.evolution_store or not args.evolution_version or not args.evolution_artifact:
+        print(
+            "\n[promote] --promote requires --evolution-store, --evolution-version and\n"
+            "  --evolution-artifact to verify the candidate's artifact identity against\n"
+            "  the evolution registry.  The A/B signal alone is insufficient proof of\n"
+            "  evaluated behavior across the full evolution pipeline.\n\n"
+            "  To promote through the 0sec evolution lifecycle, run:\n"
+            "    0sec evolve promote --store <store-path> --version <version-id>\n\n"
+            "  Or use the standalone tool with a valid evaluated version:\n"
+            "    node scripts/train/artifact-bridge.mjs authorize …\n",
+            file=sys.stderr,
+        )
+        entry["decision"] = "promotion_need_evolution_proof"
         append_ledger(args.ledger, entry)
         return 3
 
-    print("\nVerdict: PROMOTED — runtime artifact refreshed.")
+    # Export into a private temporary directory. Authorize the FINAL runtime
+    # representation and install only those exact bytes, with atomic replacement.
+    install_dest = args.orchestrator_model or DEFAULT_ORCHESTRATOR_MODEL
+    with tempfile.TemporaryDirectory(prefix="0sec-router-export-") as staging_dir:
+        staging_export = Path(staging_dir) / "runtime.json"
+        if not reexport_runtime_artifact(args.out_model, args.dataset, staging_export):
+            entry["decision"] = "promotion_export_failed"
+            append_ledger(args.ledger, entry)
+            return 3
+        file_digest = install_authorized_artifact(
+            args.evolution_store, args.evolution_version, staging_export,
+            args.evolution_artifact, "router", install_dest,
+        )
+
+    print(
+        "\nVerdict: PROMOTED — authorized flattened artifact installed at "
+        f"{install_dest}"
+    )
+    print(f"         digest={file_digest}  version={args.evolution_version}")
     entry["decision"] = "promoted"
+    entry["evolution_version"] = args.evolution_version
+    entry["evolution_artifact"] = args.evolution_artifact
+    entry["artifact_digest"] = file_digest
     append_ledger(args.ledger, entry)
     return 0
 

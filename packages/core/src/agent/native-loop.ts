@@ -23,6 +23,7 @@ import { SelfExtensionRegistry } from "../plugins/self-extension.js";
 import type {
   RegisteredExtensionTool,
   SelfExtensionEvent,
+  SelfExtensionSnapshot,
 } from "../plugins/self-extension.js";
 import { BUILTIN_GUARDS } from "../plugins/guards.js";
 import { ToolHealthTracker } from "./tool-health.js";
@@ -731,20 +732,38 @@ export async function runNativeAgentLoop(
     }
   }
 
-  // Try to restore from existing session (skipped when the journal already
-  // seeded the context above — the journal is the source of truth then).
-  if (!rehydratedFromJournal && config.sessionId && db) {
-    const existing = db.getSessionById(config.sessionId);
-    if (existing && existing.status === "paused") {
-      messages = JSON.parse(existing.messages) as NativeMessage[];
-      turnCount = existing.turnCount;
-      const ctx = JSON.parse(existing.toolContext) as ToolContext;
+  // Journal replay owns messages; the persisted session still owns the pinned
+  // extension definitions. Restore both before the first resumed model turn.
+  const existingSession = config.sessionId && db ? db.getSessionById(config.sessionId) : undefined;
+  let restoredExtensionState = false;
+  if (existingSession && (existingSession.status === "paused" || rehydratedFromJournal)) {
+    const ctx = JSON.parse(existingSession.toolContext) as Partial<PersistedNativeToolContext>;
+    if (!rehydratedFromJournal) {
+      messages = JSON.parse(existingSession.messages) as NativeMessage[];
+      turnCount = existingSession.turnCount;
       toolCtx.findings = ctx.findings ?? [];
       toolCtx.attackResults = ctx.attackResults ?? [];
       toolCtx.targetInfo = ctx.targetInfo ?? {};
-
       onEvent?.("session_resumed", { sessionId, turnCount, messageCount: messages.length });
     }
+    const extSnapshot = ctx.selfExtension;
+    if (extSnapshot !== undefined) {
+      try {
+        selfExtension.restore(extSnapshot);
+        restoredExtensionState = true;
+        syncExtensionTools();
+        onEvent?.("self_extension_restored", { sessionId, registrationCount: extSnapshot.registrations.length });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        onEvent?.("self_extension_restore_failed", { sessionId, error: message });
+        throw new Error(`Cannot resume session with incompatible extension state: ${message}`);
+      }
+    }
+  }
+  if (rehydratedFromJournal && !restoredExtensionState && messages.some((message) =>
+    Array.isArray(message.content) && message.content.some((block) => block.type === "tool_use" && block.name === "self_extend")
+  )) {
+    throw new Error("Cannot replay extension calls without the persisted session extension snapshot");
   }
 
   // If fresh start, add the initial user message
@@ -2437,7 +2456,7 @@ export async function runNativeAgentLoop(
 
     // Persist session state periodically
     if (db && state.turnCount % 2 === 0) {
-      persistSession(db, state, config, "running");
+      persistSession(db, state, config, "running", selfExtension.snapshot());
     }
 
     // ── Cost ceiling check ──
@@ -2564,7 +2583,7 @@ export async function runNativeAgentLoop(
 
   // Final session save
   if (db) {
-    persistSession(db, state, config, state.done ? "completed" : "paused");
+    persistSession(db, state, config, state.done ? "completed" : "paused", selfExtension.snapshot());
     db.logEvent({
       scanId: config.scanId,
       stage: config.role,
@@ -3369,11 +3388,19 @@ function buildContinuePrompt(config: NativeAgentConfig, turnCount: number, memor
   }
 }
 
+type PersistedNativeToolContext = {
+  findings: ToolContext["findings"];
+  attackResults: ToolContext["attackResults"];
+  targetInfo: ToolContext["targetInfo"];
+  selfExtension?: SelfExtensionSnapshot;
+};
+
 function persistSession(
   db: osecDB,
   state: NativeAgentState,
   config: NativeAgentConfig,
   status: string,
+  extensionSnapshot?: SelfExtensionSnapshot,
 ): void {
   // Trim messages for storage — keep last N to stay under size limits
   const maxStoredMessages = 40;
@@ -3382,17 +3409,24 @@ function persistSession(
       ? state.messages.slice(-maxStoredMessages)
       : state.messages;
 
+  const toolContext: PersistedNativeToolContext = {
+    findings: state.findings,
+    attackResults: state.attackResults,
+    targetInfo: state.targetInfo,
+  };
+  // Persist the self-extension registry snapshot so session resume can
+  // reconstruct model-registered tools before the model's first turn.
+  if (extensionSnapshot) {
+    toolContext.selfExtension = extensionSnapshot;
+  }
+
   db.saveSession({
     id: state.sessionId,
     scanId: config.scanId,
     agentRole: config.role,
     turnCount: state.turnCount,
     messages: messagesToStore,
-    toolContext: {
-      findings: state.findings,
-      attackResults: state.attackResults,
-      targetInfo: state.targetInfo,
-    },
+    toolContext,
     status,
   });
 }

@@ -12,26 +12,37 @@
  *
  * Plus focused unit checks: miss-capture normalization, the recordMiss/priming
  * invariant, idempotent registration, and fail-closed synthesis on a bad hint.
+ *
+ * All test fixtures use real temporary files with correct identity metadata
+ * (expectedCwe, expectedFile, expectedLine, cleanProvenance) to match the
+ * contract in validateCandidateLens and findingMatchesFixture.
  */
 
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { NativeRuntimeResult } from "../../runtime/types.js";
+import { canonicalEvolutionJson } from "../../improvement/config.js";
 import { HuntMemory } from "../hunt-flywheel.js";
 import type { FinderLens } from "../hunt-scan.js";
 import { captureLensCandidates } from "./miss-capture.js";
 import { inspectLensRegistry, registerArchetype, retireArchetype } from "./register.js";
-import { clusterCandidates } from "./synthesize.js";
+import { clusterCandidates, type LensSynthesisModel } from "./synthesize.js";
 import { runLensSynthesisLoop } from "./loop.js";
 import type {
+  LensBaselineSnapshot,
   LensProbe,
+  LensProbeOutcome,
   LensSynthesisInput,
-  LensSynthesisModel,
   SynthesizedArchetype,
   ValidationFixture,
 } from "./types.js";
+
+const hashBytes = (bytes: Buffer): string => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+const jsonCopy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const digestFn = (value: unknown): string => hashBytes(Buffer.from(canonicalEvolutionJson(jsonCopy(value))));
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -59,36 +70,110 @@ function toolModel(input: Record<string, unknown>): LensSynthesisModel {
     }) as NativeRuntimeResult;
 }
 
-const POS: ValidationFixture = { id: "pos-ssrf", path: "/nonexistent/pos", note: "exhibits the miss" };
-const NEG1: ValidationFixture = { id: "neg-1", path: "/nonexistent/neg1" };
-const NEG2: ValidationFixture = { id: "neg-2", path: "/nonexistent/neg2" };
+// Build fixtures with real temp files and proper identity metadata.
+function buildFixtureArgs(): {
+  tmpDir: string;
+  pos: ValidationFixture;
+  devPos: ValidationFixture;
+  heldOutPos: ValidationFixture;
+  neg1: ValidationFixture;
+  neg2: ValidationFixture;
+} {
+  const tmpDir = mkdtempSync(join(tmpdir(), "lens-loop-test-"));
+  // Dev positive: CWE-918 SSRF in dev app
+  mkdirSync(join(tmpDir, "src"), { recursive: true });
+  writeFileSync(join(tmpDir, "src", "fetch.py"), "import requests\nrequests.get(user_input)\n", "utf8");
+  // Held-out positive: similar SSRF in different file
+  writeFileSync(join(tmpDir, "src", "api.py"), "import urllib.request\nurllib.request.urlopen(user_url)\n", "utf8");
+  // Negative 1: benign URL (no user input)
+  writeFileSync(join(tmpDir, "src", "safe.py"), "import requests\nrequests.get('https://api.example.com/status')\n", "utf8");
+  // Negative 2: another benign file
+  writeFileSync(join(tmpDir, "src", "config.py"), "API_URL = 'https://api.example.com'\n", "utf8");
 
-const INPUT: LensSynthesisInput = {
-  misses: {
-    confirmedMisses: [
-      {
-        classHint: "SSRF (CWE-918)",
-        sinkPattern: "requests.get(user_url)",
-        file: "app/fetch.py",
-        line: 42,
-        whyMissed: "input-validation lens under-weighted URL sinks",
-      },
-    ],
-  },
-  corpus: { positives: [POS], negativeControls: [NEG1, NEG2] },
-};
+  return {
+    tmpDir,
+    pos: {
+      id: "pos-ssrf",
+      path: join(tmpDir, "src", "fetch.py"),
+      note: "SSRF via requests.get(user_input)",
+      expectedCwe: "CWE-918",
+      expectedFile: join(tmpDir, "src", "fetch.py"),
+      expectedLine: 2,
+    },
+    devPos: {
+      id: "dev-ssrf",
+      path: join(tmpDir, "src", "fetch.py"),
+      note: "development positive (same file as pos for dev tests)",
+      expectedCwe: "CWE-918",
+      expectedFile: join(tmpDir, "src", "fetch.py"),
+      expectedLine: 2,
+    },
+    heldOutPos: {
+      id: "heldout-ssrf",
+      path: join(tmpDir, "src", "api.py"),
+      note: "heldout SSRF via urllib",
+      expectedCwe: "CWE-918",
+      expectedFile: join(tmpDir, "src", "api.py"),
+      expectedLine: 2,
+    },
+    neg1: {
+      id: "neg-1",
+      path: join(tmpDir, "src", "safe.py"),
+      cleanProvenance: "manual-review:no-user-input",
+    },
+    neg2: {
+      id: "neg-2",
+      path: join(tmpDir, "src", "config.py"),
+      cleanProvenance: "manual-review:static-url",
+    },
+  };
+}
+
+const SEED_ENTRY_LENS: FinderLens = { id: "os-command-injection", challengeHint: "Hunt OS command injection: Node child_process; Python subprocess." };
+const BASELINE_SNAPSHOT: LensBaselineSnapshot = { lenses: [SEED_ENTRY_LENS], digest: digestFn([SEED_ENTRY_LENS]) };
+
+function snapshotBaseline(): LensBaselineSnapshot {
+  return { lenses: structuredClone(BASELINE_SNAPSHOT.lenses), digest: BASELINE_SNAPSHOT.digest };
+}
 
 /**
  * A fake probe: the challenger (candidateLens != null) surfaces the positive,
  * baseline surfaces nothing. `fpFixtureIds` lets a test make the challenger ALSO
  * fire on chosen negative controls (the regression case).
+ * Returns finding details matching the fixture's expected vulnerability identity.
+ * Exposes a truthful deterministic baselineSnapshot required by validateCandidateLens.
  */
 function fakeProbe(fpFixtureIds: string[] = []): LensProbe {
-  return async (candidateLens: FinderLens | null, fixture: ValidationFixture) => {
-    if (!candidateLens) return { surfaced: false }; // baseline finds nothing
-    if (fixture.id === POS.id) return { surfaced: true }; // challenger catches the miss
-    return { surfaced: fpFixtureIds.includes(fixture.id) }; // FP only where injected
+  const f = async (candidateLens: FinderLens | null, fixture: ValidationFixture): Promise<LensProbeOutcome> => {
+    if (!candidateLens) return { surfaced: false, findings: [], costUsd: 0, durationMs: 5 }; // baseline finds nothing
+    // Match the fixture's expected identity
+    const isPositiveMatch = fixture.id === "pos-ssrf" || fixture.id === "dev-ssrf" || fixture.id === "heldout-ssrf";
+    if (isPositiveMatch) {
+      return {
+        surfaced: true,
+        findings: [{
+          cwe: fixture.expectedCwe ?? "CWE-918",
+          file: fixture.expectedFile ?? fixture.path,
+          line: fixture.expectedLine ?? 2,
+          lensId: candidateLens.id,
+        }],
+        costUsd: 0.01,
+        durationMs: 10,
+      };
+    }
+    const isFp = fpFixtureIds.includes(fixture.id);
+    return {
+      surfaced: isFp,
+      findings: isFp ? [{ cwe: "CWE-918", file: fixture.path, line: 5, lensId: candidateLens.id }] : [],
+      costUsd: isFp ? 0.01 : 0,
+      durationMs: 5,
+    };
   };
+  return Object.assign(f, { baselineSnapshot: snapshotBaseline }) as LensProbe;
+}
+
+function makeProbe(handler: (candidateLens: FinderLens | null, fixture: ValidationFixture) => Promise<LensProbeOutcome>): LensProbe {
+  return Object.assign(handler, { baselineSnapshot: snapshotBaseline }) as LensProbe;
 }
 
 // ── Temp registry helpers ────────────────────────────────────────────────────
@@ -111,6 +196,7 @@ const SEED_ENTRY = {
 
 let tmpDir: string;
 let registryPath: string;
+let fixtures: ReturnType<typeof buildFixtureArgs>;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "lens-loop-"));
@@ -120,13 +206,38 @@ beforeEach(() => {
     `${JSON.stringify({ provenance: "test seed", archetypes: [SEED_ENTRY] }, null, 2)}\n`,
     "utf8",
   );
+  fixtures = buildFixtureArgs();
 });
 
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
+  rmSync(fixtures.tmpDir, { recursive: true, force: true });
 });
 
+function inputFor(extra?: Partial<ValidationFixture>): LensSynthesisInput {
+  const pos: ValidationFixture = { ...fixtures.pos, ...extra };
+  return {
+    misses: {
+      confirmedMisses: [
+        {
+          classHint: "SSRF (CWE-918)",
+          sinkPattern: "requests.get(user_url)",
+          file: "app/fetch.py",
+          line: 42,
+          whyMissed: "input-validation lens under-weighted URL sinks",
+        },
+      ],
+    },
+    corpus: {
+      positives: [pos],
+      negativeControls: [fixtures.neg1, fixtures.neg2],
+      heldOut: [fixtures.heldOutPos],
+    },
+  };
+}
+
 function readRegistry(): { provenance: string; archetypes: Array<Record<string, unknown>> } {
+  const { readFileSync } = require("node:fs");
   return JSON.parse(readFileSync(registryPath, "utf8"));
 }
 
@@ -134,7 +245,7 @@ function readRegistry(): { provenance: string; archetypes: Array<Record<string, 
 
 describe("runLensSynthesisLoop — full loop", () => {
   it("seeded miss → synthesized → validated (catches miss, clean controls) → REGISTERED", async () => {
-    const result = await runLensSynthesisLoop(INPUT, {
+    const result = await runLensSynthesisLoop(inputFor(), {
       model: toolModel(GOOD_SSRF_CONTENT),
       probe: fakeProbe(),
       registryPath,
@@ -148,6 +259,7 @@ describe("runLensSynthesisLoop — full loop", () => {
     expect(result.validations[0].noFpRegression).toBe(true);
     expect(result.validations[0].isChampion).toBe(true);
     expect(result.registered.map((r) => r.id)).toEqual(["ssrf-url-fetch"]);
+    expect(result.registered[0].lensVersionDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(result.rejected).toHaveLength(0);
 
     // The temp registry now carries the seed + the synthesized entry, with provenance.
@@ -166,9 +278,9 @@ describe("runLensSynthesisLoop — full loop", () => {
   });
 
   it("a candidate that regresses the negative-control corpus is REJECTED and NOT written", async () => {
-    const result = await runLensSynthesisLoop(INPUT, {
+    const result = await runLensSynthesisLoop(inputFor(), {
       model: toolModel(GOOD_SSRF_CONTENT),
-      probe: fakeProbe([NEG1.id]), // challenger fires on a clean control → false positive
+      probe: fakeProbe([fixtures.neg1.id]), // challenger fires on a clean control → false positive
       registryPath,
       now: () => "2026-07-21T00:00:00.000Z",
     });
@@ -190,6 +302,92 @@ describe("runLensSynthesisLoop — full loop", () => {
   });
 });
 
+describe("fail-closed validation gates", () => {
+  it("rejects validation when corpus has no negative controls", async () => {
+    const noNegatives: LensSynthesisInput = {
+      misses: { confirmedMisses: [{ classHint: "SSRF", sinkPattern: "x", file: "a", whyMissed: "gap" }] },
+      corpus: {
+        positives: [fixtures.pos],
+        negativeControls: [],
+        heldOut: [fixtures.heldOutPos],
+      },
+    };
+    const result = await runLensSynthesisLoop(noNegatives, {
+      model: toolModel(GOOD_SSRF_CONTENT),
+      probe: fakeProbe(),
+      registryPath,
+      now: () => "2026-07-21T00:00:00.000Z",
+    });
+    expect(result.validations[0].passed).toBe(false);
+    expect(result.validations[0].reason).toContain("negative controls");
+    expect(result.registered).toHaveLength(0);
+  });
+
+  it("rejects validation when a probe errors on any fixture (fail-closed)", async () => {
+    const errorProbe = makeProbe(async (candidateLens, fixture) => {
+      if (candidateLens && fixture.id === fixtures.neg1.id) {
+        return { surfaced: false, error: "probe crashed on negative fixture", findings: [] };
+      }
+      return fakeProbe()(candidateLens, fixture);
+    });
+    const result = await runLensSynthesisLoop(inputFor(), {
+      model: toolModel(GOOD_SSRF_CONTENT),
+      probe: errorProbe,
+      registryPath,
+      now: () => "2026-07-21T00:00:00.000Z",
+    });
+    // The challenger caught the miss, but the errored negative fixture makes
+    // both baseline and challenger inconclusive on that fixture. The overall
+    // gate requires no inconclusives → rejected.
+    expect(result.validations[0].passed).toBe(false);
+    expect(result.validations[0].reason).toContain("inconclusive");
+    expect(result.registered).toHaveLength(0);
+  });
+
+  it("rejects validation when baseline errors on a positive fixture", async () => {
+    const baselineErrorProbe = makeProbe(async (candidateLens, fixture) => {
+      if (!candidateLens && fixture.id === fixtures.pos.id) {
+        return { surfaced: false, error: "baseline probe error on positive", findings: [] };
+      }
+      return fakeProbe()(candidateLens, fixture);
+    });
+    const result = await runLensSynthesisLoop(inputFor(), {
+      model: toolModel(GOOD_SSRF_CONTENT),
+      probe: baselineErrorProbe,
+      registryPath,
+      now: () => "2026-07-21T00:00:00.000Z",
+    });
+    expect(result.validations[0].passed).toBe(false);
+    expect(result.validations[0].reason).toContain("inconclusive");
+    expect(result.registered).toHaveLength(0);
+  });
+
+  it("rejects an unrelated-finding match (not intended vulnerability)", async () => {
+    // Probe returns a finding but with the WRONG cwe vs fixture expectedCwe.
+    const wrongFindingProbe = makeProbe(async (candidateLens, fixture) => {
+      if (candidateLens && fixture.id === fixtures.pos.id) {
+        // Return CWE-78 (command injection) for a CWE-918 fixture → not a match.
+        return {
+          surfaced: false,
+          findings: [{ cwe: "CWE-78", file: fixture.expectedFile!, line: 42, lensId: candidateLens.id }],
+          costUsd: 0.01,
+          durationMs: 10,
+        };
+      }
+      return { surfaced: false, findings: [], costUsd: 0, durationMs: 5 };
+    });
+    const result = await runLensSynthesisLoop(inputFor(), {
+      model: toolModel(GOOD_SSRF_CONTENT),
+      probe: wrongFindingProbe,
+      registryPath,
+      now: () => "2026-07-21T00:00:00.000Z",
+    });
+    expect(result.validations[0].passed).toBe(false);
+    expect(result.validations[0].reason).toContain("missed");
+    expect(result.registered).toHaveLength(0);
+  });
+});
+
 // ── Fail-closed synthesis ─────────────────────────────────────────────────────
 
 describe("fail-closed guardrails", () => {
@@ -198,7 +396,7 @@ describe("fail-closed guardrails", () => {
       ...GOOD_SSRF_CONTENT,
       challenge_hint: "Hunt SSRF: look for requests.get with a user URL.", // only one ecosystem token
     };
-    const result = await runLensSynthesisLoop(INPUT, {
+    const result = await runLensSynthesisLoop(inputFor(), {
       model: toolModel(singleLangHint),
       probe: fakeProbe(),
       registryPath,
@@ -218,7 +416,11 @@ describe("fail-closed guardrails", () => {
           { classHint: "XXE (CWE-611)", sinkPattern: "parseXml", file: "b.java", line: 2, whyMissed: "y" },
         ],
       },
-      corpus: INPUT.corpus,
+      corpus: {
+        positives: [fixtures.devPos],
+        negativeControls: [fixtures.neg1],
+        heldOut: [fixtures.heldOutPos],
+      },
     };
     let call = 0;
     const alternatingModel: LensSynthesisModel = async () => {
@@ -311,7 +513,7 @@ describe("registerArchetype idempotency", () => {
       ledgerEntries: 2,
       unboundArchetypes: 0,
     });
-    const overlay = JSON.parse(readFileSync(overlayPath, "utf8")) as { archetypes: unknown[]; ledger: Array<{ type: string }> };
+    const overlay = JSON.parse(require("node:fs").readFileSync(overlayPath, "utf8")) as { archetypes: unknown[]; ledger: Array<{ type: string }> };
     expect(overlay.archetypes).toEqual([]);
     expect(overlay.ledger.map((entry) => entry.type)).toEqual(["promoted", "retired"]);
   });

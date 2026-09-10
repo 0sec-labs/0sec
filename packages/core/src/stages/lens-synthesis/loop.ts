@@ -41,12 +41,16 @@ export async function runLensSynthesisLoop(
   const model = deps.model ?? makeDefaultLensSynthesisModel(deps.modelId);
   const warnings: string[] = [];
 
+  const signal = deps.signal;
+
   // ── Stage 1: capture ──
+  signal?.throwIfAborted();
   const candidates = captureLensCandidates(input.misses);
   const clusters = clusterCandidates(candidates).length;
   log(`[lens-synth] captured ${candidates.length} miss candidate(s) in ${clusters} cluster(s)`);
 
   // ── Stage 2: synthesize (isolated — a synth fault yields zero archetypes) ──
+  signal?.throwIfAborted();
   let synthesized: SynthesizedArchetype[];
   try {
     synthesized = await synthesizeArchetypes(candidates, { model, log });
@@ -65,9 +69,10 @@ export async function runLensSynthesisLoop(
     const id = archetype.content.id;
 
     // ── Stage 3: validate EVERY candidate (so a dry run still reports champions) ──
+    const trials = deps.trials ?? 2;
     let report: LensValidationReport;
     try {
-      report = await validateCandidateLens(archetype, input.corpus, { probe: deps.probe, log });
+      report = await validateCandidateLens(archetype, input.corpus, { probe: deps.probe, trials, log });
     } catch (err) {
       rejected.push({ id, reason: `validation error (fail-closed): ${err instanceof Error ? err.message : String(err)}` });
       continue;
@@ -88,15 +93,20 @@ export async function runLensSynthesisLoop(
       continue;
     }
 
+    // Signal check: no post-cancel promotion (fail-closed).
+    signal?.throwIfAborted();
+
     // ── Stage 4: register the validated champion (fail-closed) ──
     try {
       const outcome = registerArchetype(archetype, {
         ...(deps.registryPath ? { registryPath: deps.registryPath } : {}),
         validatedAt: now(),
+        validation: report,
       });
       if (outcome.written && outcome.registered) {
         registered.push(outcome.registered);
-        log(`[lens-synth] REGISTERED ${outcome.registered.uid} (validated ${outcome.registered.validatedAt})`);
+        const token = outcome.lensVersionDigest ? ` (version ${outcome.lensVersionDigest.slice(0, 12)})` : "";
+        log(`[lens-synth] REGISTERED ${outcome.registered.uid}${token} (validated ${outcome.registered.validatedAt})`);
       } else {
         rejected.push({ id, reason: outcome.reason ?? "not written" });
       }

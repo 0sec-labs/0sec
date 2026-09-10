@@ -527,10 +527,23 @@ export {
   SYNTH_TOOL_NAME,
   validateCandidateLens,
   makeFinderLensProbe,
+  prepareValidationCorpus,
   registerArchetype,
   buildRegistryEntry,
   inspectLensRegistry,
   retireArchetype,
+  captureObservation,
+  listObservations,
+  approveObservation,
+  rejectObservation,
+  observationQueueSummary,
+  claimForProcessing,
+  markProcessed,
+  getObservation,
+  observationDigest,
+  releaseClaim,
+  parseObservationInput,
+  parseApprovedObservationShape,
 } from "./stages/lens-synthesis/index.js";
 export type {
   LensCandidate,
@@ -541,8 +554,13 @@ export type {
   SynthesizedArchetypeContent,
   ValidationFixture,
   ValidationCorpus,
+  PreparedValidationCorpus,
+  LensBaselineSnapshot,
   LensProbe,
+  LensProbeFinding,
   LensProbeOutcome,
+  LensTrialSummary,
+  LensValidationReceipt,
   LensValidationReport,
   LensScorecardSummary,
   RegisteredLens,
@@ -557,6 +575,16 @@ export type {
   RegisterOutcome,
   LensRegistryStatus,
   RetireOutcome,
+  LearningObservation,
+  ObservationStatus,
+  ObservationSource,
+  ObservationFilter,
+  CaptureObservationInput,
+  ApprovedObservationShape,
+  EvidenceRef,
+  ObservationQueueSummary,
+  ObservationQueueOptions,
+  ClaimedApprovedObservation,
 } from "./stages/lens-synthesis/index.js";
 export {
   checkNovelty,
@@ -2364,3 +2392,6 @@ export type {
   ImprovementPromotionPolicy,
   ImprovementPromotionStatus,
 } from "./bench/improvement-promotion.js";
+
+// Isolated, evaluated self-rewriting candidates and pinned future workers.
+export * from "./improvement/index.js";

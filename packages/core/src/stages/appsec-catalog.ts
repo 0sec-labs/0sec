@@ -97,6 +97,8 @@ export interface AppsecArchetype {
   validatedAt?: string;
   /** The miss refs (file:line) the synthesized entry was built to close. */
   missRefs?: string[];
+  /** Digest of the original registry entry, shared with promotion receipts. */
+  versionDigest?: string;
 }
 
 /** The on-disk (snake_case) shape. Exported so the safe writer emits byte-identical entries. */
@@ -143,6 +145,7 @@ export interface AppsecLensRegistry {
 function mapRawAppsecArchetypes(raw: RawAppsecArchetype[]): AppsecArchetype[] {
   return raw.map((a) => ({
     uid: a.uid,
+    versionDigest: appsecArchetypeDigest(a),
     id: a.id,
     name: a.name,
     cwe: a.cwe,
@@ -234,7 +237,7 @@ export function loadAppsecArchetypes(): AppsecArchetype[] {
  * the focused hunt angle appended to the finder brief.
  */
 export function appsecArchetypeToFinderLens(a: AppsecArchetype): FinderLens {
-  return { id: a.id, challengeHint: a.challengeHint };
+  return { id: a.id, challengeHint: a.challengeHint, ...(a.versionDigest ? { versionDigest: a.versionDigest } : {}) };
 }
 
 // ── Durable + ephemeral overlays (fail-closed) ──────────────────────────────

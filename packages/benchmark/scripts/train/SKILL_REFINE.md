@@ -79,6 +79,32 @@ good by producing findings that survived two independent checks.
   destination you name. There is no code path from "flagged" to "written"
   without a human supplying the refined YAML and the sign-off.
 
+### Evolution registry authorization
+
+When `--promote` is passed, three additional flags are **required** to authorize
+the artifact against the evolution registry:
+
+| Flag | Description |
+|------|-------------|
+| `--evolution-store <path>` | Path to the evolution store directory containing `registry.json`, `receipts/`, and `snapshots/` |
+| `--evolution-version <id>` | The registry version UUID that authorized this artifact (must be currently active) |
+| `--evolution-artifact <relative-path>` | Relative path of the artifact within the version's immutable snapshot (e.g. `agent/skills/vulnerabilities/sqli-advanced.yaml` for skills) |
+
+If `--promote` is passed without these, the script exits with code 3 and an
+actionable error directing the user to the `0sec evolve` workflow.
+
+The authorization uses `artifact-bridge.mjs` (sibling to `check_skill.mjs`):
+
+```bash
+node artifact-bridge.mjs authorize \
+  /path/to/evolution-store \
+  <version-id> \
+  agent/skills/vulnerabilities/sqli-advanced.yaml \
+  skill
+```
+
+Exit codes: 0 = authorized, 1 = authorization failed, 2 = bad invocation.
+
 ## Ledger decision vocabulary
 
 | Decision | Meaning |
@@ -97,16 +123,40 @@ python3 skill_refine_loop.py --dataset results/skill-trajectories.jsonl
 # validate a single candidate YAML with the runtime loader and exit
 python3 skill_refine_loop.py --check-skill path/to/candidate.yaml
 
-# gated promotion (operator-driven)
+# gated promotion with evolution registry authorization (operator-driven)
 python3 skill_refine_loop.py --dataset results/skill-trajectories.jsonl \
     --candidate-yaml refined-ssrf-bypass.yaml \
     --candidate-skill ssrf-bypass \
     --operator alice \
-    --promote --promote-dest packages/core/src/agent/skills/vulnerabilities/ssrf-bypass.yaml
+    --promote --promote-dest packages/core/src/agent/skills/vulnerabilities/ssrf-bypass.yaml \
+    --evolution-store ~/.0sec/evolution \
+    --evolution-version a1b2c3d4-... \
+    --evolution-artifact agent/skills/vulnerabilities/sqli-advanced.yaml
 ```
 
 The load-check needs the core build. If `check_skill.mjs` reports the build is
 missing, run `pnpm --filter @0sec/core build` (or pass `--core-dist <dir>`).
+
+## Available flags
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--dataset <path>` | for analysis | Labeled-trajectory dataset JSONL |
+| `--candidate-yaml <path>` | for promotion | Refined skill YAML to promote |
+| `--candidate-skill <id>` | for promotion | Skill ID matching the candidate |
+| `--operator <name>` | with `--promote` | Operator sign-off name |
+| `--promote` | no | Write the validated X to `--promote-dest` |
+| `--promote-dest <path>` | with `--promote` | Destination for the promoted artifact |
+| `--evolution-store <path>` | with `--promote` | Evolution store directory for authorization |
+| `--evolution-version <id>` | with `--promote` | Active registry version UUID |
+| `--evolution-artifact <path>` | with `--promote` | Relative path within the version snapshot |
+| `--min-samples <N>` | no | Minimum eligible findings per skill (default 200) |
+| `--min-delta <float>` | no | Minimum deviation from baseline to flag (default 0.05) |
+| `--dry-run` | no | Read-only — no ledger or file writes |
+| `--selftest` | no | Run fixture-based self-check and exit |
+| `--check-skill <path>` | no | Validate YAML with runtime loader and exit |
+| `--core-dist <dir>` | no | Override core build directory |
+| `--ledger <path>` | no | Ledger output path (default: skill-refine-ledger.json) |
 
 ## Tests
 

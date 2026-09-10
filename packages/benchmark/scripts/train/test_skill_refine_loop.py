@@ -12,6 +12,7 @@ Fixture: fixtures/skill-refine-trajectories.sample.jsonl (generated from
 """
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -23,12 +24,55 @@ import skill_refine_loop as srl  # noqa: E402
 FIXTURE = HERE / "fixtures" / "skill-refine-trajectories.sample.jsonl"
 NOW = "1970-01-01T00:00:00+00:00"
 
+# A known-valid skill YAML for promotion gate tests that exercise load_check.
+VALID_SKILL_SOURCE = (
+    HERE.parent.parent.parent.parent
+    / "packages"
+    / "core"
+    / "src"
+    / "agent"
+    / "skills"
+    / "vulnerabilities"
+    / "prototype-pollution.yaml"
+)
+
 
 def _load_entries():
     findings = srl.load_trajectories(FIXTURE)
     entries = srl.analyze(findings, min_samples=5, min_delta=0.005, now=NOW)
     agg = srl.aggregate(findings)
     return findings, entries, agg
+
+
+class FakeArgs:
+    """Minimal argparse namespace for _gate_promotion tests."""
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+def _valid_skill_copy(tmp_path: Path) -> Path:
+    """Copy a valid skill YAML to a temp location for load_check testing."""
+    dest = tmp_path / "test-skill.yaml"
+    shutil.copy2(VALID_SKILL_SOURCE, dest)
+    return dest
+
+
+def _make_basic_args(tmp_path: Path, **overrides):
+    """Standard promotion args (+ overrides) for _gate_promotion tests."""
+    defaults = dict(
+        candidate_yaml=_valid_skill_copy(tmp_path),
+        candidate_skill="prototype-pollution",
+        operator="tester",
+        promote=True,
+        promote_dest=tmp_path / "promoted-skill.yaml",
+        core_dist=None,
+        evolution_store=tmp_path / "fake-store",
+        evolution_version="00000000-0000-0000-0000-000000000001",
+        evolution_artifact="agent/skills/vulnerabilities/pp.yaml",
+    )
+    defaults.update(overrides)
+    return FakeArgs(**defaults)
 
 
 def test_reward_excludes_inconclusive_and_nonoperator():
@@ -89,3 +133,55 @@ def test_dryrun_writes_no_yaml_but_appends_ledger(tmp_path):
 def test_selftest_entrypoint_passes():
     """The dependency-free --selftest path returns success."""
     assert srl.run_selftest() == 0
+
+
+# ── Evolution authorization gating tests (need copy of real valid skill) ──
+
+
+def test_promote_without_evolution_flags_returns_actionable_error(tmp_path):
+    """--promote without --evolution-store / --evolution-version /
+    --evolution-artifact must exit dry-run with actionable error
+    instructing the user to use the 0sec evolve workflow."""
+    entries = [{"skill_id": "prototype-pollution", "decision": srl.DECISION_FLAGGED}]
+    args = _make_basic_args(
+        tmp_path,
+        evolution_store=None,
+        evolution_version=None,
+        evolution_artifact=None,
+    )
+    result = srl._gate_promotion(args, entries, NOW)
+    assert len(result) == 1
+    assert result[0]["decision"] == srl.DECISION_SKIPPED
+    assert result[0].get("reason") == "missing_evolution_proof"
+
+
+def test_gate_promotion_requires_flagged_skill(tmp_path):
+    """Even with all evolution flags, a non-flagged skill cannot be promoted."""
+    entries = [{"skill_id": "some-other-skill", "decision": srl.DECISION_FLAGGED}]
+    args = _make_basic_args(tmp_path, candidate_skill="healthy-skill")
+    result = srl._gate_promotion(args, entries, NOW)
+    assert result[0]["decision"] == srl.DECISION_SKIPPED
+    assert result[0].get("reason") == "not_flagged"
+
+
+def test_gate_promotion_dry_run_skips_evolution_check(tmp_path):
+    """Dry-run (--promote=False) should skip evolution check entirely."""
+    entries = [{"skill_id": "prototype-pollution", "decision": srl.DECISION_FLAGGED}]
+    args = _make_basic_args(
+        tmp_path,
+        promote=False,
+        evolution_store=None,
+        evolution_version=None,
+        evolution_artifact=None,
+    )
+    result = srl._gate_promotion(args, entries, NOW)
+    assert result[0]["decision"] == srl.DECISION_WOULD_PROMOTE
+
+
+def test_gate_promotion_requires_operator_signoff(tmp_path):
+    """Even with all evolution flags, missing operator is caught before
+    evolution check."""
+    entries = [{"skill_id": "prototype-pollution", "decision": srl.DECISION_FLAGGED}]
+    args = _make_basic_args(tmp_path, operator=None)
+    result = srl._gate_promotion(args, entries, NOW)
+    assert result[0].get("reason") == "missing_operator_signoff"
