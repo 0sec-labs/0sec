@@ -1,52 +1,108 @@
 ---
 title: API Keys
-description: Supported LLM providers, environment variables, and model routing.
+description: Supported LLM providers, environment variables, credential priority, model routing, and provider failover.
 ---
 
-The default `api` runtime makes direct HTTP calls to a provider. Set credentials
-as environment variables.
+The `api` runtime makes direct HTTP calls to a provider. Set credentials
+as environment variables, or use the console credential store for API-key
+providers.
 
 ## Supported providers
 
-| Provider | Environment Variable | Notes |
-|----------|---------------------|-------|
-| **Z.ai GLM** | `Z_AI_API_KEY` | `glm-5.3` is the default for the Z.ai route. Uses Z.ai's Anthropic-compatible Messages API. |
-| **Alibaba Qwen** | `QWEN_API_KEY` | Use `--model qwen3.8-max` or `0SEC_MODEL=qwen3.8-max`. Uses Alibaba Model Studio's OpenAI-compatible endpoint. |
-| **Moonshot Kimi** | `KIMI_API_KEY` | Use `--model k3`. Uses Moonshot's Anthropic-compatible Coding endpoint. |
-| **xAI Grok** | `XAI_API_KEY` | Use `--model grok-4.6`. Uses xAI's OpenAI-compatible endpoint. Override the host with `XAI_BASE_URL`. Cost note: our price table carries xAI's short-context rates, so spend on prompts over 200k tokens is under-reported — reconcile against the xAI console. |
-| **OpenCode Zen** | `OPENCODE_API_KEY` | Use `--model muse-spark-1.3-contributor-free`, or explicitly select `opencode/<model-id>`. Zen preserves each upstream protocol: GPT/Grok/Muse Spark use Responses, Claude/Qwen use Messages, Gemini uses Google `generateContent`, and DeepSeek/GLM/Kimi/MiniMax plus the free tier use chat completions. Override the host with `OPENCODE_BASE_URL`. |
-| **ChatGPT Codex** | `0SEC_CHATGPT_ACCESS_TOKEN`, `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` | OAuth subscription auth, not an API key. Both tokens are accepted; the access token is read first, the refresh token is refreshed on demand. This is the one provider that can also authenticate from a file — see [ChatGPT Codex authentication](#chatgpt-codex-authentication) below. |
-| **DeepSeek** | `DEEPSEEK_API_KEY` | Direct DeepSeek API access. Endpoint override: `DEEPSEEK_BASE_URL`. |
-| **OpenRouter** | `OPENROUTER_API_KEY` | Access to many hosted model families through one API. |
-| **Anthropic** | `ANTHROPIC_API_KEY` | Direct access to Claude models. Endpoint override: `ANTHROPIC_BASE_URL`. |
-| **Azure OpenAI** | `AZURE_OPENAI_API_KEY` | Azure-hosted OpenAI models. See [Azure configuration](#azure-openai-configuration) below for additional settings. |
-| **OpenAI** | `OPENAI_API_KEY` | Direct access to GPT models. Endpoint override: `OPENAI_BASE_URL`. |
+| Provider | Env Var(s) | Default Model | Wire |
+|----------|-----------|---------------|------|
+| **ChatGPT Codex** | `0SEC_CHATGPT_ACCESS_TOKEN` (read first) / `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` | `gpt-5.5` | Responses (OAuth bearer) |
+| **DeepSeek** | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` | Responses |
+| **OpenRouter** | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4.6` | Chat completions |
+| **Azure OpenAI** | `AZURE_OPENAI_API_KEY` | `gpt-4o` (override with `AZURE_OPENAI_MODEL`) | Chat completions (default) or Responses |
+| **OpenAI** | `OPENAI_API_KEY` | `gpt-4o` | Chat completions |
+| **Z.ai GLM** | `Z_AI_API_KEY` | `glm-5.3` | Anthropic Messages |
+| **Moonshot Kimi** | `KIMI_API_KEY` | `k3` | Anthropic Messages |
+| **Alibaba Qwen** | `QWEN_API_KEY` | `qwen3.8-max` | Chat completions |
+| **xAI Grok** | `XAI_API_KEY` | `grok-4.6` | Chat completions |
+| **OpenCode Zen** | `OPENCODE_API_KEY` | `muse-spark-1.3-contributor-free` | Per-model (Responses, Anthropic Messages, Google generateContent, or Chat completions) |
+| **Anthropic** | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` | Anthropic Messages |
 
 These eleven are the only providers the runtime detects from the environment.
-Model families with no direct path (Meta, Mistral) are reachable through
-OpenRouter. Gemini is also reachable through `opencode/gemini-*` when
-`OPENCODE_API_KEY` is configured.
+Model families with no direct path (Meta, Mistral, Google Gemini) are reachable
+through OpenRouter or OpenCode Zen.
+
+## Credential priority
+
+When no `--model` flag is given, the runtime selects a provider by checking
+environment variables in this order. The **first variable found** wins:
+
+1. **ChatGPT Codex** — `0SEC_CHATGPT_ACCESS_TOKEN` or `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`
+2. **DeepSeek** — `DEEPSEEK_API_KEY`
+3. **OpenRouter** — `OPENROUTER_API_KEY`
+4. **Azure OpenAI** — `AZURE_OPENAI_API_KEY`
+5. **OpenAI** — `OPENAI_API_KEY`
+6. **Z.ai GLM** — `Z_AI_API_KEY`
+7. **Moonshot Kimi** — `KIMI_API_KEY`
+8. **Alibaba Qwen** — `QWEN_API_KEY`
+9. **xAI Grok** — `XAI_API_KEY`
+10. **OpenCode Zen** — `OPENCODE_API_KEY`
+11. **Anthropic** — `ANTHROPIC_API_KEY`
+
+With no key at all, the runtime defaults to Anthropic (consistently emitting a
+helpful failure message — it never silently produces zero findings).
+
+**Two things override this fallback chain:**
+- A `--model` (or `0SEC_MODEL`) value that maps to a specific provider — see
+  [model routing](#model-routing) below — causes that provider's key to be used
+  regardless of its position in the priority list.
+- `0SEC_SELECTED_PROVIDER` / `0SEC_FORCE_PROVIDER` (see [provider
+  pinning](#provider-pinning)) pins the provider for the entire run.
 
 ## Model routing
 
 Set `--model <id>` or run a command through `env 0SEC_MODEL=<id> 0sec <command>`
 when more than one credential is present.
-0sec routes recognized families to the configured provider:
+0sec routes recognized model prefixes to the configured provider:
 
-- `glm-*` / `z-ai/*` → Z.ai
-- `qwen*` → Alibaba Qwen
-- `k3` / `kimi*` → Moonshot Kimi
-- `grok*` / `xai/*` → xAI Grok
-- `muse-spark*` / `mimo*` / `ling*` / `big-pickle` / `nemotron*` / `minimax*` → OpenCode Zen
-- `opencode/<model-id>` → OpenCode Zen, using that model family's documented wire
-- `claude*` / `anthropic/*` → Anthropic, then OpenRouter when direct Anthropic
-  credentials are absent
-- `gpt-*` / `o*` → ChatGPT Codex subscription when configured, otherwise
-  OpenAI. `0SEC_SELECTED_PROVIDER` explicitly pins either provider for the
-  current chat or run.
+| Model prefix | Provider | Notes |
+|---|---|---|
+| `glm-*`, `z-ai/*`, `*glm*` | Z.ai GLM | Anthropic-compatible Messages wire |
+| `qwen*` | Alibaba Qwen | OpenAI-compatible `chat/completions` wire |
+| `k3`, `kimi*` | Moonshot Kimi | Anthropic-compatible Messages wire |
+| `grok*`, `xai/*`, `x-ai/*` | xAI Grok | OpenAI-compatible `chat/completions` wire |
+| `opencode/<model-id>` | OpenCode Zen | Wire per upstream model family |
+| `muse-spark*`, `mimo*`, `ling*`, `big-pickle`, `nemotron*`, `minimax*` | OpenCode Zen | Chat completions wire |
+| `claude*`, `anthropic/*`, `*sonnet*`, `*opus*`, `*haiku*` | Anthropic (preferred), OpenRouter (fallback) | Anthropic Messages wire |
+| `gpt-*`, `o1`-`o4` | ChatGPT Codex (when configured), OpenAI (fallback) | Responses (Codex) or Chat completions (OpenAI) |
+| `deepseek-v4-flash` | DeepSeek | Responses wire |
+| Azure Foundry deployment ids | Azure | Chat completions or Responses |
 
-Without an explicit model, 0sec picks an available fallback. Pin a model rather
-than relying on ambient credential order.
+Without an explicit model, 0sec picks an available fallback via the [credential
+priority](#credential-priority) chain. Pin a model rather than relying on ambient
+credential order.
+
+### Free OpenRouter model
+
+When `OPENROUTER_API_KEY` is set, `--model free` maps to
+`nvidia/nemotron-3-super-120b-a12b:free` — a no-cost tier for testing:
+
+```bash
+env OPENROUTER_API_KEY="sk-or-v1-..." \
+  0sec scan --target https://example.com --scope ./scope.json --model free
+```
+
+## Provider pinning
+
+`0SEC_SELECTED_PROVIDER` pins the provider for the current chat or run,
+bypassing the ambient credential priority. Accepts one of: `openrouter`,
+`anthropic`, `openai`, `azure`, `deepseek`, `chatgpt-codex`, `z-ai`, `kimi`,
+`qwen`, `xai`, `opencode`.
+
+```bash
+env 0SEC_SELECTED_PROVIDER=deepseek 0SEC_MODEL=deepseek-v4-flash \
+  0sec scan --target https://example.com --scope ./scope.json --mode web
+```
+
+`0SEC_FORCE_PROVIDER` is an unconditional override for benchmark control. It
+applies even when `preferredModel` differs from `0SEC_MODEL`, which defeats
+cross-family refutation — use it only in controlled benchmarks. Setting both
+to different values throws an error.
 
 ## Setting your key
 
@@ -55,6 +111,7 @@ than relying on ambient credential order.
 # Set the provider key.
 export Z_AI_API_KEY="..."
 export QWEN_API_KEY="..."
+export DEEPSEEK_API_KEY="..."
 
 # Select its matching model at run time.
 0sec scan --target https://api.example.com --scope ./scope.json --model glm-5.3
@@ -87,13 +144,24 @@ CLI through the container image:
 
 ## ChatGPT Codex authentication
 
-ChatGPT Codex is the only provider that can authenticate from a file instead of an
-env var. When neither `0SEC_CHATGPT_ACCESS_TOKEN` nor
-`0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` is supplied for a run, the runtime reads the
-tokens from `~/.codex/auth.json` (the file `codex login` writes). Override the path with
-`0SEC_CHATGPT_AUTH_FILE`; an account id comes from `0SEC_CHATGPT_ACCOUNT_ID` or the
-same file. (`0SEC_CODEX_AUTH_JSON_PATH` is a deprecated spelling — prefer
-`0SEC_CHATGPT_AUTH_FILE`.)
+ChatGPT Codex uses its own authentication file, separate from the console's
+API-key store. When neither `0SEC_CHATGPT_ACCESS_TOKEN` nor
+`0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` is supplied, the runtime can read tokens
+from `~/.codex/auth.json`, written by `codex login`. Override the path with
+`0SEC_CHATGPT_AUTH_FILE`; an account ID comes from `0SEC_CHATGPT_ACCOUNT_ID`
+or the same file. Prefer the canonical spelling over the older
+`0SEC_CODEX_AUTH_JSON_PATH`.
+
+Path precedence for the auth file:
+1. `0SEC_CHATGPT_AUTH_FILE` (canonical, matches the runtime).
+2. `0SEC_CODEX_AUTH_JSON_PATH` (deprecated — honoured as a fallback).
+3. `~/.codex/auth.json` (the default when neither override is set).
+
+The CLI bootstrap additionally runs `maybeLoadCodexAuth` at startup, which
+loads the auth file into `0SEC_CHATGPT_*` env vars if no such token is already
+present. This is a local-dev convenience: a logged-in `codex` session wins over
+stale `AZURE_OPENAI_API_KEY` / `OPENAI_API_KEY` left in a dev shell, so
+`0sec review` "just works" on the subscription backend.
 
 In OpenTUI chat, run `/providers` (or `/connect`) and choose **ChatGPT
 Codex**. 0sec runs the official `codex login --device-auth` lifecycle, streams
@@ -138,7 +206,24 @@ Run `/providers` first to confirm the provider is configured.
 
 Use OpenRouter to reach a model family with no direct provider credential. It's
 not required for Z.ai GLM, Alibaba Qwen, Moonshot Kimi, Anthropic, OpenAI, Azure,
-OpenCode Zen, or DeepSeek.
+OpenCode Zen, or DeepSeek. OpenRouter is also the fallback when a `claude-*` model
+is requested but no `ANTHROPIC_API_KEY` is set — the runtime checks for
+`OPENROUTER_API_KEY` before giving up on that model family.
+
+## Provider failover
+
+`0SEC_LLM_FALLBACK` configures an ordered chain of backup providers when the
+primary exhausts its retry budget or hits a plan-quota limit:
+
+```bash
+env 0SEC_LLM_FALLBACK=deepseek:deepseek-v4-flash,azure:gpt-5-deployment \
+  0sec review ./authorized-repo
+```
+
+Each entry is `<providerId>:<model>`, comma-separated. The runtime advances
+through the chain sequentially, skipping entries whose auth env var is absent.
+Supported provider ids: `openrouter`, `anthropic`, `openai`, `azure`, `deepseek`,
+`chatgpt-codex`, `z-ai`, `kimi`, `qwen`, `xai`, `opencode`.
 
 ## Azure OpenAI configuration
 
@@ -164,6 +249,9 @@ If you rely on Codex config, make sure `~/.codex/config.toml` points at Azure wi
 a usable base URL and model/deployment. Incomplete Azure config stops with a
 configuration error rather than a broken scan.
 
+The runtime probes the Azure endpoint once per process to resolve the deployment
+region, used for diagnostics (not routing).
+
 ## Alternative: CLI runtimes
 
 To skip API keys entirely, use CLI runtimes. Claude runs live scans through its
@@ -182,3 +270,21 @@ subscription loop; Codex and Gemini are source-review oriented:
 Source-review CLI runtimes need no API key — the CLI handles auth. Codex live
 scans use the direct ChatGPT Codex provider, so they need
 `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` rather than the Codex CLI.
+
+## `0sec doctor` — credential readiness
+
+Run `0sec doctor` to inspect runtime and credential readiness. It is not a
+successful authenticated model-call test:
+
+```bash
+0sec doctor
+```
+
+It reports:
+- Node.js version compatibility (20+ required).
+- **API runtime** status: `configured` (credential found), `bad` (configured but
+  unusable), or `missing` (no credential).
+- **CLI runtimes** found on `PATH` (claude, codex, gemini).
+- Configuration errors when the API runtime is set up but cannot be used.
+
+Under Bun with a compatible terminal, doctor launches the richer OpenTUI view.

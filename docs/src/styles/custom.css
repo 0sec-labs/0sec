@@ -1,227 +1,483 @@
-/* 0sec docs — dark theme with crimson accents, matching 0.security */
+/* ═══════════════════════════════════════════════════════════════════
+   0sec docs — warm-light editorial canvas + dark theme, matching
+   0.security branding.
+   ═══════════════════════════════════════════════════════════════════ */
 
-/* Starlight accent colors — used for links, active states, highlights */
+/* ── Satoshi Variable (self-hosted on 0.security CDN) ─────────── */
+@font-face {
+  font-family: 'Satoshi Variable';
+  src: url('https://0.security/fonts/satoshi-var.woff2') format('woff2-variations');
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Satoshi Variable';
+  src: url('https://0.security/fonts/satoshi-var-italic.woff2') format('woff2-variations');
+  font-weight: 300 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ── Starlight theme tokens ──────────────────────────────────────
+   Light: warm canvas #F7F5F2, near-black text, restrained crimson.
+   Dark:  #0a0a0a canvas, white text, crimson accent.             */
 :root,
-:root[data-theme="light"],
-:root[data-theme="dark"] {
-  /* Crimson accent scale */
-  --sl-color-accent-low: #1a0a0a;
+:root[data-theme="light"] {
+  /* Crimson accent — subtle, not the primary brand colour */
+  --sl-color-accent-low: #fce8e6;
   --sl-color-accent: #DC2626;
-  --sl-color-accent-high: #ef4444;
+  --sl-color-accent-high: #991B1B;
 
-  /* Gray scale — zinc tones matching the main site */
-  --sl-color-white: #fafafa;
-  --sl-color-gray-1: #e4e4e7;
-  --sl-color-gray-2: #a1a1aa;
-  --sl-color-gray-3: #71717a;
-  --sl-color-gray-4: #3f3f46;
-  --sl-color-gray-5: #27272a;
-  --sl-color-gray-6: #18181b;
+  /* Neutral grays (warm-stone inspired) */
+  --sl-color-white: #1A1815;
+  --sl-color-gray-1: #292524;
+  --sl-color-gray-2: #44403C;
+  --sl-color-gray-3: #706C66;
+  --sl-color-gray-4: #A8A29E;
+  --sl-color-gray-5: #D6D3CE;
+  --sl-color-gray-6: #EDEBE6;
+  --sl-color-black: #FFFFFF;
+
+  /* Surfaces */
+  --sl-color-bg: #F7F5F2;
+  --sl-color-bg-nav: #FFFFFF;
+  --sl-color-bg-sidebar: #F7F5F2;
+  --sl-color-bg-inline-code: #EDEBE6;
+  --sl-color-hairline-shade: #E5E3DE;
+  --sl-color-hairline-light: #EDEBE6;
+  --sl-color-hairline: #E5E3DE;
+
+  /* Text */
+  --sl-color-text: #44403C;
+  --sl-color-text-accent: #DC2626;
+  --sl-color-text-invert: #FFFFFF;
+
+  /* Badge */
+  --sl-color-bg-badge: rgba(220, 38, 38, 0.10);
+
+  /* Font stack — Satoshi as the editorial face, system sans fallback */
+  --sl-font: 'Satoshi Variable', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --sl-font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code',
+    'JetBrains Mono', 'Consolas', monospace;
+
+  /* Shadows — lifted modestly off warm paper */
+  --sl-shadow-sm: 0 1px 2px rgba(26, 24, 21, 0.05);
+  --sl-shadow-md: 0 4px 6px -2px rgba(26, 24, 21, 0.06), 0 2px 4px -1px rgba(26, 24, 21, 0.04);
+  --sl-shadow-lg: 0 10px 15px -3px rgba(26, 24, 21, 0.06), 0 4px 6px -2px rgba(26, 24, 21, 0.04);
+
+  /* Backdrop overlay */
+  --sl-color-backdrop-overlay: rgba(26, 24, 21, 0.40);
+}
+
+:root[data-theme="dark"] {
+  /* Crimson accent */
+  --sl-color-accent-low: #1f0a0a;
+  --sl-color-accent: #DC2626;
+  --sl-color-accent-high: #fca5a5;
+
+  /* Neutral grays */
+  --sl-color-white: #FFFFFF;
+  --sl-color-gray-1: #F5F5F4;
+  --sl-color-gray-2: #D4D4D4;
+  --sl-color-gray-3: #A3A3A3;
+  --sl-color-gray-4: #525252;
+  --sl-color-gray-5: #404040;
+  --sl-color-gray-6: #262626;
   --sl-color-black: #0a0a0a;
 
-  /* Surface colors — force dark everywhere */
+  /* Surfaces */
   --sl-color-bg: #0a0a0a;
-  --sl-color-bg-nav: #0e0e0e;
-  --sl-color-bg-sidebar: #0e0e0e;
-  --sl-color-bg-inline-code: rgba(220, 38, 38, 0.08);
+  --sl-color-bg-nav: #111111;
+  --sl-color-bg-sidebar: #111111;
+  --sl-color-bg-inline-code: rgba(255, 255, 255, 0.06);
   --sl-color-hairline-shade: rgba(255, 255, 255, 0.08);
   --sl-color-hairline-light: rgba(255, 255, 255, 0.04);
-  --sl-color-text: #e4e4e7;
-  --sl-color-text-accent: #ef4444;
+  --sl-color-hairline: rgba(255, 255, 255, 0.08);
+
+  /* Text */
+  --sl-color-text: #D4D4D4;
+  --sl-color-text-accent: #fca5a5;
   --sl-color-text-invert: #0a0a0a;
 
-  /* Badge colors */
-  --sl-color-bg-badge: rgba(220, 38, 38, 0.12);
+  /* Badge */
+  --sl-color-bg-badge: rgba(220, 38, 38, 0.15);
 
-  /* Fonts */
-  --sl-font: "Inter", "Segoe UI", system-ui, sans-serif;
-  --sl-font-mono: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
-}
+  /* Shadows — subtle depth in dark */
+  --sl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --sl-shadow-md: 0 4px 6px -2px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+  --sl-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
 
-/* ── Sidebar ── */
-nav[aria-label="Main"] a[aria-current="page"],
-nav[aria-label="Main"] a[aria-current="page"]:hover {
-  color: #DC2626 !important;
-  background: rgba(220, 38, 38, 0.1) !important;
-  border-color: #DC2626 !important;
+  /* Backdrop overlay */
+  --sl-color-backdrop-overlay: rgba(0, 0, 0, 0.66);
 }
 
-nav[aria-label="Main"] a:hover {
-  color: #e4e4e7 !important;
-}
-
-/* ── Links ── */
-a:not([class]) {
-  color: #DC2626;
-}
-a:not([class]):hover {
-  color: #ef4444;
-}
-
-/* ── Inline code ── */
-:not(pre) > code {
-  background: rgba(220, 38, 38, 0.08) !important;
-  border: 1px solid rgba(220, 38, 38, 0.15) !important;
-  color: #ef4444 !important;
-  border-radius: 4px;
-  padding: 0.15em 0.35em;
-  font-size: 0.875em;
-}
-
-/* ── Code blocks ── */
-pre {
-  border: 1px solid rgba(255, 255, 255, 0.06) !important;
-  border-radius: 8px !important;
-  background: #111111 !important;
-}
-
-/* ── Headings ── */
-h1, h2, h3, h4 {
-  color: #fafafa !important;
-}
-
-/* ── Tables ── */
-table {
-  border-collapse: collapse;
-}
-th {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
-  color: #a1a1aa !important;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-td {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
-}
-
-/* ── Hero / splash ── */
-.hero .tagline {
-  color: #a1a1aa !important;
-}
-
-/* ── Header ── */
-header.header {
-  border-bottom-color: rgba(255, 255, 255, 0.06) !important;
-}
-
-/* ── Search ── */
-site-search button {
-  border-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-/* ── Mobile menu ── */
-starlight-menu-button button {
-  color: #e4e4e7 !important;
-}
-
-/* ── Content card (on splash pages) ── */
-.card {
-  background: #141414 !important;
-  border-color: rgba(255, 255, 255, 0.06) !important;
-}
-.card:hover {
-  border-color: rgba(220, 38, 38, 0.3) !important;
+/* ── Content width ────────────────────────────────────────────── */
+:root {
+  --sl-content-width: 52rem;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   Premium splash / hero — the landing should feel like the product.
+   Header
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Radial crimson glow behind the hero, plus a faint grid. */
-.hero {
-  position: relative;
-  padding-block: clamp(3rem, 8vw, 6rem);
-}
-.hero::before {
-  content: "";
-  position: absolute;
-  inset: -20% -10% auto -10%;
-  height: 130%;
-  z-index: -1;
-  background:
-    radial-gradient(60% 55% at 50% 0%, rgba(220, 38, 38, 0.16), transparent 70%),
-    radial-gradient(40% 40% at 85% 10%, rgba(220, 38, 38, 0.08), transparent 70%);
-  pointer-events: none;
+header.header {
+  border-bottom: 1px solid var(--sl-color-hairline-shade);
 }
 
-/* Big, tight hero title. */
+/* Match the website's compact wordmark in both themes. */
+.site-title img {
+  width: 6.5rem;
+  height: auto;
+}
+
+/* Search button / bar — clean field */
+site-search button[data-open-modal] {
+  border: 1px solid var(--sl-color-hairline-shade);
+  border-radius: 0.5rem;
+  background: var(--sl-color-bg);
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+  padding: 0.375rem 0.75rem;
+  transition: border-color 0.15s ease;
+}
+site-search button[data-open-modal]:hover,
+site-search button[data-open-modal]:focus-visible {
+  border-color: var(--sl-color-accent);
+  outline: none;
+}
+
+/* Mobile hamburger */
+starlight-menu-button button {
+  color: var(--sl-color-gray-1);
+  background: var(--sl-color-bg-nav);
+  border: 1px solid var(--sl-color-hairline-shade);
+  box-shadow: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Sidebar
+   ═══════════════════════════════════════════════════════════════════ */
+
+nav[aria-label="Main"] a {
+  border-radius: 0.375rem;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+/* Current page marker — crimson left border + tinted bg */
+nav[aria-label="Main"] a[aria-current="page"],
+nav[aria-label="Main"] a[aria-current="page"]:hover {
+  color: var(--sl-color-accent-high);
+  background: rgba(220, 38, 38, 0.06);
+  border-inline-start: 2px solid var(--sl-color-accent);
+  font-weight: 600;
+}
+
+nav[aria-label="Main"] a:hover {
+  color: var(--sl-color-gray-1);
+  background: var(--sl-color-gray-6);
+}
+
+nav[aria-label="Main"] a:focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Inline code
+   ═══════════════════════════════════════════════════════════════════ */
+
+:not(pre) > code {
+  background: var(--sl-color-bg-inline-code);
+  border: 1px solid var(--sl-color-hairline-light);
+  color: var(--sl-color-gray-1);
+  border-radius: 0.25rem;
+  padding: 0.125em 0.375em;
+  font-size: 0.875em;
+  font-family: var(--sl-font-mono);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Code blocks — bordered, subtle background
+   ═══════════════════════════════════════════════════════════════════ */
+
+pre {
+  border: 1px solid var(--sl-color-hairline-shade);
+  border-radius: 0.5rem;
+  background: var(--sl-color-black);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Headings — near-black light, white dark, clean rhythm
+   ═══════════════════════════════════════════════════════════════════ */
+
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--sl-color-white);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.sl-markdown-content h1 {
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+
+/* Section rules span the heading wrapper, not the inline heading text. */
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+  margin-top: 2.75rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--sl-color-hairline-light);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Tables — scrollable, readable
+   ═══════════════════════════════════════════════════════════════════ */
+
+.sl-markdown-content table {
+  font-size: var(--sl-text-sm);
+  width: 100%;
+}
+
+.sl-markdown-content th {
+  color: var(--sl-color-gray-2);
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
+  font-weight: 600;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--sl-color-hairline-shade);
+  text-align: start;
+}
+
+.sl-markdown-content td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+  vertical-align: baseline;
+}
+
+.sl-markdown-content tr:last-child td {
+  border-bottom: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Links
+   ═══════════════════════════════════════════════════════════════════ */
+
+.sl-markdown-content a:not([class]) {
+  color: var(--sl-color-gray-1);
+  text-decoration: underline;
+  text-underline-offset: 0.1em;
+  text-decoration-thickness: 0.05em;
+}
+.sl-markdown-content a:not([class]):hover {
+  color: var(--sl-color-accent-high);
+}
+a:focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Hero / splash — clean editorial full-width intro
+   ═══════════════════════════════════════════════════════════════════ */
+
+.hero {
+  position: relative;
+  padding-block: clamp(2.5rem, 6vw, 4.5rem);
+}
+
+
 .hero h1 {
-  font-size: clamp(3rem, 9vw, 5.5rem) !important;
-  font-weight: 800 !important;
-  letter-spacing: -0.04em !important;
-  line-height: 0.95 !important;
-  background: linear-gradient(180deg, #ffffff 0%, #d4d4d8 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  font-size: clamp(2.5rem, 7vw, 4rem);
+  font-weight: 750;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--sl-color-white);
 }
 
 .hero .tagline {
-  font-size: clamp(1.05rem, 2.2vw, 1.35rem) !important;
-  line-height: 1.55 !important;
-  max-width: 46ch;
-  color: #b6b6bd !important;
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  line-height: 1.6;
+  max-width: 48ch;
+  color: var(--sl-color-gray-3);
 }
 
-/* Action buttons: primary crimson with glow, clean secondary/minimal. */
 .hero .actions a {
-  border-radius: 10px !important;
-  font-weight: 600 !important;
-  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  font-size: var(--sl-text-sm);
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
+
 .hero .actions a[class*="primary"] {
-  background: #DC2626 !important;
-  border-color: #DC2626 !important;
-  color: #ffffff !important;
-  box-shadow: 0 8px 30px -8px rgba(220, 38, 38, 0.6);
+  background: var(--sl-color-white);
+  border-color: var(--sl-color-white);
+  color: var(--sl-color-text-invert);
 }
 .hero .actions a[class*="primary"]:hover {
-  background: #ef4444 !important;
-  transform: translateY(-1px);
-  box-shadow: 0 12px 36px -8px rgba(220, 38, 38, 0.7);
+  background: var(--sl-color-gray-2);
 }
+
 .hero .actions a[class*="secondary"] {
-  border-color: rgba(220, 38, 38, 0.4) !important;
-  color: #f4f4f5 !important;
+  border-color: var(--sl-color-hairline-shade);
+  color: var(--sl-color-gray-1);
 }
 .hero .actions a[class*="secondary"]:hover {
-  border-color: #DC2626 !important;
-  background: rgba(220, 38, 38, 0.08) !important;
-  transform: translateY(-1px);
+  border-color: var(--sl-color-accent);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.hero .actions a[class*="minimal"] {
+  color: var(--sl-color-gray-2);
 }
 .hero .actions a[class*="minimal"]:hover {
-  color: #ef4444 !important;
+  color: var(--sl-color-accent);
 }
 
-/* ── Splash cards: gradient surface, crimson icon, lift on hover ── */
+/* ═══════════════════════════════════════════════════════════════════
+   Cards — modest radii, no glows, no hover-lift
+   ═══════════════════════════════════════════════════════════════════ */
+
 .card {
-  background: linear-gradient(180deg, #161616 0%, #101010 100%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.07) !important;
-  border-radius: 14px !important;
-  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
-}
-.card:hover {
-  transform: translateY(-3px);
-  border-color: rgba(220, 38, 38, 0.45) !important;
-  box-shadow: 0 16px 40px -20px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(220, 38, 38, 0.15);
-}
-.card .icon {
-  color: #ef4444 !important;
-  background: none !important;
-  border: none !important;
-  font-size: 2rem !important;
-  opacity: 1;
-}
-.card .title {
-  font-weight: 700 !important;
-  letter-spacing: -0.01em;
-  color: #fafafa !important;
+  background: var(--sl-color-black);
+  border: 1px solid var(--sl-color-hairline-shade);
+  border-radius: 0.75rem;
+  transition: border-color 0.14s ease;
 }
 
-/* Tighten the splash content-below-hero spacing. */
-.sl-markdown-content h2 {
-  margin-top: 2.75rem !important;
-  padding-top: 1.5rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+.card:hover {
+  border-color: rgba(220, 38, 38, 0.3);
+}
+
+.card .icon {
+  color: var(--sl-color-accent);
+  background: none;
+  border: none;
+  font-size: 1.75rem;
+}
+
+.card .title {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--sl-color-white);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Starlight LinkCard / CardGrid
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* CardGrid — the wrapping row */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 1rem;
+}
+
+/* LinkCard uses a wrapper with a stretched link, not an anchor.card. */
+.sl-link-card {
+  background: var(--sl-color-black);
+  border-color: var(--sl-color-hairline-shade);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  box-shadow: none;
+}
+
+.sl-link-card:hover {
+  background: var(--sl-color-black);
+  border-color: var(--sl-color-gray-4);
+}
+
+.sl-link-card a {
+  text-decoration: none;
+}
+
+.sl-link-card .title {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.sl-link-card .description {
+  font-size: var(--sl-text-sm);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   docs-task-grid / docs-task-card (commands.md task navigation)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.docs-task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+.docs-task-card {
+  background: var(--sl-color-black);
+  border: 1px solid var(--sl-color-hairline-shade);
+  border-radius: 0.625rem;
+  padding: 1rem 1.25rem;
+  margin: 0;
+  transition: border-color 0.14s ease;
+}
+
+.docs-task-card:hover {
+  border-color: rgba(220, 38, 38, 0.3);
+}
+
+.docs-task-card h3 {
+  font-size: 1rem;
+  font-weight: 650;
+  margin: 0 0 0.25rem 0;
+  letter-spacing: -0.01em;
+  color: var(--sl-color-white);
+}
+
+.docs-task-card p {
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.docs-task-card p + p {
+  margin-top: 0.75rem;
+}
+
+.docs-task-card p:last-child a {
+  font-family: var(--sl-font-mono);
+  color: var(--sl-color-gray-1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Sidebar group headings (collapsible sections)
+   ═══════════════════════════════════════════════════════════════════ */
+
+nav[aria-label="Main"] > ul > li > details > summary,
+nav[aria-label="Main"] > ul > li > a {
+  font-size: var(--sl-text-sm);
+  font-weight: 500;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Keyboard focus — visible everywhere
+   ═══════════════════════════════════════════════════════════════════ */
+
+:focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Reduced motion — respect OS preference
+   ═══════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -16,10 +16,11 @@ parameter, and auth requirement already known — no crawl needed.
   --target https://api.example.com \
   --api-spec ./openapi.yaml \
   --mode web \
-  --depth deep
+  --depth deep \
+  --scope ./scope.json
 ```
 
-If your API requires authentication, add `--auth` (see [Scan authenticated APIs](#scan-authenticated-apis-bearer-token) below).
+If your API requires authentication, add `--auth` (see [Scan authenticated APIs](#scan-authenticated-apis-bearer-token) below). Live network targets require `--scope` — see [/scope/](/scope/).
 
 ## Scan a WordPress site for CVEs
 
@@ -39,20 +40,21 @@ env 0SEC_FEATURE_DYNAMIC_PLAYBOOKS=1 \
   --mode web \
   --depth deep \
   --features wp_fingerprint \
+  --scope ./scope.json \
   --verbose
 ```
 
-When the program explicitly allows scanner traffic, add the Docker executor and
-`--allow-scanners` to let the agent use tools like `wpscan`. Keep this off for
-scoped HackerOne/Bugcrowd targets unless the policy permits generic scanners.
+When the program explicitly allows scanner traffic, add `--allow-scanners`
+to let the agent use tools like `wpscan`. Keep this off for scoped
+HackerOne/Bugcrowd targets unless the policy permits generic scanners.
 
 ```bash
-env 0SEC_FEATURE_DOCKER_EXECUTOR=1 \
+env 0SEC_FEATURE_DYNAMIC_PLAYBOOKS=1 \
   0sec scan \
   --target https://blog.example.com \
   --mode web \
   --depth deep \
-  --features wp_fingerprint,docker_executor \
+  --scope ./scope.json \
   --allow-scanners
 ```
 
@@ -139,15 +141,13 @@ env \
   0SEC_FEATURE_CONSENSUS_VERIFY=1 \
   0SEC_FEATURE_REACHABILITY_GATE=1 \
   0SEC_FEATURE_POV_GATE=1 \
-  0SEC_FEATURE_TRIAGE_MEMORIES=1 \
   0SEC_FEATURE_MULTIMODAL=1 \
-  0SEC_FEATURE_DOCKER_EXECUTOR=1 \
   0sec scan \
   --target https://example.com \
   --mode web \
   --depth deep \
-  --egats \
-  --runtime claude
+  --features fp-moat \
+  --scope ./scope.json
 ```
 
 See [Configuration — Feature flags](/configuration/#feature-flags) for what each flag does.
@@ -162,7 +162,8 @@ the fastest win.
   --target https://hard-target.example.com \
   --mode web \
   --race \
-  --depth deep
+  --depth deep \
+  --scope ./scope.json
 ```
 
 ## Export findings to GitHub Issues
@@ -175,6 +176,7 @@ export GITHUB_TOKEN="ghp_..."
 0sec scan \
   --target https://example.com \
   --mode web \
+  --scope ./scope.json \
   --export github:myorg/security-findings
 ```
 
@@ -189,21 +191,24 @@ category (`cat:xss`, …) so you can triage from the GitHub UI.
   --target https://example.com \
   --mode web \
   --depth deep \
-  --format html
+  --format html \
+  --scope ./scope.json
 
 # Markdown (printed to stdout; redirect to a file)
 0sec scan \
   --target https://example.com \
   --mode web \
   --depth deep \
-  --format md > example-pentest.md
+  --format md \
+  --scope ./scope.json > example-pentest.md
 
 # PDF (auto-opens in your default viewer and saves to a temp file)
 0sec scan \
   --target https://example.com \
   --mode web \
   --depth deep \
-  --format pdf
+  --format pdf \
+  --scope ./scope.json
 ```
 
 Each report has an executive summary, severity breakdown, per-finding evidence
@@ -216,7 +221,8 @@ Each report has an executive summary, severity breakdown, per-finding evidence
 0sec scan \
   --target https://api.example.com \
   --api-spec ./openapi.yaml \
-  --auth '{"type":"bearer","token":"eyJhbGciOi..."}'
+  --auth '{"type":"bearer","token":"eyJhbGciOi..."}' \
+  --scope ./scope.json
 
 # From a file (avoids leaking the token to shell history)
 cat > auth.json <<'EOF'
@@ -226,7 +232,8 @@ EOF
 0sec scan \
   --target https://api.example.com \
   --api-spec ./openapi.yaml \
-  --auth ./auth.json
+  --auth ./auth.json \
+  --scope ./scope.json
 ```
 
 Other auth types:
@@ -260,4 +267,4 @@ Mark noisy findings as false positives and 0sec remembers the pattern next time.
 0sec triage memory remove <memory-id>
 ```
 
-Enable memory injection into the verify pipeline with `0SEC_FEATURE_TRIAGE_MEMORIES=1`.
+Triage memories run as part of the default triage pipeline (layer 9). No separate feature flag is needed — memories are stored in the database and injected into the verify prompt automatically on matching scans.

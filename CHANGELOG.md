@@ -14,6 +14,12 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Unified CLI and managed-cloud documentation at `docs.0.security`, including
+  task-oriented command navigation, source-audited workflow guides, and
+  website-aligned light/dark styling with responsive navigation.
+- `pnpm docs:sync` refreshes registered CLI arguments, options, defaults, and
+  aliases without replacing reviewed workflow or safety notes. `pnpm docs:check`
+  blocks stale command references in CI and before documentation deployment.
 - Source proposals can inspect recent retained worker versions without
   reopening removed source paths or applying edits against stale digests.
 - Stateful `access_control_workflow` verification with isolated identities,

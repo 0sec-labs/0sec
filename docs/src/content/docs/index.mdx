@@ -1,17 +1,18 @@
 ---
-title: 0sec
-description: The open cybersecurity harness — a team of AI agents that finds, proves, and reports vulnerabilities. Evidence-first.
+title: 0sec documentation
+description: Run security assessments with the open-source 0sec CLI or engage the 0sec team for a managed cloud engagement. Install, configure, scan, and review findings.
 template: splash
 hero:
-  tagline: The open cybersecurity harness. A team of AI agents explores your target in parallel, chains exploits, and a separate agent reproduces every finding before it counts.
+  title: 0sec documentation
+  tagline: Run security assessments yourself with the open-source CLI, or work with the 0sec team on a managed engagement. Start here.
   actions:
-    - text: Get Started
+    - text: CLI quickstart
       link: /getting-started/
       icon: right-arrow
       variant: primary
-    - text: CVEs found in the wild
-      link: https://0.security
-      icon: external
+    - text: Cloud guide
+      link: /cloud/
+      icon: right-arrow
       variant: secondary
     - text: GitHub
       link: https://github.com/0sec-labs/0sec
@@ -19,43 +20,65 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from "@astrojs/starlight/components";
+import { LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+## Choose your workflow
 
 <CardGrid>
-  <Card title="A team of AI agents" icon="rocket">
-    A lead agent splits the work across parallel strategies and focused subagents, targeting web apps, APIs, source code, packages, and MCP servers — all inside a scope that's checked on every tool call.
-  </Card>
-  <Card title="Reproduce before trusting" icon="approve-check-circle">
-    A separate, blind agent re-exploits each finding seeing only the PoC. Anything it can't reproduce is dropped — never shipped as "low confidence."
-  </Card>
-  <Card title="Real CVEs, not leaderboards" icon="star">
-    0sec's research loop has disclosed real bugs in the Linux kernel and widely-used open source, with maintainer review from Intel, NVIDIA, Red Hat, Google, and more. The live track record lives at <a href="https://0.security">0.security</a>.
-  </Card>
-  <Card title="Binary analysis, no source" icon="document">
-    When there's only a compiled binary, the in-repo <a href="https://github.com/0sec-labs/0sec/tree/main/0verse">0verse</a> engine runs a find → prove → patch → verify loop and confirms a bug only with a reproducing proof-of-vulnerability.
-  </Card>
-  <Card title="Bring your own model" icon="setting">
-    Anthropic, OpenAI, Azure (EU regions), OpenRouter, DeepSeek, Z.ai GLM, Moonshot Kimi, Qwen, a ChatGPT-Codex subscription, or local Ollama — with a hard per-run cost ceiling.
-  </Card>
-  <Card title="Evidence you can inspect" icon="list-format">
-    Every run keeps its own SQLite state, an append-only journal, and artifacts under <code>~/.0sec/runs/</code> — so you can <code>resume</code>, <code>replay</code>, or <code>disclose</code> it later.
-  </Card>
+  <LinkCard
+    title="Run the CLI"
+    description="Install 0sec, configure a model provider, define an authorized target, and run your first scan."
+    href="/getting-started/"
+  />
+  <LinkCard
+    title="Use managed cloud"
+    description="Request access, prepare your scope and test accounts, and agree on a managed engagement."
+    href="/cloud/getting-started/"
+  />
 </CardGrid>
 
-## Start here
+A cloud engagement is not required to use the open-source CLI. Choose your path below.
 
-- [Getting Started](/getting-started/) — install, define a scope, run your first scan
-- [Commands](/commands/) — the full CLI reference
-- [Configuration](/configuration/) & [API Keys](/api-keys/) — models, providers, and cost ceilings
+## Run the CLI
 
-## How it works
+<CardGrid>
+  <LinkCard title="Commands" description="Full CLI reference: flags, modes, and subcommands." href="/commands/" />
+  <LinkCard title="Configuration &amp; API Keys" description="Models, credentials, runtimes, feature flags, and provider resolution." href="/configuration/" />
+  <LinkCard title="Scope &amp; Authorization" description="Define allowed hosts, wildcards, CIDR, and exclusions." href="/scope/" />
+  <LinkCard title="Recipes" description="Copy-paste scans for common scenarios." href="/recipes/" />
+</CardGrid>
 
-- [Architecture](/architecture/) — the pipeline, runtime adapters, and MCP integration
-- [Agent Loop](/agent-loop/) — how the agents plan, act, reflect, and stop
-- [Blind Verification](/blind-verification/) — why findings are re-exploited before they count
-- [Finding Triage](/triage/) — the layers that cut false positives between research and verify
+## Workflows
 
-## Proof
+<CardGrid>
+  <LinkCard title="Console" description="Interactive chat, approvals, sessions, and keyboard controls." href="/console/" />
+  <LinkCard title="Desktop" description="Local desktop interface and build prerequisites." href="/desktop/" />
+  <LinkCard title="Scan Workflows" description="Investigation, saved runs, evidence review, and retesting." href="/scan-workflows/" />
+  <LinkCard title="Integrations" description="CI, MCP, plugins, and data exports." href="/integrations/" />
+  <LinkCard title="Research Workflows" description="Variant hunting, deep review, fuzzing, and binary analysis." href="/research-workflows/" />
+  <LinkCard title="Troubleshooting" description="Diagnose setup, scope, runtime, and execution failures." href="/troubleshooting/" />
+</CardGrid>
 
-- [Found in the wild](https://0.security) — the running, verified CVE track record
-- [Benchmarks](/benchmark/) — where 0sec sits on public CTF benchmarks, with honest caveats (we treat these as secondary to real disclosures)
+## Managed cloud
+
+<CardGrid>
+  <LinkCard title="Cloud Getting Started" description="Request access, prepare your brief, and arrange a managed engagement." href="/cloud/getting-started/" />
+  <LinkCard title="Scope &amp; Access" description="Prepare targets, test accounts, exclusions, and stop conditions." href="/cloud/scope-and-access/" />
+  <LinkCard title="Review Evidence" description="Check coverage, inspect findings, and plan a retest." href="/cloud/review-evidence/" />
+</CardGrid>
+
+## Understand the system
+
+- [Architecture](/architecture/) — execution pipeline and runtime boundaries
+- [Agent Loop](/agent-loop/) — how agents plan, use tools, and stop
+- [Finding Triage](/triage/) — how candidate findings are reviewed
+- [Budget Management](/budget-management/) — CLI turn and cost limits
+- [Blind Verification](/blind-verification/) — independent verification approach
+- [Verification Results](/verification-result/) — deterministic replay contract
+
+## Research and availability
+
+- [Benchmarks](/benchmark/) and [Methodology](/methodology/) — measured results and their limits
+- [Research](/research/) — experiments and technical rationale
+- [Roadmap](/roadmap/) — planned engine work
+- [Cloud availability](/cloud/#availability) — current managed-access path

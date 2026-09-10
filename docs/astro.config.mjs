@@ -25,11 +25,13 @@ export default defineConfig({
       head: [
         { tag: "link", attrs: { rel: "icon", href: "/favicon.ico", sizes: "32x32" } },
         { tag: "link", attrs: { rel: "apple-touch-icon", href: "/apple-touch-icon.png" } },
+        { tag: "link", attrs: { rel: "preconnect", href: "https://0.security", crossorigin: "anonymous" } },
       ],
       description:
-        "Open-source security research harness for authorized targets. The technical project and CLI are named 0sec.",
+        "Documentation for the 0sec CLI and managed cloud engagements: getting started, scope, workflows, and verification.",
       logo: {
-        src: "./src/assets/0sec-aperture-white.svg",
+        dark: "./src/assets/0sec-aperture-white.svg",
+        light: "./src/assets/0sec-aperture-dark.svg",
         alt: "0sec",
         replacesTitle: true,
       },
@@ -37,36 +39,55 @@ export default defineConfig({
         {
           icon: "external",
           label: "Website",
-          href: "https://0sec.ai",
+          href: "https://0.security",
         },
       ],
       defaultLocale: "root",
       expressiveCode: {
-        themes: ["dracula"],
+        themes: ["github-dark", "github-light"],
       },
       sidebar: [
         {
-          label: "Getting Started",
-          slug: "getting-started",
+          label: "Start Here",
+          slug: "index",
         },
         {
-          label: "Usage",
+          label: "Use the CLI",
           items: [
-            { label: "Commands", slug: "commands" },
-            { label: "Configuration", slug: "configuration" },
+            { label: "Getting Started", slug: "getting-started" },
+            { label: "Scan Workflows", slug: "scan-workflows" },
+            { label: "Console", slug: "console" },
+            { label: "Desktop", slug: "desktop" },
             { label: "Recipes", slug: "recipes" },
             { label: "Features", slug: "features" },
-            { label: "White-Box Mode", slug: "white-box-mode" },
-            { label: "Kernel VM Verification", slug: "kernel-vm" },
-            { label: "Budget Management", slug: "budget-management" },
-            { label: "API Keys", slug: "api-keys" },
-            { label: "Cloud", slug: "cloud" },
-            { label: "Authorized Engagements", slug: "engagements" },
-            { label: "GitHub Action (PR scans, planned)", slug: "ci/github-action" },
+            { label: "Troubleshooting", slug: "troubleshooting" },
           ],
         },
         {
-          label: "How It Works",
+          label: "Reference & setup",
+          items: [
+            { label: "Commands", slug: "commands" },
+            { label: "Configuration", slug: "configuration" },
+            { label: "API Keys", slug: "api-keys" },
+            { label: "Scope & Authorization", slug: "scope" },
+            { label: "Budget Management", slug: "budget-management" },
+            { label: "Authorized Engagements", slug: "engagements" },
+            { label: "White-Box Mode", slug: "white-box-mode" },
+            { label: "Integrations", slug: "integrations" },
+            { label: "GitHub CI", slug: "ci/github-action" },
+          ],
+        },
+        {
+          label: "Cloud",
+          items: [
+            { label: "Overview", slug: "cloud" },
+            { label: "Getting Started", slug: "cloud/getting-started" },
+            { label: "Scope & Access", slug: "cloud/scope-and-access" },
+            { label: "Review Evidence", slug: "cloud/review-evidence" },
+          ],
+        },
+        {
+          label: "Understand the engine",
           items: [
             { label: "Architecture", slug: "architecture" },
             { label: "Agent Loop", slug: "agent-loop" },
@@ -79,6 +100,7 @@ export default defineConfig({
         },
         {
           label: "Benchmarks",
+          collapsed: true,
           items: [
             { label: "Results", slug: "benchmark" },
             { label: "Methodology", slug: "methodology" },
@@ -88,8 +110,11 @@ export default defineConfig({
         },
         {
           label: "Research",
+          collapsed: true,
           items: [
             { label: "Overview", slug: "research" },
+            { label: "Research Workflows", slug: "research-workflows" },
+            { label: "Kernel VM Verification", slug: "kernel-vm" },
             {
               label: "Essays & Rationale",
               collapsed: true,

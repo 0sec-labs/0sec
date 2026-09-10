@@ -22,6 +22,11 @@ an agent endpoint, an MCP endpoint, and an oracle under a scoped policy, then
 writes a replayable evidence bundle. It's the building block behind agent-action
 assurance: a scoped action, run and observed from outside the system.
 
+For endpoint prerequisites, scope, a complete invocation, and result meanings,
+see [Agent-action assurance](/research-workflows/#agent-action-assurance-agent-assure).
+All three endpoints must be authorized; an observed prohibited action and an
+inconclusive run are different outcomes.
+
 The harnesses are synthetic and deterministic on purpose — a repeatable way to
 score whether the scanner catches realistic agent-control failures before they
 reach production.
