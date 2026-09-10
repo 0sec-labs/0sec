@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://0.security/harness/">
-    <img src="assets/readme-cover.png" alt="The open-source cybersecurity team. An ivory paper sculpture with a crimson edge." width="100%">
+    <img src="assets/readme-cover.png" alt="The self-improving cybersecurity team. An ivory paper sculpture with a crimson edge." width="100%">
   </a>
 </p>
 
@@ -12,8 +12,7 @@
 </p>
 
 <p align="center">
-  0sec is an open-source CLI for AI-assisted security testing and vulnerability research.<br/>
-  Use it to investigate web applications, review source code, and test suspected bugs.
+  The self-improving cybersecurity team.
 </p>
 
 <p align="center">
