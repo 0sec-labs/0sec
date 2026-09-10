@@ -228,6 +228,104 @@ ingest pipeline.
 > `hypothesis: true`. Machine-checkable verification is tracked in #271 (kernel
 > oracle) and #272 (syzkaller harness scaffold).
 
+## evolve
+
+Autonomous self-improvement: candidate source proposal, three-lane evaluation,
+durable promotion with canary and rollback. A candidate is evaluated in an
+**isolated, network-none, credential-free Docker container** — never against a
+live target or engagement worker.
+
+```bash
+# Run evolution: propose, evaluate, and optionally promote source candidates
+0sec evolve run --config ./evolution.json
+
+# Watch mode — iterates through sequential passes, stops on any failed pass
+# (cannot safely retry unmetered failed generation). Cumulative budgets.
+0sec evolve run --config ./evolution.json --watch --allow-source-access
+
+# Show evolution registry status: active version, canary, artifact identities, events
+0sec evolve status --store ~/.0sec/evolution --json
+
+# Roll back a promoted version to its parent
+0sec evolve rollback --store ~/.0sec/evolution --version a1b2c3d4...
+
+# Execute a pinned version snapshot against an input (offline, no network)
+0sec evolve exec --config ./evolution.json --run-id <id> --input '{"key":"value"}'
+
+# Run canary trials and promote a candidate version
+0sec evolve promote --store ~/.0sec/evolution --version a1b2c3d4-...
+
+# Capture an evidence-backed observation from a JSON file
+0sec evolve feedback capture --input observation.json --allow-source-access
+
+# Approve a pending observation with curated fixtures
+0sec evolve feedback approve --id obs-abc123 --fixtures curation.json
+
+# View retained observations and their approval status
+0sec evolve feedback status --json
+```
+
+### evolve run
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--config <path>` | Path to evolution config JSON file (required) | — |
+| `--watch` | Iterate until stable or interrupted | `false` |
+| `--json` | Output structured JSON | `false` |
+| `--auto-promote` | Override config: automatically promote passing candidates | `false` |
+| `--allow-source-access` | Override config: let model see source file content | `false` |
+| `--max-passes <N>` | Maximum evolution passes in watch mode | unlimited |
+
+### evolve status
+
+| Flag | Description |
+|------|-------------|
+| `--store <path>` | Path to evolution store directory (required) |
+| `--json` | Output structured JSON |
+
+### evolve promote
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--store <path>` | Path to evolution store directory (required) | — |
+| `--version <id>` | Candidate version ID to activate (must exist, have evaluation receipt proof) | — |
+| `--json` | Output structured JSON | `false` |
+
+Runs required canary trials against the pinned stored config. Activates only
+the exact named candidate — no regeneration. Use for `awaiting_approval`
+results and training promotion guidance.
+
+### evolve rollback
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--store <path>` | Path to evolution store directory (required) | — |
+| `--version <id>` | Current active/canary version to retire (restores its parent, not a destination) | — |
+| `--reason <text>` | Reason for rollback | `"operator rollback"` |
+
+### evolve exec
+
+| Flag | Description |
+|------|-------------|
+| `--config <path>` | Path to evolution config JSON file (required) |
+| `--run-id <id>` | Evolution run ID to pin and execute the active snapshot from (required) |
+| `--input <json>` | JSON input to pass to the snapshot execution (required) |
+| `--json` | Output structured JSON |
+
+### evolve feedback
+
+| Subcommand | Flags | Description |
+|------------|-------|-------------|
+| `capture` | `--input <path>` (required), `--store <path>`, `--allow-source-access` | Capture an evidence-backed observation from a JSON file with CaptureObservationInput fields (classHint, sinkPattern, exampleFileLine, whyMissed, source, scanId, sourceRevisionDigest). Consent in JSON is ignored unless `--allow-source-access` flag set. |
+| `approve` | `--id <id>` (required), `--fixtures <path>` (required), `--store <path>`, `--allow-source-access` | Approve separate nonempty positive, held-out, and negative-control fixture arrays. Positives need CWE/file/location identity; negatives need clean provenance. Verifies actual fixture bytes, evidence, and source-access consent before synthesis. |
+| `status` | `--store <path>`, `--json` | Show retained observations and their approval/processing status |
+| `release` | `--id <id>` and `--claim-token <token>` (required), `--store <path>` | Recover a crash-held processing claim after its previous worker has stopped. |
+
+**Error codes:** 0 = success, 1 = user error, 2 = runtime error, 3 = interrupt.
+
+See [Improvement Plane](/improvement-plane/) for the full config schema, example
+config, evaluation methodology, and promotion gates.
+
 ## fix
 
 Generate a narrow patch for one independently reproduced local source finding,

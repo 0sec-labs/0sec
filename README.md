@@ -71,11 +71,23 @@ and runtime and kernel, need different tooling to reach, so they usually go unte
 | Recon an attack surface | `recon`, `js-recon`, `npm-discovery`, `intel` |
 | Hunt a bug class / kernel variants | `hunt`, `kernel`, `cve` |
 | Work with evidence | `findings`, `history`, `resume`, `replay`, `verify`, `disclose` |
+| Evolve future workers and finder lenses | `evolve`, `lens-synth` |
 | Generate & re-test a fix | `fix` |
 | Identity / AD (read-only) | `identity`, `adgraph`, `entragraph` |
 | Integrate | `mcp-server`, `console`, `tui`, `dashboard` |
 
 Run `0 --help` for the rest. Full docs: **[docs.0.security](https://docs.0.security)**.
+
+Source/package reviews use **FoxGuard** for static leads. Semgrep is an explicit
+optional comparison mode, not a prerequisite for the default scanner. Static
+hits still require verification; scanner replacement is not proof of equal
+coverage.
+
+Self-evolution promotes evaluated artifacts for **future work**, not live
+in-process patches. Finder-lens overlays reload for new hunts; active hunts and
+resumed evolution workers retain their captured versions. See
+[Improvement Plane](https://docs.0.security/improvement-plane/) for consent,
+evaluation gates, hot-reload boundaries, and runtime prerequisites.
 
 ### Primary workflow
 

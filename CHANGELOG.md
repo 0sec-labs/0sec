@@ -12,6 +12,79 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+### Added
+
+- `0sec evolve` — autonomous self-improvement plane with config-driven source
+  candidate proposals, three-lane (development/held-out/negative-control)
+  evaluation in isolated Docker containers, and durable promotion with canary
+  and rollback. Subcommands: `run`, `status`, `promote`, `rollback`, `exec`,
+  `feedback capture`, `feedback approve`, `feedback status`, and `feedback release`. Source rewriting requires
+  explicit `allowModelSourceAccess` consent; `autoPromote` replaces the
+  previous blanket "no automatic source-code promotion" with configured
+  autonomy. Config schema version 1 with zod-validated fields including
+  `schemaVersion`, `sourceRoot`, `storePath`, `image`, `sourcePaths`,
+  `editablePaths`, `kind`, `command`, `buildCommand`, `cases`, `repeats`,
+  `maxIterations`, `maxModelTurns`, `maxModelCostUsd`, `maxEvaluationCostUsd`,
+  `computeUsdPerSecond`, `timeoutMs`, `memoryMb`, `cpus`, `maxOutputBytes`,
+  `maxSourceBytes`, `maxChangedBytes`, `model`, `objective`,
+  `allowModelSourceAccess`, `autoPromote`, `canaryTrials`, and
+  `promotionPolicy` with per-gate thresholds.
+- Evaluation runs in network-none, read-only Docker containers with
+  `--cap-drop=ALL`, `--security-opt no-new-privileges`, bounded CPU/memory/pid,
+  and tmpfs output. Docker image tags resolve to immutable IDs retained in
+  pinned worker configurations; resumed workers do not follow mutable tags.
+- `runEvolution` acquires an exclusive PID-bound controller lock per store.
+  Interrupted canaries are rolled back before the next evolution pass.
+- Immutable, content-addressed snapshots under `storePath/snapshots/<id>/` with
+  symlink, secret, and nested-store rejection. Edits are validated for path
+  boundaries, bounded changed bytes, before/after digests, and duplicate
+  prevention.
+- `executeEvolutionVersion` pins code+stored config+input digest per run,
+  rejects changed command, and validates known config cases — mismatch rolls
+  active version back to parent (operator cancellation excluded). Unknown inputs
+  have no ground truth and are never auto-labelled.
+- Hash-chained registry event log (`recorded`, `canary_started`, `promoted`,
+  `rolled_back`) with atomic O_EXCL artifact publication and fsync.
+- `0sec lens-synth --status` and `--rollback` — inspect and retire overlay
+  lenses from the durable appsec-archetypes registry.
+- `artifact-bridge.mjs` — CLI bridge for skill/router promotion authorization
+  against the evolution registry. Used by skill-refine and active-learning loops
+  with `--evolution-store`, `--evolution-version`, `--evolution-artifact` flags.
+- Lens evaluation requires independent positive, held-out, and clean-control
+  fixtures, conjunctive finding identity matching, measured usage and latency,
+  repeated results, and content-bound receipts. Automated promotions archive
+  the validation report beside the installed overlay version.
+- Approved feedback preserves held-out separation and original miss provenance;
+  completed outcomes are retained, with explicit recovery for crash-held claims.
+- Future hunt outcomes and retained corpus rows identify the exact installed
+  finder-lens version; changing an overlay cannot relabel an in-flight scan.
+- Extension resume restores descriptor identities atomically and rejects
+  non-reconstructible contributed guards instead of silently weakening policy.
+
+### Fixed
+
+- Foxguard integration now consumes native v1 JSON reports instead of silently
+  dropping their findings. The npm fallback is pinned to v0.12.0; provisioned
+  binaries are used directly, and multi-path scans use valid CLI invocations.
+- Installers, container builds, and scanner CI provision a checksum-verified
+  FoxGuard companion from a shared version/hash pin; the default installer
+  includes it unless `INSTALL_FOXGUARD=0` is set.
+- Explicit package scans run from their source root, preventing a
+  `node_modules` ancestor from causing all package files to be skipped.
+- Invalid Foxguard JSON and scanner error exits no longer count as clean
+  static scans. The default scanner no longer falls back implicitly to Semgrep;
+  `0SEC_STATIC=semgrep` remains an explicit optional compatibility mode.
+- Cross-validation and kernel variant hunting use the released Foxguard CLI
+  syntax. SARIF file URIs are decoded, and cross-validation no longer matches
+  unrelated source files solely by basename.
+- Canary startup verifies the candidate's on-disk snapshot before changing
+  registry state, rejecting altered code even when its retained receipt is valid.
+- TUI evolution ignores stale callbacks after reconfiguration or stop and
+  avoids releasing feedback claims already marked processed.
+- Benchmark fixtures now bind the `0sec` schema namespace introduced by the
+  earlier rename. Recomputed commitments preserve the original labels and
+  MSRC source-byte hashes; validators still reject tampered provenance.
+
 ## [0.16.0] - 2026-09-09
 
 ### Added
