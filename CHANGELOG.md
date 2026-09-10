@@ -85,6 +85,19 @@ on the published npm package and the GitHub Release tag.
   earlier rename. Recomputed commitments preserve the original labels and
   MSRC source-byte hashes; validators still reject tampered provenance.
 
+### Security
+
+- Upgrade Astro to 7.2.8 and sharp to 0.35.4 (libheif 1.23.2), fixing
+  AVIF-processing vulnerabilities GHSA-26w7-cxv4-gfx2 and GHSA-rgj7-g3m4-5g8c.
+  Astro stays on the compatible 7.2 patch line for the existing Markdown peer.
+- Require js-yaml 4.3.2 or later so empty merge sources count toward the parsing
+  budget (GHSA-2883-xcg3-v3hh).
+- Require Hono 4.13.5 or later for static-generation path containment, bounded
+  dot-notation body parsing, and fragment-aware query parsing
+  (GHSA-gqvv-2mrq-wpjv, GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx).
+- Require smol-toml 1.7.1 or later to reject malformed trailing comments
+  instead of hanging during parsing (GHSA-7w5x-hrqm-74c2).
+
 ## [0.16.2] - 2026-09-09
 
 ### Fixed
