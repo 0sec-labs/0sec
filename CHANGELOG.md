@@ -22,6 +22,9 @@ on the published npm package and the GitHub Release tag.
   blocks stale command references in CI and before documentation deployment.
 - Source proposals can inspect recent retained worker versions without
   reopening removed source paths or applying edits against stale digests.
+- Opt-in `0SEC_LOG_FORMAT=json` operational records on stderr, with
+  allowlisted lifecycle/cost metadata and credential redaction. Existing
+  stdout output and cloud event relay framing remain unchanged.
 - Stateful `access_control_workflow` verification with isolated identities,
   explicit mutation consent, scoped multi-step requests, and owner-observed
   state transitions rather than HTTP-status-only claims.
