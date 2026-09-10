@@ -1,0 +1,52 @@
+name: "0sec: Docker replay"
+
+# Push events cover trusted repository branches, including feature branches.
+# Do not add pull_request_target checkout/execution: fork code remains subject
+# to the separate public-PR isolation policy.
+on:
+  push:
+    paths:
+      - '.github/workflows/docker-replay.yml'
+      - 'scripts/smoke-docker-replay.mjs'
+      - 'packages/core/**'
+      - 'packages/shared/**'
+      - 'packages/db/**'
+      - 'packages/templates/**'
+      - 'packages/llm-redteam/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-replay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    name: Real Docker replay and negative controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build replay engine and dependencies
+        run: pnpm --filter '@0sec/core...' -r build
+      - name: Exercise real containers, scope, timeout cleanup, and patch controls
+        run: node scripts/smoke-docker-replay.mjs
