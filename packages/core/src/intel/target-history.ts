@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { join, sep } from "node:path";
 import { buildPriorVulnerabilityAuditGraph } from "./audit-graph.js";
 import { buildPriorVulnerabilityPlaybooks } from "./dossier.js";
 import { mergeIntel, toGraphSnapshot, uniqueStrings } from "./normalize.js";
@@ -68,7 +68,15 @@ export function inferTargetHistoryInputFromRepo(repoPath: string): TargetHistory
   const input: TargetHistorySearchInput = { repoPath };
   const sources: string[] = [];
 
-  const packageJson = readJsonFile(join(repoPath, "package.json"));
+  // Resolve the root once so every metadata read uses the same scope.
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = realpathSync(repoPath);
+  } catch {
+    return { input, sources };
+  }
+
+  const packageJson = readJsonFile(join(canonicalRoot, "package.json"), canonicalRoot);
   if (packageJson) {
     sources.push("package.json");
     const name = typeof packageJson.name === "string" ? packageJson.name : undefined;
@@ -79,7 +87,7 @@ export function inferTargetHistoryInputFromRepo(repoPath: string): TargetHistory
     input.repository = repo;
   }
 
-  const pyproject = readTextFile(join(repoPath, "pyproject.toml"));
+  const pyproject = readTextFile(join(canonicalRoot, "pyproject.toml"), canonicalRoot);
   if (pyproject) {
     sources.push("pyproject.toml");
     input.ecosystem ??= "pypi";
@@ -88,7 +96,7 @@ export function inferTargetHistoryInputFromRepo(repoPath: string): TargetHistory
     input.repository ??= normalizeRepositoryHint(matchTomlUrl(pyproject, "repository") ?? matchTomlUrl(pyproject, "source") ?? matchTomlUrl(pyproject, "homepage"));
   }
 
-  const cargo = readTextFile(join(repoPath, "Cargo.toml"));
+  const cargo = readTextFile(join(canonicalRoot, "Cargo.toml"), canonicalRoot);
   if (cargo) {
     sources.push("Cargo.toml");
     input.ecosystem ??= "cargo";
@@ -97,7 +105,7 @@ export function inferTargetHistoryInputFromRepo(repoPath: string): TargetHistory
     input.repository ??= normalizeRepositoryHint(matchTomlString(cargo, "repository"));
   }
 
-  const goMod = readTextFile(join(repoPath, "go.mod"));
+  const goMod = readTextFile(join(canonicalRoot, "go.mod"), canonicalRoot);
   if (goMod) {
     sources.push("go.mod");
     input.ecosystem ??= "Go";
@@ -107,7 +115,7 @@ export function inferTargetHistoryInputFromRepo(repoPath: string): TargetHistory
     input.repository ??= normalizeRepositoryHint(module);
   }
 
-  const gitConfig = readTextFile(join(repoPath, ".git", "config"));
+  const gitConfig = readTextFile(join(canonicalRoot, ".git", "config"), canonicalRoot);
   if (gitConfig) {
     sources.push(".git/config");
     input.repository ??= normalizeRepositoryHint(matchGitRemoteUrl(gitConfig));
@@ -142,8 +150,8 @@ export function targetHistoryHints(input: TargetHistorySearchInput): string[] {
     .filter((hint) => hint.length >= 3);
 }
 
-function readJsonFile(path: string): Record<string, unknown> | undefined {
-  const text = readTextFile(path);
+function readJsonFile(path: string, root: string): Record<string, unknown> | undefined {
+  const text = readTextFile(path, root);
   if (!text) return undefined;
   try {
     const parsed = JSON.parse(text);
@@ -153,10 +161,12 @@ function readJsonFile(path: string): Record<string, unknown> | undefined {
   }
 }
 
-function readTextFile(path: string): string | undefined {
-  if (!existsSync(path)) return undefined;
+function readTextFile(path: string, root: string): string | undefined {
   try {
-    return readFileSync(path, "utf-8");
+    const canonicalPath = realpathSync(path);
+    const prefix = root.endsWith(sep) ? root : root + sep;
+    if (canonicalPath !== root && !canonicalPath.startsWith(prefix)) return undefined;
+    return readFileSync(canonicalPath, "utf-8");
   } catch {
     return undefined;
   }

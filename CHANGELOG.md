@@ -83,6 +83,10 @@ on the published npm package and the GitHub Release tag.
 - Source-evolution confidence intervals no longer treat repeated executions of
   the same fixtures as independent evidence; unstable repeats cannot produce
   an informative interval.
+- Target-history inference rejects repository metadata symlinks that resolve
+  outside the authorized root, including intermediate `.git` directory links.
+- Codebase-memory evidence uses bounded descriptor reads and rechecks canonical
+  paths; changed source, symlink escapes, and multiply linked files are rejected.
 - Source hunt finders and refuters use the scoped source-analysis runner instead
   of launching network discovery, attack, and verification phases for each file.
   Source prompts now describe the scoped enumeration/search tools actually available.
