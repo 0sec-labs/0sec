@@ -107,7 +107,7 @@ function canonicalTestJson(value: unknown): string {
   return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalTestJson(object[key])}`).join(",")}}`;
 }
 
-function recommit(lock: Record<string, unknown>): void {
+function recommit(lock: { lockId: string }): void {
   const { lockId: ignored, ...body } = lock;
   void ignored;
   lock.lockId = `sha256:${createHash("sha256").update(canonicalTestJson(body)).digest("hex")}`;
@@ -352,14 +352,11 @@ describe("MSRC Windows LPE staging inventory", () => {
     const lock = JSON.parse(raw) as unknown;
     validateMsrcWindowsLpeTrancheLock(lock);
 
-    const changed = structuredClone(lock) as { sourceDocuments: Array<{ rawBytesSha256: string }> };
+    const changed = structuredClone(lock);
     changed.sourceDocuments[1]!.rawBytesSha256 = "0".repeat(64);
     expect(() => validateMsrcWindowsLpeTrancheLock(changed)).toThrow(/commitment/);
 
-    const forged = structuredClone(lock) as Record<string, unknown> & {
-      sourceDocuments: Array<{ url: string }>;
-      tranches: Array<{ selected: number }>;
-    };
+    const forged = structuredClone(lock);
     forged.sourceDocuments[0]!.url = "https://evil.example/forged";
     forged.tranches[0]!.selected = 999;
     recommit(forged);

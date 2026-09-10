@@ -1,10 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { extname, join, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { URL } from "node:url";
+import { tmpdir } from "node:os";
 import { isIP } from "node:net";
 import type { Command } from "commander";
 import chalk from "chalk";
@@ -20,6 +21,7 @@ import { presentationEventBus } from "../presentation/event-bus.js";
 import { buildFindingConsoleCommand } from "../finding-handoff.js";
 import { DesktopConsoleGateway, DesktopConsoleGatewayError } from "../desktop/console-gateway.js";
 import { DesktopCodexAuthController } from "../desktop/codex-auth-controller.js";
+import { DASHBOARD_ASSETS, type EmbeddedDashboardAsset } from "../dashboard-assets.generated.js";
 
 type DashboardOptions = {
   dbPath?: string;
@@ -1028,7 +1030,41 @@ function groupByKey<T, K extends keyof T>(rows: T[], key: K) {
   return map;
 }
 
-function resolveDashboardAssetDir(explicitAssetDir?: string): string {
+type DashboardAssetDirectory = {
+  path: string;
+  cleanup?: () => void;
+};
+
+function materializeEmbeddedDashboardAssets(
+  assets: readonly EmbeddedDashboardAsset[],
+): DashboardAssetDirectory | null {
+  if (assets.length === 0) return null;
+
+  const assetDir = mkdtempSync(join(tmpdir(), "0sec-dashboard-"));
+  try {
+    for (const [relativePath, contentBase64] of assets) {
+      const candidate = resolve(assetDir, `.${relativePath.replaceAll("\\", "/")}`);
+      if (candidate === assetDir || !candidate.startsWith(`${assetDir}${sep}`)) {
+        throw new Error(`Invalid embedded dashboard asset path: ${JSON.stringify(relativePath)}`);
+      }
+      mkdirSync(dirname(candidate), { recursive: true, mode: 0o700 });
+      writeFileSync(candidate, Buffer.from(contentBase64, "base64"), { mode: 0o600 });
+    }
+    if (!existsSync(join(assetDir, "index.html"))) {
+      throw new Error("Embedded dashboard assets do not contain index.html.");
+    }
+  } catch (error) {
+    rmSync(assetDir, { recursive: true, force: true });
+    throw error;
+  }
+
+  return {
+    path: assetDir,
+    cleanup: () => rmSync(assetDir, { recursive: true, force: true }),
+  };
+}
+
+function resolveDashboardAssetDir(explicitAssetDir?: string): DashboardAssetDirectory {
   const moduleDir = resolve(fileURLToPath(new URL(".", import.meta.url)));
   const candidates = [
     ...(explicitAssetDir ? [resolve(explicitAssetDir)] : []),
@@ -1042,10 +1078,12 @@ function resolveDashboardAssetDir(explicitAssetDir?: string): string {
 
   for (const candidate of candidates) {
     if (existsSync(join(candidate, "index.html"))) {
-      return candidate;
+      return { path: candidate };
     }
   }
 
+  const embedded = materializeEmbeddedDashboardAssets(DASHBOARD_ASSETS);
+  if (embedded) return embedded;
   throw new Error("Dashboard assets not found. Run `pnpm build` to generate the dashboard app.");
 }
 
@@ -1733,7 +1771,7 @@ export function registerDashboardCommand(program: Command): void {
       let origin = `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
 
 
-      const assetDir = resolveDashboardAssetDir(opts.assetDir);
+      const { path: assetDir, cleanup: cleanupAssetDir } = resolveDashboardAssetDir(opts.assetDir);
       const controlToken = randomUUID();
       const consoleGateway = new DesktopConsoleGateway();
       const codexAuth = new DesktopCodexAuthController();
@@ -1767,6 +1805,13 @@ export function registerDashboardCommand(program: Command): void {
           json(res, 500, { error: err instanceof Error ? err.message : String(err) });
         }
       });
+      let dashboardAssetsCleaned = false;
+      const cleanupDashboardAssets = () => {
+        if (dashboardAssetsCleaned) return;
+        dashboardAssetsCleaned = true;
+        cleanupAssetDir?.();
+      };
+      server.once("close", cleanupDashboardAssets);
 
       server.listen(port, host, () => {
         const address = server.address();
@@ -1781,11 +1826,19 @@ export function registerDashboardCommand(program: Command): void {
         if (opts.open !== false) openBrowser(`${url}/dashboard`);
       });
 
-      process.once("SIGINT", () => {
+      let shuttingDown = false;
+      const shutdown = () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
         void consoleGateway.closeAll().finally(() => {
-          server.close(() => process.exit(0));
+          server.close(() => {
+            cleanupDashboardAssets();
+            process.exit(0);
+          });
         });
-      });
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
     });
 }
 

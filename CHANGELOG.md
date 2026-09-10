@@ -85,6 +85,23 @@ on the published npm package and the GitHub Release tag.
   earlier rename. Recomputed commitments preserve the original labels and
   MSRC source-byte hashes; validators still reject tampered provenance.
 
+## [0.16.2] - 2026-09-09
+
+### Fixed
+
+- Native binary release smoke now verifies embedded dashboard assets on every
+  supported platform without relying on a platform-specific database setup.
+
+
+## [0.16.1] - 2026-09-09
+
+### Fixed
+
+- Standalone binaries now embed the dashboard's built assets and materialize
+  them only while `0sec dashboard` is running, so the dashboard works without
+  a checkout or `node_modules`.
+
+
 ## [0.16.0] - 2026-09-09
 
 ### Added
