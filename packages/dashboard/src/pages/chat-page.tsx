@@ -121,27 +121,30 @@ function buildTranscript(events: readonly DesktopConsoleEvent[]): TranscriptEntr
       for (const entry of entries) {
         if (entry.kind === "tool" && entry.status === "running") entry.status = "interrupted";
       }
-      if (!event.assistantText) continue;
-      let streamed = "";
-      for (let index = turnStart; index < entries.length; index++) {
-        const entry = entries[index];
-        if (entry.kind === "assistant") streamed += entry.text;
-      }
-      if (event.assistantText === streamed) continue;
-      if (event.assistantText.startsWith(streamed)) {
-        const suffix = event.assistantText.slice(streamed.length);
-        const last = entries.at(-1);
-        if (last?.kind === "assistant") last.text += suffix;
-        else entries.push({ id: `assistant-final-${event.sequence}`, kind: "assistant", text: suffix });
-      } else {
-        let retained = turnStart;
+      if (event.assistantText) {
+        let streamed = "";
         for (let index = turnStart; index < entries.length; index++) {
           const entry = entries[index];
-          if (entry.kind !== "assistant") entries[retained++] = entry;
+          if (entry.kind === "assistant") streamed += entry.text;
         }
-        entries.length = retained;
-        entries.push({ id: `assistant-final-${event.sequence}`, kind: "assistant", text: event.assistantText });
+        if (event.assistantText !== streamed) {
+          if (event.assistantText.startsWith(streamed)) {
+            const suffix = event.assistantText.slice(streamed.length);
+            const last = entries.at(-1);
+            if (last?.kind === "assistant") last.text += suffix;
+            else entries.push({ id: `assistant-final-${event.sequence}`, kind: "assistant", text: suffix });
+          } else {
+            let retained = turnStart;
+            for (let index = turnStart; index < entries.length; index++) {
+              const entry = entries[index];
+              if (entry.kind !== "assistant") entries[retained++] = entry;
+            }
+            entries.length = retained;
+            entries.push({ id: `assistant-final-${event.sequence}`, kind: "assistant", text: event.assistantText });
+          }
+        }
       }
+      if (event.error) entries.push({ id: `error-${event.sequence}`, kind: "error", text: event.error });
       continue;
     }
     if (event.type === "notice") entries.push({ id: `notice-${event.sequence}`, kind: "notice", text: event.text });
@@ -728,7 +731,7 @@ function DesktopSettingsDialog({ open, onClose, auth, busy, onConnect, onCancelC
           <dd className="desktop-inspector-dd">Follows system</dd>
         </div>
         <div className="desktop-inspector-row">
-          <dt className="desktop-inspector-dt">Provider</dt>
+          <dt className="desktop-inspector-dt">Codex connection</dt>
           <dd className="desktop-inspector-dd">{auth?.phase === "connected" ? "ChatGPT Codex · Connected" : auth?.message || "Provider status unavailable"}</dd>
         </div>
       </dl>
@@ -800,8 +803,12 @@ export function ChatPage() {
       try {
         const loaded = await getDesktopConsoleSessions();
         if (!active) return;
-        setSessions(loaded);
-        if (loaded[0]) setActiveId(loaded[0].id);
+        setSessions((current) => {
+          if (current.length === 0) return loaded;
+          const known = new Set(current.map((session) => session.id));
+          return [...current, ...loaded.filter((session) => !known.has(session.id))];
+        });
+        if (loaded[0]) setActiveId((current) => current ?? loaded[0].id);
         else await createSession();
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
@@ -1053,11 +1060,9 @@ export function ChatPage() {
                 <PanelLeft aria-hidden className="size-3.5" />
               </button>
             )}
-            {!sidebarCollapsed &&
               <span className="desktop-titlebar-label">
-                {threadLabel || "Local workspace"}
+                {threadLabel}
               </span>
-            }
           </div>
           <div className="desktop-titlebar-actions">
             <button

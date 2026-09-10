@@ -35,6 +35,12 @@ on the published npm package and the GitHub Release tag.
   activity, and interruption states without duplicating final responses.
   Following output respects manual scrolling; code copying is limited to the
   focused local dashboard, while clipboard reads remain denied.
+- Development desktop now uses a thread sidebar, an anchored composer, neutral
+  system appearance, accessible dialogs, and per-thread drafts. macOS gets real
+  window controls, native folder selection, menu shortcuts, and close/reopen
+  behavior that keeps the existing sidecar alive. The sandboxed preload is
+  compiled as CommonJS; native requests are restricted to the trusted main frame.
+  Terminal turn failures remain visible even when no assistant text was produced.
 - `pnpm docs:sync` refreshes registered CLI arguments, options, defaults, and
   aliases without replacing reviewed workflow or safety notes. `pnpm docs:check`
   blocks stale command references in CI and before documentation deployment.

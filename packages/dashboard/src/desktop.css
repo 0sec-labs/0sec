@@ -511,33 +511,6 @@
   max-width: 420px;
 }
 
-.desktop-empty-prompts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 16px;
-}
-
-.desktop-empty-prompt {
-  padding: 6px 14px;
-  border: 1px solid var(--desktop-border);
-  border-radius: 20px;
-  background: transparent;
-  color: var(--desktop-muted);
-  font-size: 12px;
-  cursor: pointer;
-  transition: border-color 0.12s, color 0.12s;
-}
-
-.desktop-empty-prompt:hover {
-  border-color: var(--desktop-composer-focus-border);
-  color: var(--desktop-text);
-}
-
-.desktop-empty-prompt:focus-visible {
-  outline: 2px solid var(--desktop-accent);
-  outline-offset: 2px;
-}
 
 /* ─── Transcript entries ───────────────────────────────── */
 .desktop-entry-user {
@@ -1263,11 +1236,9 @@
 /* ─── Form fields ─────────────────────────────────────────── */
 .desktop-field-label {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--desktop-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   margin-bottom: 4px;
 }
 
@@ -1295,58 +1266,12 @@
 }
 
 .desktop-field-hint {
-  font-size: 10px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--desktop-muted);
   margin: 6px 0 0;
 }
 
-.desktop-fieldset {
-  border: none;
-  padding: 0;
-  margin: 0;
-}
-
-.desktop-fieldset-legend {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--desktop-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 6px;
-}
-
-.desktop-chip-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.desktop-chip {
-  padding: 4px 10px;
-  border: 1px solid var(--desktop-border);
-  border-radius: 5px;
-  font-size: 12px;
-  background: transparent;
-  color: var(--desktop-muted);
-  cursor: pointer;
-  transition: all 0.1s;
-}
-
-.desktop-chip:hover {
-  border-color: var(--desktop-composer-focus-border);
-  color: var(--desktop-text);
-}
-
-.desktop-chip.desktop-chip-selected {
-  border-color: var(--desktop-text);
-  color: var(--desktop-text);
-}
-
-.desktop-chip:focus-visible {
-  outline: 2px solid var(--desktop-accent);
-  outline-offset: 1px;
-}
 
 .desktop-dialog-footer {
   display: flex;
@@ -1658,4 +1583,9 @@ html:has(.desktop-native-macos),
 body:has(.desktop-native-macos),
 body:has(.desktop-native-macos) #root {
   background: transparent;
+}
+
+.desktop-titlebar-section {
+  flex: 1;
+  min-width: 0;
 }

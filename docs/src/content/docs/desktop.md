@@ -11,10 +11,14 @@ released app. Packaging support does not imply downloadable or signed releases.
 
 The 0sec desktop is an [Electron](https://www.electronjs.org/) application
 (v42, Chromium-based) that provides a native windowed control plane for the
-0sec harness. It runs the [dashboard](https://github.com/0sec-labs/0sec/tree/main/packages/dashboard)
-web UI inside a sandboxed browser context and manages a **sidecar** — a
+0sec harness. It runs a conversation-first React workspace inside a sandboxed
+renderer and manages a **sidecar** — a
 compiled 0sec CLI process that handles all engine communication behind a
 security boundary.
+
+The renderer is still web technology, not SwiftUI. On macOS it uses real window
+controls, native menus, a directory picker, and sidebar material, with system
+fonts and light/dark appearance. The operations dashboard remains a separate view.
 
 ## Starting the desktop
 
@@ -74,7 +78,8 @@ The desktop separates the renderer (web UI) from engine operations through a
 │  │  - webSecurity: true          │  │
 │  └───────────────────────────────┘  │
 │                                     │
-│  IPC:  osec:open-external (HTTPS)   │
+│  IPC: external HTTPS, directory picker │
+│  Menu commands: typed subscriptions   │
 │  Permission: scoped clipboard write │
 └────────────────────┬──────────────┘
                      │ spawn (stdio: pipe)
@@ -107,6 +112,15 @@ In development, the sidecar runs through the local `bun` CLI entrypoint
 (`packages/cli/dist/index.js`). In packaged builds, it runs the pre-bundled
 binary from `resources/sidecars/<platform-arch>`.
 
+On macOS, closing the last window leaves the application and sidecar running.
+Dock activation or **New Thread** recreates the window without starting another
+sidecar. Explicit **Quit** stops it, including when startup is still in progress.
+On Linux and Windows, closing the last window quits the application.
+
+Thread history is held by the running sidecar; it is not a durable conversation
+archive. Drafts and thread labels are retained in the renderer's local storage,
+but quitting ends the sidecar's session history.
+
 ### Navigation policy
 
 | Operation | Rule |
@@ -122,23 +136,37 @@ and `isExternalHttpsUrl` (protocol + no credentials).
 
 ### View zoom
 
-Zoom is disabled (`setVisualZoomLevelLimits(1, 1)`). Pinch-zoom and
-Ctrl+Plus/Minus have no effect.
+Pinch zoom is fixed with `setVisualZoomLevelLimits(1, 1)`. The native **View**
+menu also exposes page zoom and reset commands.
 
 ### IPC
 
-The only IPC channel exposed from the renderer to the main process:
+The renderer receives a narrow, typed `window.osecDesktop` bridge:
 
+```typescript
+interface DesktopHostBridge {
+  readonly platform: string;
+  openExternal(url: string): Promise<void>;
+  chooseDirectory(): Promise<string | null>;
+  onCommand(listener: (command: DesktopHostCommand) => void): () => void;
+}
+
+type DesktopHostCommand =
+  | "new-thread"
+  | "open-folder"
+  | "toggle-sidebar"
+  | "settings";
 ```
-window.osecDesktop.openExternal(url: string): Promise<void>
-```
 
-Exposed via `contextBridge.exposeInMainWorld`. The main process validates:
-1. The sender's frame origin must match the dashboard origin.
-2. The `url` argument must be a string.
-3. The URL must be a credential-free `https://` URL.
+The main process accepts renderer requests only from the current window's main
+frame at the trusted dashboard origin. External URLs must be credential-free
+HTTPS URLs. The directory picker accepts directories only and returns `null`
+on cancellation. Picking a directory sets context; it does not grant access.
 
-All other IPC channels are blocked.
+Menu subscriptions return an unsubscribe function. Commands that arrive while
+the conversation route is loading are retained until the renderer subscribes.
+Raw `ipcRenderer`, filesystem access, and arbitrary process execution are never
+exposed by the bridge.
 
 ### Permission policy
 
@@ -151,39 +179,48 @@ Chromium permission requests remain denied.
 
 | Property | Value |
 |----------|-------|
-| Default size | 1440 × 960 |
-| Minimum size | 960 × 640 |
-| Background colour | `#09090b` |
+| Default size | 1280 × 860 |
+| Minimum size | 900 × 600 |
+| Appearance | System light/dark; translucent native macOS sidebar, opaque conversation |
 | Title | `0sec` |
 | Show | Hidden until `ready-to-show` to avoid white flash |
-| Single-instance lock | Yes — a second launch focuses the existing window |
+| Single-instance lock | Yes — a second launch focuses or recreates the existing application's window |
 
 ## Preload
 
-The preload script (`packages/desktop/src/preload/index.ts`) exposes a single
-global via `contextBridge` with `Object.freeze`:
+`packages/desktop/src/preload/index.ts` exposes the frozen bridge through
+`contextBridge`. It is compiled as **CommonJS** by `tsconfig.preload.json`;
+sandboxed Electron preloads cannot use ESM imports. The main process remains
+ESM. Shared contracts are type-only imports and add no renderer runtime access.
 
-```typescript
-window.osecDesktop = { openExternal(url: string): Promise<void> }
-```
+Context isolation and sandboxing remain enabled. Native accelerators and browser
+fallback shortcuts are mutually exclusive, so a keypress does not create two
+threads or toggle the sidebar twice.
 
-No other Node.js or Electron API is available in the renderer
-(`contextIsolation: true`, `sandbox: true`).
+| Desktop shortcut | Action |
+|------------------|--------|
+| Cmd/Ctrl+N | New thread |
+| Cmd/Ctrl+O | Native folder picker, then a scoped-thread form |
+| Cmd/Ctrl+B | Toggle sidebar |
+| Cmd/Ctrl+, | Settings and provider connection |
+| Enter / Shift+Enter | Send / insert newline |
+| Escape | Dismiss a dialog when no operation is pending |
 
 ## User workflow
 
 1. Launch the desktop application from your OS (or `pnpm --filter @0sec/desktop start` in development).
-2. The Electron window opens to a dashboard web UI served by the sidecar over
-   a local loopback URL.
-3. Start a chat to follow responses as they stream. Markdown, code blocks, and
-   expandable tool activity stay in the conversation. **Context** exposes scope
-   and approvals; **Operations** opens the dashboard for findings and runs.
-   **Stop response** cancels the active turn. Scrolling back preserves your
-   position; **Latest response** resumes following new output.
-4. The dashboard communicates with the sidecar process only; it has no direct
-   filesystem or network access beyond the sidecar's loopback HTTP server.
-5. External documentation links (e.g. provider setup pages) open in the system
-   browser via `osecDesktop.openExternal`.
+2. The Electron window opens to the local thread workspace. Use the sidebar to
+   create, filter, and switch threads. Unsent drafts stay with their thread.
+3. Use **Choose target** for an explicit URL or path, or **Open Folder** in the
+   native File menu. Select a role and autonomy mode before creating the thread.
+   Scope requests and tool approvals still come from the local engine.
+4. Responses stream into the conversation, with Markdown, copyable code blocks,
+   and expandable tool activity. **Stop response** cancels the active turn.
+   Scrolling back preserves your position; **Latest response** resumes following.
+5. The inspector exposes context, approvals, activity, and evidence.
+   **Settings** exposes provider sign-in; **Operations** opens findings and runs.
+6. The renderer has no general Node.js or Electron API. Engine work goes through
+   the loopback sidecar. External documentation links open in the system browser.
 
 ## Platforms and build requirements
 
