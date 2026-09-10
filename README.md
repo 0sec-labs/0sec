@@ -1,4 +1,10 @@
 <p align="center">
+  <a href="https://0.security/harness/">
+    <img src="assets/readme-cover.png" alt="The self-improving cybersecurity team. An ivory paper sculpture with a crimson edge." width="100%">
+  </a>
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/0sec-aperture-white.svg">
     <img src="assets/0sec-aperture-ink.svg" alt="0sec" width="176">
@@ -6,9 +12,7 @@
 </p>
 
 <p align="center">
-  <strong>[RESEARCH PREVIEW] Your open & extensible AI cybersecurity team.</strong><br/>
-  0sec finds vulnerabilities, creates working exploits, and writes the fix.
-  Multi-model, multi-agent, but most importantly: yours.
+  The self-improving cybersecurity team.
 </p>
 
 <p align="center">
@@ -16,43 +20,61 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3fb950" alt="license" />
-  <img src="https://img.shields.io/github/v/release/0sec-labs/0sec?color=2563eb" alt="release" />
-  <a href="https://docs.0.security"><img src="https://img.shields.io/badge/docs-0.security-6366f1" alt="docs" /></a>
-  <img src="https://img.shields.io/badge/status-research%20preview-f0883e" alt="status: research preview" />
+  <a href="https://docs.0.security/"><img src="https://img.shields.io/badge/Documentation-DC2626?style=for-the-badge&amp;logo=gitbook&amp;logoColor=white" alt="Documentation" height="28"></a>
+  <a href="https://0.security/harness/"><img src="https://img.shields.io/badge/Website-1A1815?style=for-the-badge" alt="Website" height="28"></a>
 </p>
 
 <p align="center">
-  <sub>Note: This project is currently in active development; features change daily! See <a href="#honest-limitations">Current limitations</a>.</sub>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-1A1815?style=flat-square&amp;labelColor=1A1815" alt="License: MIT OR Apache-2.0"></a>
+  <a href="https://github.com/0sec-labs/0sec/releases/latest"><img src="https://img.shields.io/github/v/release/0sec-labs/0sec?style=flat-square&amp;labelColor=1A1815&amp;color=1A1815" alt="Latest release"></a>
+  <a href="#research-preview"><img src="https://img.shields.io/badge/status-research%20preview-DC2626?style=flat-square&amp;labelColor=1A1815" alt="Status: research preview"></a>
 </p>
 
 <p align="center">
-  <img src="assets/demo-intro.gif" alt="0sec finds, proves and reports vulnerabilities" width="840">
+  <img src="assets/demo-intro.gif" alt="0sec interactive CLI demonstration" width="840">
 </p>
 
-## Install & Quick Start
+## Get started
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
 export PATH="$HOME/.0sec/bin:$PATH"
 0 --help
 ```
-The verified binary is installed to `~/.0sec/bin` with no Node/Bun dependency.
-Add the `export` line to your shell profile to make `0` available in future shells.
+
+Add the `export` line to your shell profile. Configure a [model provider](https://docs.0.security/api-keys/),
+then run `0` to open the interactive console. Use `/run` to set up an engagement.
+Only test systems you own or have permission to assess.
+
+See [Getting started](https://docs.0.security/getting-started/) for Docker,
+source builds, and your first scan.
 
 ## Documentation
 
 [docs.0.security](https://docs.0.security/) is the shared public documentation
-home for the CLI and managed Cloud:
+home for the CLI and managed cloud:
 
-- [CLI quickstart](https://docs.0.security/getting-started/) and [scan workflows](https://docs.0.security/scan-workflows/)
-- [Console](https://docs.0.security/console/) and [desktop](https://docs.0.security/desktop/)
-- [Commands](https://docs.0.security/commands/), [configuration](https://docs.0.security/configuration/), and [API keys](https://docs.0.security/api-keys/)
-- [Integrations and CI](https://docs.0.security/integrations/), [research workflows](https://docs.0.security/research-workflows/), and [troubleshooting](https://docs.0.security/troubleshooting/)
-- [Cloud engagements](https://docs.0.security/cloud/): access, scope, and evidence review
+- [CLI quickstart](https://docs.0.security/getting-started/) and [scan workflows](https://docs.0.security/scan-workflows/).
+- [Console](https://docs.0.security/console/) and [desktop](https://docs.0.security/desktop/).
+- [Commands](https://docs.0.security/commands/), [configuration](https://docs.0.security/configuration/), and [API keys](https://docs.0.security/api-keys/).
+- [Integrations and CI](https://docs.0.security/integrations/), [research workflows](https://docs.0.security/research-workflows/), and [troubleshooting](https://docs.0.security/troubleshooting/).
+- [Cloud engagements](https://docs.0.security/cloud/): access, scope, and evidence review.
+- [Verification](https://docs.0.security/blind-verification/): how findings are checked and where verification can stop.
+- [Research](https://0.security/research/): published investigations and upstream fixes.
 
 Docs follow the source checkout; use `0sec --version` and command-specific
 `--help` when comparing an installed release with newly documented features.
+
+## Research preview
+
+0sec is in active development. Coverage and verification depth vary by workflow;
+review the evidence before treating a reported issue as confirmed. Generated fixes
+need review and testing. See the [verification guide](https://docs.0.security/blind-verification/) for prerequisites and limits.
+
+## Contributing
+
+Build instructions and contribution guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Report security issues through [SECURITY.md](SECURITY.md).
 
 To refresh the command reference after changing CLI registrations:
 
@@ -68,196 +90,6 @@ require a reviewed documentation section; CI rejects missing sections and
 stale reference data. Public fork code is not executed by the PR workflow.
 Changes on `main` publish automatically after the docs freshness check and build.
 
-<p align="center">
-  <img src="assets/0sec-demo.gif" alt="0sec quickstart: a scan from start to finish" width="820">
-</p>
-
-## What 0sec aims to cover
-
-Most AI pentesting tools stop at the web app. The layers underneath it, dependencies
-and runtime and kernel, need different tooling to reach, so they usually go untested.
-
-0sec is one extensible tool for all of them.
-
-| Layer | Finds |
-| --- | --- |
-| Web apps | SQLi, IDOR, XSS, SSRF, auth bypass |
-| APIs | tenant isolation, BOLA, business-logic abuse |
-| AI & LLMs | prompt injection, jailbreaks, MCP tool abuse |
-| Source code | injection, auth, deserialization, memory safety |
-| Dependencies | supply chain, malicious packages, CVE replay |
-| Network / identity | AD, cloud, federation (read-only, offline) |
-| Runtime / OS / kernel | container escape, privesc, 0-day hunt |
-| Compiled binaries | no source → [`0verse`](0verse/README.md) |
-
-## Automation and research adapters
-
-| Task | Commands |
-| --- | --- |
-| Pentest web / AI-LLM / MCP | `scan`, `eval`, `agent-assure` |
-| Review source / packages / kernel | `review`, `file-review`, `audit` |
-| Recon an attack surface | `recon`, `js-recon`, `npm-discovery`, `intel` |
-| Hunt a bug class / kernel variants | `hunt`, `kernel`, `cve` |
-| Work with evidence | `findings`, `history`, `resume`, `replay`, `verify`, `disclose` |
-| Evolve future workers and finder lenses | `evolve`, `lens-synth` |
-| Generate & re-test a fix | `fix` |
-| Identity / AD (read-only) | `identity`, `adgraph`, `entragraph` |
-| Integrate | `mcp-server`, `console`, `tui`, `dashboard` |
-
-Run `0 --help` for the rest. Full docs: **[docs.0.security](https://docs.0.security)**.
-
-For evidence-driven follow-up, `review --fix-commit <sha> --variants-only`
-finds potential incomplete application fixes without model calls. Stateful
-authorization workflows compare owner-visible state before and after another
-identity's requests. `verify --create-bundle` packages a PoC and allowlisted
-sources; `verify --bundle --runner local|docker` checks vulnerable and patched
-snapshots with a negative control.
-See [configuration and safety constraints](https://docs.0.security/configuration/#stateful-authorization-and-fix-verification).
-
-Source/package reviews use **FoxGuard** for static leads. Semgrep is an explicit
-optional comparison mode, not a prerequisite for the default scanner. Static
-hits still require verification; scanner replacement is not proof of equal
-coverage.
-
-Self-evolution promotes evaluated artifacts for **future work**, not live
-in-process patches. Finder-lens overlays reload for new hunts; active hunts and
-resumed evolution workers retain their captured versions. See
-[Improvement Plane](https://docs.0.security/improvement-plane/) for consent,
-evaluation gates, hot-reload boundaries, and runtime prerequisites.
-
-### Primary workflow
-
-Run `0` to open the primary OpenTUI chat. Type `/run` to open its engagement
-control pane, then enter a URL, a local source path, a git URL, or an explicit
-package target (`npm:`, `pypi:`, `cargo:`, `oci:`). The pane shows the resolved
-engagement before it runs it; deep source engagements use the validated
-finder-lens strategy. Specialized CLI commands remain available for automation
-and research, but they are not separate primary TUI modes.
-
-<p align="center">
-  <img src="assets/demo-commands.gif" alt="0sec console command palette" width="820"><br/>
-  <sub>The interactive console. <code>/</code> opens the command palette.</sub>
-</p>
-
-## How it works
-
-- **Free-form agents, hard guardrails.** Models decide what to probe. Turn budgets,
-  loop detection and a scope check on every call keep them inside the engagement.
-- **Blind re-exploitation.** A second agent gets the PoC and nothing else. If it
-  can't reproduce the finding, the finding is dropped.
-- **Cheap checks first.** Class oracles and a second scanner cut the noise, so the
-  expensive step runs on less.
-- **Your own model.** Anthropic, OpenAI, Azure, OpenRouter or local Ollama. You hold
-  the key.
-
-Every run keeps its own evidence under `~/.0sec/runs/<id>/`, so you can `resume`, `replay`, or `disclose` it later.
-
-<p align="center">
-  <img src="assets/demo-verify.gif" alt="0sec blind verification" width="820"><br/>
-  <sub>Blind verification. Every finding is re-exploited by an agent that never saw the original run.</sub>
-</p>
-
-## Track record
-
-0sec has landed real, maintainer-reviewed fixes in the **mainline Linux kernel** and other open source. The verified list lives at **[0.security](https://0.security)**. Benchmarks are secondary evidence; caveats in the [benchmark docs](docs/src/content/docs/benchmark.md).
-
-## Supported by
-
-With special thanks to the startup and research programs supporting our work:
-
-<p align="center">
-  <a href="https://aws.amazon.com/startups/" title="AWS Startups">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/aws-startups-dark.png">
-      <img align="middle" alt="AWS Startups" height="30" src="docs/assets/supported-by/aws-startups-light.png">
-    </picture>
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.microsoft.com/en-us/startups" title="Microsoft for Startups">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/microsoft-for-startups-dark.png">
-      <img align="middle" alt="Microsoft for Startups" height="30" src="docs/assets/supported-by/microsoft-for-startups-light.png">
-    </picture>
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://e2b.dev/startups" title="E2B for Startups">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/e2b-dark.svg">
-      <img align="middle" alt="E2B for Startups" height="30" src="docs/assets/supported-by/e2b-light.svg">
-    </picture>
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://hack-nation.ai/" title="Hack Nation">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/hacknation-dark.png">
-      <img align="middle" alt="Hack Nation" height="30" src="docs/assets/supported-by/hacknation-light.png">
-    </picture>
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://www.nvidia.com/en-us/startups/" title="NVIDIA Inception Program">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/nvidia-inception-dark.svg">
-      <img align="middle" alt="NVIDIA Inception Program" height="44" src="docs/assets/supported-by/nvidia-inception-light.svg">
-    </picture>
-  </a>
-</p>
-
-## Honest limitations
-
-- Kernel/IOKit findings stay hypotheses until a real oracle reproduces them (the `linux-kernel` profile is static).
-- Verification depth varies: `verificationSpec` covers file/diff predicates. The replay runner isolates PoCs in fresh, unprivileged, read-only Docker containers (no network by default; scoped HTTP opts into a bridge/custom network via `verify --docker-network` + `--scope`) and offline QEMU initramfs guests (`--qemu-kernel` / `--qemu-busybox`, or `0SEC_REPLAY_QEMU_*`). A finding still has to ship executable `pocSteps` for any of it to run; without them the finding is `skipped`.
-- The false-positive-moat layers are off by default and slice-dependent.
-- Benchmarks are single-model/config/trial; the 10/10 AI-suite is self-authored, not independent.
-- `fix` is narrow: source-only, single-file, ≤3 attempts.
-- By design, never: network sweeps, credential spraying, persistence/C2, or stealth.
-
-## Build from source
-
-```bash
-git clone https://github.com/0sec-labs/0sec.git && cd 0sec
-corepack enable && pnpm install --frozen-lockfile && pnpm build && node packages/cli/dist/index.js --help
-```
-
-### Desktop development
-
-The Electron shell opens a chat-first React operator workspace against a local
-Bun sidecar. Operations, runs, and findings are secondary routes; Node and
-provider credentials never enter the renderer.
-
-```bash
-pnpm build
-pnpm desktop
-```
-
-Package a host-native app only after compiling its matching sidecar:
-
-```bash
-# Apple Silicon macOS
-bash scripts/bun-compile.sh "" dist-bin/0sec-darwin-arm64
-
-# Linux x64
-# bash scripts/bun-compile.sh "" dist-bin/0sec-linux-x64
-
-pnpm desktop:package
-```
-
-The macOS desktop workflow targets a protected Apple-silicon self-hosted runner;
-it packages the app and smokes its bundled sidecar. A logged-in Mac desktop
-session remains required for visual UI verification.
-
-For an interactive remote development session, the unpackaged app can expose a
-**loopback-only** Chromium debugger for an SSH tunnel:
-
-```bash
-OSEC_DESKTOP_DEBUG_PORT=9222 pnpm desktop
-```
-
-Do not expose that port on a LAN or enable it for packaged releases.
-
-## Contributing & security
-
-See [CONTRIBUTING.md](CONTRIBUTING.md): synthetic or authorized targets only. Report vulnerabilities privately via [SECURITY.md](SECURITY.md) (security@0sec.ai), not public issues.
-
 ## License
 
-Dual-licensed **MIT OR Apache-2.0**. See [LICENSE](LICENSE) / [LICENSE-MIT](LICENSE-MIT). © 2026 0sec Labs.
+[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE).
