@@ -51,10 +51,19 @@ source builds, and your first scan.
 
 ## Documentation
 
-- [Commands](https://docs.0.security/commands/): CLI reference.
-- [Configuration](https://docs.0.security/configuration/): providers, scope, and runtime settings.
+[docs.0.security](https://docs.0.security/) is the shared public documentation
+home for the CLI and managed cloud:
+
+- [CLI quickstart](https://docs.0.security/getting-started/) and [scan workflows](https://docs.0.security/scan-workflows/).
+- [Console](https://docs.0.security/console/) and [desktop](https://docs.0.security/desktop/).
+- [Commands](https://docs.0.security/commands/), [configuration](https://docs.0.security/configuration/), and [API keys](https://docs.0.security/api-keys/).
+- [Integrations and CI](https://docs.0.security/integrations/), [research workflows](https://docs.0.security/research-workflows/), and [troubleshooting](https://docs.0.security/troubleshooting/).
+- [Cloud engagements](https://docs.0.security/cloud/): access, scope, and evidence review.
 - [Verification](https://docs.0.security/blind-verification/): how findings are checked and where verification can stop.
 - [Research](https://0.security/research/): published investigations and upstream fixes.
+
+Docs follow the source checkout; use `0sec --version` and command-specific
+`--help` when comparing an installed release with newly documented features.
 
 ## Research preview
 
@@ -66,6 +75,20 @@ need review and testing. See the [verification guide](https://docs.0.security/bl
 
 Build instructions and contribution guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
 Report security issues through [SECURITY.md](SECURITY.md).
+
+To refresh the command reference after changing CLI registrations:
+
+```bash
+pnpm --filter '0sec-cli...' build
+pnpm docs:sync
+pnpm docs:check
+```
+
+The synchronizer updates usage, arguments, aliases, subcommands, and option
+tables without replacing workflow or safety notes. New or removed commands
+require a reviewed documentation section; CI rejects missing sections and
+stale reference data. Public fork code is not executed by the PR workflow.
+Changes on `main` publish automatically after the docs freshness check and build.
 
 ## License
 

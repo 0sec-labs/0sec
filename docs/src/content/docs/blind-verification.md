@@ -1,13 +1,13 @@
 ---
 title: Blind Verification
-description: How 0sec independently re-exploits every finding to kill false positives.
+description: How independent agent verification filters findings, and how it differs from deterministic replay and discovery leads.
 ---
 
-Most scanners report what they find. 0sec kills what it can't prove.
-
-Every finding that survives the attack stage enters blind verification: a second
-agent tries to reproduce the vulnerability with **zero access to the original
-reasoning.** If it can't reproduce it, the finding is killed.
+Blind verification uses a separate agent to re-exercise a finding without the
+research agent's original reasoning. This page describes that verification path,
+not a guarantee that every command, stored row, or research lead was independently
+reproduced. See [Scan Workflows](/scan-workflows/#verification-and-evidence) for
+choosing a verifier and interpreting its evidence.
 
 ## What it is
 
@@ -48,8 +48,9 @@ This kills a whole class of false positives:
 
 ### Finding lifecycle
 
-Every finding starts `discovered` when the attack agent calls `save_finding`. No
-finding is reported to the user in this state.
+In this attack/verify path, `save_finding` produces `discovered` findings.
+The verification stage filters its report candidates as follows; persisted
+discovery records and other workflow outputs have separate lifecycle rules.
 
 ```
 discovered -> TRUE_POSITIVE (confirmed) -> in report
@@ -82,9 +83,10 @@ Each finding gets a formal verdict in the database:
 }
 ```
 
-Confirmed findings become `confirmed`. Unverified findings are dropped from
-`ctx.findings` entirely — they don't appear as "unverified" or "low confidence."
-They're gone.
+In this verification path, confirmed findings become `confirmed`, and
+unverified candidates are removed from the stage's `ctx.findings`.
+This does not mean every unverified row is deleted from storage or that
+other research commands cannot emit explicitly unconfirmed leads.
 
 ### Heuristic fallback (no API key)
 
@@ -119,15 +121,16 @@ traditional scanner would report and a human would have to triage by hand:
 
 ## Comparison
 
-Most tools find-and-report and leave triage to the operator. 0sec inverts this:
-a finding is "not real until proven otherwise," and verification is a **required
-stage**, not optional post-processing.
+Independent reproduction is stronger evidence than an attack agent's own claim.
+The distinction matters more than whether an output object is named “finding.”
 
 | Approach | What happens to a finding |
 |----------|--------------------------|
 | Traditional scanner | Found → Reported → Human triages |
-| 0sec | Found → Blind re-exploitation → Confirmed or killed → Only confirmed reported |
+| Blind agent verification path | Found → Independent re-exercise → Confirmed or rejected for this stage |
+| Research discovery path | Candidate → Additional reachability, verification, and novelty work required |
+| Deterministic replay | Executable contract → Observations and assertions → Mode-specific result |
 
-The cost is time: another agent loop, more API calls, more latency (a scan with
-5 vulns spends ~15-20 extra turns). Worth it — every reported finding has been
-independently reproduced, not left as a maybe to sort through.
+Verification adds runtime and model cost. Inspect the actual result and retained
+evidence; neither a successful command exit nor a human acceptance decision
+substitutes for reproduction.

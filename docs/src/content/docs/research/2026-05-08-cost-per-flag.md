@@ -87,7 +87,7 @@ The cost number falls out of the benchmark pipeline because cost tracking is bui
 
 - Per-token cost tracking lives in `packages/core/src/agent/cost.ts`. Every model the agent runs has an input/output/cached-input rate. Unknown models fall back to a conservative default and emit a log line.
 - Per-model breakdown is computed by `packages/benchmark/src/scripts/consolidate-xbow.ts`, which walks the retained CI artifacts and groups results by the `model` field in each run. The ledger then derives `totalCostUsd`, `costPerRunUsd`, and `costPerFlagUsd` per cohort.
-- The [methodology page](/methodology/#why-flag-is-a-useful-comparison-axis-when-published) explains the axis in plain prose. This post is the long-form version.
+- The [methodology page](/methodology/) explains the axis in plain prose. This post is the long-form version.
 
 Roadmap-wise, [issue #231](https://github.com/0sec-labs/0sec/issues/231) tracks adding `cost_usd`, `cost_breakdown` (by provider/model), and `cost_per_flag` to the `scan_completed` event payload. Today, reconstructing per-PR cost requires reading the run JSON; once #231 lands, a CI step can emit the cost line directly from the event stream and a budget gate can short-circuit a scan that exceeds policy. The cost-aware-CI story is half-built; this is the half that finishes it.
 

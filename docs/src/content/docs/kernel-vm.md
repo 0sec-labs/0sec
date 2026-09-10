@@ -7,6 +7,11 @@ description: Build and configure the QEMU guest used by 0sec ingest --verify.
 the guest `dmesg` against the imported kernel crash report. Without the VM,
 kernel verification stays static-only — 0sec won't claim a crash was reproduced.
 
+For choosing between `ingest --verify`, `research linux`,
+`research linux-matrix`, dynamic-witness hunting, and weaponization, see
+[Research Workflows](/research-workflows/). Importing an external boot matrix
+does not execute the boots; a source checkout alone does not provision the guest.
+
 ## What the repo provides
 
 A maintained build recipe at `packages/core/src/triage/kernel-vm/` builds:

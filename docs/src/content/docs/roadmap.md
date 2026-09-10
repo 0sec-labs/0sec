@@ -1,7 +1,27 @@
 ---
 title: Roadmap
-description: Where 0sec is going next. Opinionated, prioritised by leverage, dated by what already shipped.
+description: Current implementation pointers and historical plans for the 0sec engine. Roadmap items are not release or managed-service availability guarantees.
 ---
+
+## Current implementation pointers
+
+This page retains dated strategy notes below. Use the current guides for
+executable instructions; the older “Now” and “Next” lists are not a live
+inventory of missing commands.
+
+| Area | Current entry point | Remaining boundary |
+| --- | --- | --- |
+| Interactive work | [Console](/console/) and [Desktop](/desktop/) | Runtime and interface capabilities differ; use each guide's prerequisites. |
+| Saved scan continuation | [Scan Workflows](/scan-workflows/) | Resume routing and available state vary by producer; it is not universal recovery for every command. |
+| Findings and triage | [Commands](/commands/#findings) and [Finding Triage](/triage/) | Triage state is not proof that a vulnerability was reproduced or fixed. |
+| Diff-aware review and CI | [Integrations](/integrations/) and [GitHub CI](/ci/github-action/) | Local/scripted CI support does not imply a published composite action. |
+| Deterministic verification | [Verification Results](/verification-result/) | Replay requires executable inputs and valid setup; it does not cover every candidate automatically. |
+| Research adapters | [Research Workflows](/research-workflows/) | Imported evidence is distinct from execution performed by 0sec. |
+| Managed access | [Cloud](/cloud/) | Managed availability and engagement terms are separate from engine implementation. |
+
+Documentation follows the source checkout. Check `0sec --version` and
+`0sec <command> --help` against your installed release before using newly
+documented flags.
 
 This roadmap prioritises product leverage over surface-area creep, and stays
 honest about what has shipped vs what is still being scoped. The thesis is
@@ -21,7 +41,9 @@ security team running a continuous campaign.
 
 ## August 2026 product-discovery checkpoint
 
-**No commercial vertical has been selected yet.** 0sec is deliberately an
+**Historical checkpoint, August 2026:** no commercial vertical had been selected
+in this strategy note. For current managed access, use [Cloud](/cloud/).
+The original platform rationale follows. 0sec was framed as an
 open-source, evidence-backed cyber reasoning system: given an authorized
 objective, a scoped target, tools, and a verifier, it plans, investigates, tests,
 and returns replayable evidence. That's a platform thesis — it doesn't by itself
@@ -89,8 +111,7 @@ Trust-track implications:
 - **No wholesale Rust rewrite yet** — revisit only under measured runtime,
   distribution, sandbox, or multi-consumer pressure.
 
-See [TypeScript/Rust Boundary](/research/typescript-rust-boundary/) and
-[Foxguard ablation baseline](/research/foxguard-ablation/2026-05-22-baseline/).
+See [TypeScript/Rust Boundary](/research/typescript-rust-boundary/).
 
 ## Implemented, pending release
 
@@ -141,7 +162,8 @@ See [TypeScript/Rust Boundary](/research/typescript-rust-boundary/) and
 
 ## Now
 
-Next four, in priority order. Each ships in one or two focused passes.
+Historical priorities from the original roadmap. Current implemented portions
+are called out below; this is not a release schedule.
 
 ### 1. Anti-honeypot / decoy-flag heuristic
 
@@ -153,9 +175,11 @@ the target seeds a fake one.
 but a non-CTF target could plant a decoy in `.git/config` and the agent would
 submit it.
 
-**Deliverables:** on a flag-shaped match, mark provisional and explore at least
-one more layer; prefer hex/uuid shapes matching the suite's format over jokey
-decoys; expose as `--decoy-detection` (default on).
+**Current implementation:** the `done` tool's decoy-shape heuristic is enabled
+by default and can be disabled with `--no-decoy-detection`. It rejects a
+low-confidence flag once; a repeated submission can override it. This is a
+benchmark-oriented speed bump, not an independent verifier or a proof gate
+for real-world findings.
 
 ### 2. Statistical evaluation methodology — n=10 per cell
 
@@ -181,8 +205,10 @@ restarting.
 restarting long agentic workflows is expensive. This is what makes 0sec feel like
 infrastructure.
 
-**Deliverables:** `0sec resume <scan-id>`; stage-level checkpointing;
-partial-result recovery after crash/timeout; resume-safe report generation.
+**Current implementation:** `0sec resume <scan-id>` and journal continuation
+exist. The remaining goal is reliable recovery across all workflows, not the
+addition of a missing command. Read [Scan Workflows](/scan-workflows/) for
+supported routing, state requirements, and caveats.
 
 ### 4. Finding inbox + triage workflow
 
@@ -191,9 +217,11 @@ partial-result recovery after crash/timeout; resume-safe report generation.
 **Why:** "found a thing" isn't enough for teams. Repeated findings need dedupe,
 suppression, and audit history.
 
-**Deliverables:** finding fingerprinting across scans; statuses (`new`,
-`accepted`, `suppressed`, `needs-human`, `regression`); suppression rules with
-reason + expiration; comments/notes; scan-to-scan diff view.
+**Current implementation:** the `findings` command exposes grouped findings,
+triage filtering, and lifecycle inspection. The CLI's human triage values are
+`new`, `accepted`, and `suppressed`, separate from finding verification state.
+The broader suppression-expiry, comments, and cross-run workflow described
+here remains a design goal unless documented by a current command.
 
 ## Next
 
@@ -204,9 +232,10 @@ More valuable once the above is solid.
 **Goal:** make the GitHub Action fast enough to run on every PR — changed files
 first, expand when suspicious.
 
-**Deliverables:** changed-file targeting for `review`; priority scoring for
-touched paths (auth, secrets, network, tool-use, eval-like sinks); optional
-fallback to full review on high-risk deltas; PR summary tuned for reviewer action.
+**Current implementation:** `review --diff-base <ref> --changed-only` scopes
+static leads and prioritization to changed files. See [GitHub CI](/ci/github-action/)
+for the supported automation path. Broader PR policy and automatic fallback
+behavior are goals, not implied by the presence of these flags.
 
 ### 6. Deterministic replay for every finding
 
@@ -234,13 +263,11 @@ retry policy; shared target inventory and cross-target clustering.
 **Goal:** expose stored scan state as a real operator interface for running the
 control plane, working the review inbox, and inspecting runtime failures.
 
-**Status:** baseline shipped (grouped findings, thread-level workflow, quick
-filtering, scan dossiers, recent shadcn rebuild). Next: operations-first home,
-active run stage progress, replay launch, better thread↔run provenance links.
-
-**Core views:** operations control (primary home); review inbox for operator
-decisions and blocked automation; scan dossiers and pipeline timelines; replay /
-evidence viewer; target inventory; scan history and trend charts.
+**Current implementation:** local dashboard, console, and desktop interfaces
+exist. Desktop is chat-first; operations, runs, and findings are secondary
+routes. The earlier operations-first-home proposal is not the current desktop
+layout. See [Desktop](/desktop/) and [Console](/console/) for the available
+interfaces and their boundaries.
 
 ## Later
 
@@ -263,8 +290,8 @@ a hosted control plane if adoption justifies it.
 
 ## Non-goals right now
 
-- a giant SaaS dashboard before the local workflow is excellent
-- "chat with your findings" before replay, dedupe, and triage are strong
+- treating the existence of a UI or backend scaffold as general managed-service availability
+- replacing reproduction evidence with a chat summary or lifecycle label
 - new scan modes without stronger replay and campaign ergonomics
 - subagents used as UI magic instead of bounded workers
 - EGATS-style tree search on challenges this size — the v1 sweep proved it costs

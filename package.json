@@ -19,6 +19,8 @@
     "build": "pnpm -r exec rm -f tsconfig.tsbuildinfo && pnpm --filter @0sec/shared build && pnpm --filter @0sec/db --filter @0sec/templates build && pnpm --filter '!@0sec/docs' -r build && pnpm run build:bundle",
     "build:bundle": "node ./scripts/bundle-cli.mjs",
     "build:docs": "pnpm --filter @0sec/docs build",
+    "docs:check": "node scripts/sync-cli-docs.mjs --check",
+    "docs:sync": "node scripts/sync-cli-docs.mjs --write",
     "dev": "pnpm -r --parallel dev",
     "desktop": "pnpm --filter @0sec/desktop start",
     "desktop:package": "pnpm --filter @0sec/desktop package",
