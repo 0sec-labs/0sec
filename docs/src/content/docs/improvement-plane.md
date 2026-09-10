@@ -287,6 +287,19 @@ is better. The relevant research supports evaluator-driven iteration:
   reports harness-induced forgetting and inconsistent adaptation gains.
   Expanding tools, skills, or agents therefore requires retention evaluation;
   a larger harness is not inherently a better one.
+- [Post-Hoc Reasoning in Chain of Thought (Cox et al., 2026)](https://arxiv.org/html/2603.01437v2)
+  finds pre-committed answers and misleading rationalization in the tested
+  instruction-tuned models and tasks. A candidate's explanation is useful
+  context, not evidence that its change is correct or authorized.
+- [OpenAI's Astra system card](https://deploymentsafety.openai.com/gpt-6-astra)
+  reports reduced monitorability alongside improved measured alignment.
+  Reasoning monitoring is therefore supplementary: filesystem, credential,
+  execution, and promotion boundaries must be enforced outside model output.
+  Those results do not establish that recurrent depth caused the change.
+- [A Little Depth Goes a Long Way (Merrill and Sabharwal, 2025)](https://arxiv.org/abs/2503.03961)
+  studies transformer depth and computational expressivity. Repeating an API
+  agent loop is not the same mechanism. Choose model and reasoning settings
+  using measured task outcomes, latency, and cost, not assumed architecture.
 
 The implemented boundary is fixed acceptance criteria, independently labelled
 controls, restricted candidate execution, and versioned rollout. There is no
@@ -542,7 +555,9 @@ For each iteration:
 4. **Evaluate** in a fresh, network-none, read-only Docker container. Expected
    answers stay in the controller — never in the candidate or model input. The
    evaluation alternates baseline/candidate order across repeats to avoid
-   warm-cache bias. Uses Wilson 95% CI for success rate.
+   warm-cache bias. Wilson 95% intervals count distinct fixtures, not repeat
+   executions; unstable repeats receive an uninformative `[0, 1]` interval and
+   fail the stability gate. These intervals do not correct adaptive holdout reuse.
 5. **Promotion assessment** — the pure function
    `evaluateImprovementPromotion` checks identity, artifact binding, evaluator
    integrity, evidence, sample size, development lift, held-out lift, precision,

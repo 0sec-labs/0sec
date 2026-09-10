@@ -3,6 +3,12 @@ name: "0sec: Live evolution E2E"
 # Explicit, billable runs on trusted main only. No pull-request trigger.
 on:
   workflow_dispatch:
+    inputs:
+      lane:
+        description: Lifecycle to exercise
+        type: choice
+        options: [all, source, lens]
+        default: all
 
 permissions:
   contents: read
@@ -19,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [source, lens]
+        lane: ${{ fromJSON(inputs.lane == 'source' && '["source"]' || inputs.lane == 'lens' && '["lens"]' || '["source","lens"]') }}
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
@@ -53,7 +59,7 @@ jobs:
             echo "::error::DOGFOOD_OPENAI_API_KEY is required for live evolution."
             exit 1
           }
-          node scripts/smoke-${{ matrix.lane }}-evolution.mjs | tee evolution-${{ matrix.lane }}.jsonl
+          node scripts/smoke-${{ matrix.lane }}-evolution.mjs 2>&1 | tee evolution-${{ matrix.lane }}.jsonl
       - name: Retain measured lifecycle outcomes
         if: always()
         uses: actions/upload-artifact@v7

@@ -14,10 +14,23 @@ function score(attempts: EvolutionAttempt[], lane: EvolutionLane): ResearchScore
   const successes = selected.filter((entry) => entry.matched && !entry.inconclusive).length;
   const count = selected.length;
   const rate = count === 0 ? 0 : successes / count;
+  const caseOutcomes = new Map<string, boolean>();
+  let caseSuccesses = 0;
+  let stable = true;
+  for (const entry of selected) {
+    const success = entry.matched && !entry.inconclusive;
+    if (!caseOutcomes.has(entry.caseId)) {
+      caseOutcomes.set(entry.caseId, success);
+      if (success) caseSuccesses++;
+    } else if (caseOutcomes.get(entry.caseId) !== success) {
+      stable = false;
+    }
+  }
   return {
-    cases: new Set(selected.map((entry) => entry.caseId)).size,
+    cases: caseOutcomes.size,
     successRate: rate,
-    successRateCI95: wilson95(successes, count),
+    // Repeats test stability, not independent evidence. Unstable runs have no informative interval.
+    successRateCI95: stable ? wilson95(caseSuccesses, caseOutcomes.size) : [0, 1],
     falsePositiveRate: count === 0 ? 0 : selected.filter((entry) => !entry.matched && !entry.inconclusive).length / count,
     costPerSuccessUsd: successes === 0 ? null : selected.reduce((sum, entry) => sum + entry.costUsd, 0) / successes,
     inconclusiveRate: count === 0 ? 1 : selected.filter((entry) => entry.inconclusive).length / count,

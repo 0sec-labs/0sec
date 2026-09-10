@@ -86,6 +86,17 @@ describe("independent evolution oracle", () => {
     expect(unrelated.result.heldOut.challenger.successRate).toBe(0);
   });
 
+  it("does not inflate confidence by repeating the same fixtures", async () => {
+    const { config, baseline, candidate } = await setup();
+    const first = await evaluateEvolutionCandidate(baseline, candidate, config, { sandbox: probe(candidate.id, "correct") });
+    const repeated = await evaluateEvolutionCandidate(baseline, candidate, { ...config, repeats: 4 }, { sandbox: probe(candidate.id, "correct") });
+    for (const lane of ["development", "heldOut"] as const) {
+      for (const variant of ["champion", "challenger"] as const) {
+        expect(repeated.result[lane][variant].successRateCI95).toEqual(first.result[lane][variant].successRateCI95);
+      }
+    }
+  });
+
   it("does not treat failed negative controls as evidence of precision", async () => {
     const { config, baseline, candidate } = await setup();
     const evaluation = await evaluateEvolutionCandidate(baseline, candidate, config, { sandbox: probe(candidate.id, "negative-error") });
