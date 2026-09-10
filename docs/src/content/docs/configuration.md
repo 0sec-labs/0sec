@@ -103,7 +103,7 @@ provider. Do not infer that installing a binary alone authorizes every surface.
 | C/C++ library review                   | `0sec review ./lib --profile c-library --runtime codex`    | yes                            |
 
 Managed-cloud runtime availability is a separate deployment policy; see
-[Cloud](/cloud/) rather than assuming local capabilities are all hosted.
+[0cloud](/roadmap/#0cloud) rather than assuming local capabilities are all hosted.
 
 ## Scan modes
 

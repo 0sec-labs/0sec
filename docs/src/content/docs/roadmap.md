@@ -11,13 +11,27 @@ inventory of missing commands.
 
 | Area | Current entry point | Remaining boundary |
 | --- | --- | --- |
-| Interactive work | [Console](/console/) and [Desktop](/desktop/) | Runtime and interface capabilities differ; use each guide's prerequisites. |
+| Interactive work | [Console](/console/) | The terminal interface for running scans and reviewing findings. |
 | Saved scan continuation | [Scan Workflows](/scan-workflows/) | Resume routing and available state vary by producer; it is not universal recovery for every command. |
 | Findings and triage | [Commands](/commands/#findings) and [Finding Triage](/triage/) | Triage state is not proof that a vulnerability was reproduced or fixed. |
 | Diff-aware review and CI | [Integrations](/integrations/) and [GitHub CI](/ci/github-action/) | Local/scripted CI support does not imply a published composite action. |
 | Deterministic verification | [Verification Results](/verification-result/) | Replay requires executable inputs and valid setup; it does not cover every candidate automatically. |
 | Research adapters | [Research Workflows](/research-workflows/) | Imported evidence is distinct from execution performed by 0sec. |
-| Managed access | [Cloud](/cloud/) | Managed availability and engagement terms are separate from engine implementation. |
+
+
+## 0cloud
+
+**0cloud is not yet released.** It remains in development; no public
+onboarding, download path, or launch date is promised. All references to a
+managed control plane on this site describe architectural components that have
+not shipped as a user-accessible service.
+
+## Desktop
+
+**The native Desktop application is not yet released.** It is in development;
+no public download or install path is available. All desktop references on this
+site describe an in-progress interface. Use the CLI [Console](/console/) for
+the released terminal interface.
 
 Documentation follows the source checkout. Check `0sec --version` and
 `0sec <command> --help` against your installed release before using newly
@@ -42,7 +56,7 @@ security team running a continuous campaign.
 ## August 2026 product-discovery checkpoint
 
 **Historical checkpoint, August 2026:** no commercial vertical had been selected
-in this strategy note. For current managed access, use [Cloud](/cloud/).
+in this strategy note.
 The original platform rationale follows. 0sec was framed as an
 open-source, evidence-backed cyber reasoning system: given an authorized
 objective, a scoped target, tools, and a verifier, it plans, investigates, tests,
@@ -155,7 +169,7 @@ See [TypeScript/Rust Boundary](/research/typescript-rust-boundary/).
 - **Phase A flag-regex extractor + gate filters** — caught the XBEN-079 honeypot
   decoy (`FLAG{I'm_a_Script_Kiddie}`) before it became a silent false positive.
 - **Phase B malicious-package detection** in the audit pipeline.
-- **Cloud handshake (Phase 1)** — OSS-engine findings can be normalised and
+- **Orchestrator handshake (Phase 1)** — OSS-engine findings can be normalised and
   ingested by an orchestrator that tracks scan jobs end-to-end.
 - **A/B sweep cadence** — overnight feature-combination sweeps are now the default
   way improvements get tested.
@@ -263,11 +277,9 @@ retry policy; shared target inventory and cross-target clustering.
 **Goal:** expose stored scan state as a real operator interface for running the
 control plane, working the review inbox, and inspecting runtime failures.
 
-**Current implementation:** local dashboard, console, and desktop interfaces
-exist. Desktop is chat-first; operations, runs, and findings are secondary
-routes. The earlier operations-first-home proposal is not the current desktop
-layout. See [Desktop](/desktop/) and [Console](/console/) for the available
-interfaces and their boundaries.
+**Current implementation:** local dashboard and console interfaces exist.
+Desktop is in development; see [Roadmap](/roadmap/#desktop) for current
+status. Use [Console](/console/) for the released terminal interface.
 
 ## Later
 

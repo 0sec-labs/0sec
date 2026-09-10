@@ -141,7 +141,7 @@ Run a local mission-control dashboard for scans and findings
 0sec dashboard [options]
 ```
 
-Guide: [Read the workflow](/desktop/).
+Guide: [Read the workflow](/architecture/#presentation-contract).
 
 | Option | Registered default | Description |
 | --- | --- | --- |
@@ -2075,7 +2075,7 @@ Read-only cloud-surface probes (S3 public-access / takeover, AWS credential vali
 0sec cloud
 ```
 
-This command probes cloud infrastructure under an engagement scope. It is **not** the managed 0sec Cloud product or a way to sign up for that service. For managed engagements use [Cloud](/cloud/).
+This command probes cloud infrastructure under an engagement scope. It is **not** the managed 0sec Cloud product or a way to sign up for that service. For managed engagements use [0cloud](/roadmap/#0cloud).
 
 Guide: [Read the workflow](/research-workflows/).
 
@@ -2556,7 +2556,7 @@ Write a program's structured_scopes to ~/.0sec/scopes/<handle>.json
 0sec auth
 ```
 
-These credentials are for a configured managed control plane, not model-provider authentication. Browser login requires a compatible server-side flow and authorized access; the presence of this CLI command does not establish public service availability. See [Cloud](/cloud/).
+These credentials are for a configured managed control plane, not model-provider authentication. Browser login requires a compatible server-side flow and authorized access; the presence of this CLI command does not establish public service availability. See [0cloud](/roadmap/#0cloud).
 
 Guide: [Read the workflow](/api-keys/).
 

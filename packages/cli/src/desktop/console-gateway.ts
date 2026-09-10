@@ -98,10 +98,6 @@ export interface DesktopConsoleGatewayOptions {
   createId?: () => string;
 }
 
-function asToolCall(call: ToolCall): DesktopConsoleToolCall {
-  return { name: call.name, arguments: structuredClone(call.arguments) };
-}
-
 function asOperatorQuestions(request: OperatorQuestionRequest): DesktopConsoleOperatorQuestion[] {
   return request.questions.map((question) => ({
     header: question.header,
@@ -247,6 +243,7 @@ export class DesktopConsoleGateway {
   readonly #now: () => Date;
   readonly #createId: () => string;
   readonly #createSession: ConsoleGatewaySessionFactory;
+  readonly #callIds = new WeakMap<object, string>();
 
   constructor(options: DesktopConsoleGatewayOptions = {}) {
     this.#now = options.now ?? (() => new Date());
@@ -331,10 +328,10 @@ export class DesktopConsoleGateway {
     void session.send(text, {
       onAssistantDelta: (delta) => this.#emit(managed, { type: "assistant-delta", text: delta }),
       onReasoningDelta: (delta) => this.#emit(managed, { type: "reasoning-delta", text: delta }),
-      onToolStart: (call) => this.#emit(managed, { type: "tool-start", call: asToolCall(call) }),
+      onToolStart: (call) => this.#emit(managed, { type: "tool-start", call: this.#withCallId(call) }),
       onToolResult: (call, result) => this.#emit(managed, {
         type: "tool-result",
-        call: asToolCall(call),
+        call: this.#withCallId(call),
         result: structuredClone(result),
       }),
       onUsage: (usage) => {
@@ -423,7 +420,7 @@ export class DesktopConsoleGateway {
           detail: request.requestedUrls.length > 0
             ? `The next tool call reaches ${request.requestedUrls.length} target${request.requestedUrls.length === 1 ? "" : "s"} outside the current scope.`
             : "The next tool call has an unresolved network destination.",
-          call: asToolCall(request.call),
+          call: this.#withCallId(request.call),
           requestedUrls: [...request.requestedUrls],
         });
         return response.approve ? buildScopeResolution(request) : null;
@@ -433,7 +430,7 @@ export class DesktopConsoleGateway {
           kind: "local-scope",
           title: "Authorize local directory",
           detail: "This grants this directory subtree for the current session only. Nothing is written to disk.",
-          call: asToolCall(request.call),
+          call: this.#withCallId(request.call),
           requestedPath: request.requestedPath,
         });
         return response.approve ? { scopePath: request.requestedPath } : null;
@@ -443,7 +440,7 @@ export class DesktopConsoleGateway {
           kind: "tool",
           title: "Confirm tool action",
           detail: "Standard mode requires an explicit confirmation before this action runs.",
-          call: asToolCall(call),
+          call: this.#withCallId(call),
         });
         return response.approve;
       },
@@ -452,7 +449,7 @@ export class DesktopConsoleGateway {
           kind: "audit-escalation",
           title: "Lift source-audit restriction",
           detail: "Scope, local-directory, and per-tool approval rules remain in force.",
-          call: asToolCall(request.call),
+          call: this.#withCallId(request.call),
         });
         return response.approve;
       },
@@ -468,6 +465,15 @@ export class DesktopConsoleGateway {
     });
     managed.session = session;
     return session;
+  }
+
+  #withCallId(call: ToolCall): DesktopConsoleToolCall {
+    let id = this.#callIds.get(call);
+    if (!id) {
+      id = this.#createId();
+      this.#callIds.set(call, id);
+    }
+    return { id, name: call.name, arguments: structuredClone(call.arguments) };
   }
 
   #requestDecision(managed: ManagedSession, input: Omit<DesktopConsoleDecision, "id">): Promise<DesktopConsoleDecisionResponse> {

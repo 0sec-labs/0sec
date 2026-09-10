@@ -1,17 +1,17 @@
 ---
 title: 0sec documentation
-description: Run security assessments with the open-source 0sec CLI or engage the 0sec team for a managed cloud engagement. Install, configure, scan, and review findings.
+description: Install and use the open-source 0sec CLI. Configure providers, define authorized scope, investigate targets, and review evidence.
 template: splash
 hero:
   title: 0sec documentation
-  tagline: Run security assessments yourself with the open-source CLI, or work with the 0sec team on a managed engagement. Start here.
+  tagline: Install the CLI, define your scope, and investigate with evidence. Start with a guided scan or work interactively in the console.
   actions:
     - text: CLI quickstart
       link: /getting-started/
       icon: right-arrow
       variant: primary
-    - text: Cloud guide
-      link: /cloud/
+    - text: Command reference
+      link: /commands/
       icon: right-arrow
       variant: secondary
     - text: GitHub
@@ -31,13 +31,12 @@ import { LinkCard, CardGrid } from "@astrojs/starlight/components";
     href="/getting-started/"
   />
   <LinkCard
-    title="Use managed cloud"
-    description="Request access, prepare your scope and test accounts, and agree on a managed engagement."
-    href="/cloud/getting-started/"
+    title="Work in the console"
+    description="Investigate interactively with explicit scope, approvals, and saved conversations."
+    href="/console/"
   />
 </CardGrid>
 
-A cloud engagement is not required to use the open-source CLI. Choose your path below.
 
 ## Run the CLI
 
@@ -52,19 +51,10 @@ A cloud engagement is not required to use the open-source CLI. Choose your path 
 
 <CardGrid>
   <LinkCard title="Console" description="Interactive chat, approvals, sessions, and keyboard controls." href="/console/" />
-  <LinkCard title="Desktop" description="Local desktop interface and build prerequisites." href="/desktop/" />
   <LinkCard title="Scan Workflows" description="Investigation, saved runs, evidence review, and retesting." href="/scan-workflows/" />
   <LinkCard title="Integrations" description="CI, MCP, plugins, and data exports." href="/integrations/" />
   <LinkCard title="Research Workflows" description="Variant hunting, deep review, fuzzing, and binary analysis." href="/research-workflows/" />
   <LinkCard title="Troubleshooting" description="Diagnose setup, scope, runtime, and execution failures." href="/troubleshooting/" />
-</CardGrid>
-
-## Managed cloud
-
-<CardGrid>
-  <LinkCard title="Cloud Getting Started" description="Request access, prepare your brief, and arrange a managed engagement." href="/cloud/getting-started/" />
-  <LinkCard title="Scope &amp; Access" description="Prepare targets, test accounts, exclusions, and stop conditions." href="/cloud/scope-and-access/" />
-  <LinkCard title="Review Evidence" description="Check coverage, inspect findings, and plan a retest." href="/cloud/review-evidence/" />
 </CardGrid>
 
 ## Understand the system
@@ -76,9 +66,8 @@ A cloud engagement is not required to use the open-source CLI. Choose your path 
 - [Blind Verification](/blind-verification/) — independent verification approach
 - [Verification Results](/verification-result/) — deterministic replay contract
 
-## Research and availability
+## Research and development
 
 - [Benchmarks](/benchmark/) and [Methodology](/methodology/) — measured results and their limits
 - [Research](/research/) — experiments and technical rationale
-- [Roadmap](/roadmap/) — planned engine work
-- [Cloud availability](/cloud/#availability) — current managed-access path
+- [Roadmap](/roadmap/) — planned engine work and unreleased product status

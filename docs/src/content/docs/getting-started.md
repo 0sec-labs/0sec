@@ -4,8 +4,7 @@ description: Install 0sec, configure a provider, define scope, and run your firs
 ---
 
 Install 0sec, configure a model provider, define an authorized target, and run
-your first scan. No cloud account is required. For a managed engagement instead,
-use the [Cloud guide](/cloud/).
+your first scan. No cloud account is required.
 
 ## Install
 
@@ -167,7 +166,6 @@ boundaries; enabling one does not sandbox every CLI operation. See
 
 **Continue working**
 - [Console](/console/) — interactive chat, approvals, sessions, and keyboard controls
-- [Desktop](/desktop/) — local desktop interface and build prerequisites
 - [Scan Workflows](/scan-workflows/) — investigation through evidence review
 - [Troubleshooting](/troubleshooting/) — diagnose setup, scope, runtime, and execution failures
 

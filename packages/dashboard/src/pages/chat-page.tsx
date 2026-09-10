@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type {
   DesktopCodexAuthStatus,
@@ -22,12 +22,14 @@ import {
   startDesktopCodexDeviceAuth,
 } from "@/api";
 import { cn } from "@/lib/utils";
+import { ArrowDown, ArrowUp, Check, ChevronRight, LoaderCircle, Square } from "lucide-react";
+import { ChatMessage } from "@/components/chat-message";
 
 type DetailView = "context" | "activity" | "evidence";
 
 type TranscriptEntry =
   | { id: string; kind: "user" | "assistant" | "notice" | "error"; text: string }
-  | { id: string; kind: "tool"; name: string; arguments: unknown; result?: unknown };
+  | { id: string; kind: "tool"; callId?: string; name: string; arguments: unknown; result?: unknown; status: "running" | "complete" | "interrupted" };
 
 const MODE_LABELS: Record<DesktopConsoleAutonomyMode, string> = {
   standard: "standard",
@@ -36,8 +38,8 @@ const MODE_LABELS: Record<DesktopConsoleAutonomyMode, string> = {
   yolo: "yolo",
 };
 
-const RAIL_BUTTON = "border border-[#f7f5f2]/12 px-2.5 py-1.5 text-[11px] text-[#b6b2ad] transition hover:border-[#f7f5f2]/30 hover:text-[#f7f5f2] disabled:cursor-not-allowed disabled:opacity-45";
-const ACTION_BUTTON = "border border-[#dc2626] bg-[#dc2626] px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-[#ef4444] disabled:cursor-not-allowed disabled:opacity-45";
+const RAIL_BUTTON = "rounded-lg border border-[#f7f5f2]/12 px-3 py-2 text-xs text-[#b6b2ad] transition hover:border-[#f7f5f2]/30 hover:text-[#f7f5f2] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b6b2ad] disabled:cursor-not-allowed disabled:opacity-45";
+const ACTION_BUTTON = "rounded-lg border border-[#f7f5f2] bg-[#f7f5f2] px-3 py-2 text-xs font-medium text-[#1a1815] transition hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b6b2ad] disabled:cursor-not-allowed disabled:opacity-45";
 
 function formatTarget(target: string): string {
   if (!target) return "target: not set";
@@ -76,9 +78,11 @@ function eventLabel(event: DesktopConsoleEvent): string {
 
 function buildTranscript(events: readonly DesktopConsoleEvent[]): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
+  let turnStart = 0;
   for (const event of events) {
     if (event.type === "user") {
       entries.push({ id: `user-${event.sequence}`, kind: "user", text: event.text });
+      turnStart = entries.length;
       continue;
     }
     if (event.type === "assistant-delta") {
@@ -88,24 +92,55 @@ function buildTranscript(events: readonly DesktopConsoleEvent[]): TranscriptEntr
       continue;
     }
     if (event.type === "tool-start") {
-      entries.push({ id: `tool-${event.sequence}`, kind: "tool", name: event.call.name, arguments: event.call.arguments });
+      entries.push({ id: `tool-${event.sequence}`, kind: "tool", callId: event.call.id, name: event.call.name, arguments: event.call.arguments, status: "running" });
       continue;
     }
     if (event.type === "tool-result") {
-      const prior = [...entries].reverse().find((entry): entry is Extract<TranscriptEntry, { kind: "tool" }> => entry.kind === "tool" && entry.name === event.call.name && entry.result === undefined);
-      if (prior) prior.result = event.result;
-      else entries.push({ id: `tool-${event.sequence}`, kind: "tool", name: event.call.name, arguments: event.call.arguments, result: event.result });
+      const prior = entries.find((entry): entry is Extract<TranscriptEntry, { kind: "tool" }> =>
+        entry.kind === "tool" && entry.status === "running" &&
+        (event.call.id ? entry.callId === event.call.id : entry.name === event.call.name));
+      if (prior) {
+        prior.result = event.result;
+        prior.status = "complete";
+      } else entries.push({ id: `tool-${event.sequence}`, kind: "tool", callId: event.call.id, name: event.call.name, arguments: event.call.arguments, result: event.result, status: "complete" });
       continue;
     }
     if (event.type === "turn-complete") {
-      const last = entries.at(-1);
+      for (const entry of entries) {
+        if (entry.kind === "tool" && entry.status === "running") entry.status = "interrupted";
+      }
       if (!event.assistantText) continue;
-      if (last?.kind === "assistant" && event.assistantText.startsWith(last.text)) last.text = event.assistantText;
-      else if (last?.kind !== "assistant" || last.text !== event.assistantText) entries.push({ id: `assistant-final-${event.sequence}`, kind: "assistant", text: event.assistantText });
+      let streamed = "";
+      for (let index = turnStart; index < entries.length; index++) {
+        const entry = entries[index];
+        if (entry.kind === "assistant") streamed += entry.text;
+      }
+      if (event.assistantText === streamed) continue;
+      if (event.assistantText.startsWith(streamed)) {
+        const suffix = event.assistantText.slice(streamed.length);
+        const last = entries.at(-1);
+        if (last?.kind === "assistant") last.text += suffix;
+        else entries.push({ id: `assistant-final-${event.sequence}`, kind: "assistant", text: suffix });
+      } else {
+        // A runtime can supply authoritative text that was never streamed.
+        // Replace this turn's provisional text, retaining its tool activity.
+        let retained = turnStart;
+        for (let index = turnStart; index < entries.length; index++) {
+          const entry = entries[index];
+          if (entry.kind !== "assistant") entries[retained++] = entry;
+        }
+        entries.length = retained;
+        entries.push({ id: `assistant-final-${event.sequence}`, kind: "assistant", text: event.assistantText });
+      }
       continue;
     }
     if (event.type === "notice") entries.push({ id: `notice-${event.sequence}`, kind: "notice", text: event.text });
-    if (event.type === "error") entries.push({ id: `error-${event.sequence}`, kind: "error", text: event.message });
+    if (event.type === "error") {
+      for (const entry of entries) {
+        if (entry.kind === "tool" && entry.status === "running") entry.status = "interrupted";
+      }
+      entries.push({ id: `error-${event.sequence}`, kind: "error", text: event.message });
+    }
   }
   return entries;
 }
@@ -129,31 +164,41 @@ function Wordmark() {
 }
 
 function HeaderButton({ children, active = false, onClick }: { children: ReactNode; active?: boolean; onClick?: () => void }) {
-  return <button type="button" onClick={onClick} className={cn("px-2 py-1 text-[11px] transition", active ? "text-[#f7f5f2]" : "text-[#8d8984] hover:text-[#f7f5f2]")}>{children}</button>;
+  return <button type="button" onClick={onClick} className={cn("rounded-md px-2.5 py-2 text-xs transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b6b2ad]", active ? "bg-white/5 text-[#f7f5f2]" : "text-[#a7a29c] hover:bg-white/5 hover:text-[#f7f5f2]")}>{children}</button>;
 }
 
-function Transcript({ entries, endRef }: { entries: readonly TranscriptEntry[]; endRef: React.RefObject<HTMLDivElement | null> }) {
-  if (entries.length === 0) return null;
+function Transcript({ entries, streaming }: { entries: readonly TranscriptEntry[]; streaming: boolean }) {
   return (
-    <div className="mx-auto flex w-full max-w-[44rem] flex-col gap-6 px-5 pb-8 pt-10 sm:px-8">
-      {entries.map((entry) => {
+    <div className="mx-auto flex w-full max-w-[48rem] flex-col gap-7 px-5 pb-8 pt-10 sm:px-8" aria-label="Conversation">
+      {entries.map((entry, index) => {
         if (entry.kind === "tool") {
-          const complete = entry.result !== undefined;
           return (
-            <article key={entry.id} className="border-l border-[#f7f5f2]/18 pl-3">
-              <div className="flex items-center gap-2 text-[11px]"><span className="text-[#8d8984]">tool</span><span className="font-mono text-[#f7f5f2]">{entry.name}</span><span className={complete ? "text-[#8fb996]" : "text-[#d7b56d]"}>{complete ? "complete" : "running"}</span></div>
-              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-[#a7a29c]">{formatPayload(complete ? entry.result : entry.arguments)}</pre>
-            </article>
+            <details key={entry.id} className="group min-w-0 rounded-xl border border-white/8 bg-white/[0.02]">
+              <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 text-xs text-[#b6b2ad] focus-visible:outline-2 focus-visible:outline-[#b6b2ad]">
+                {entry.status === "running" ? <LoaderCircle aria-hidden className="size-3.5 motion-safe:animate-spin" /> : entry.status === "complete" ? <Check aria-hidden className="size-3.5" /> : <Square aria-hidden className="size-3.5" />}
+                <span className="min-w-0 flex-1 truncate font-mono text-[#e4e0dc]">{entry.name}</span>
+                <span>{entry.status === "complete" ? "Finished" : entry.status === "running" ? "Running" : "Interrupted"}</span>
+                <ChevronRight aria-hidden className="size-3.5 transition-transform group-open:rotate-90 motion-reduce:transition-none" />
+              </summary>
+              <div className="space-y-3 border-t border-white/8 px-4 py-3">
+                <div><p className="mb-2 text-[11px] text-[#a7a29c]">Input</p><pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-[#b6b2ad]">{formatPayload(entry.arguments)}</pre></div>
+                {entry.status === "complete" ? <div><p className="mb-2 text-[11px] text-[#a7a29c]">Result</p><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-[#b6b2ad]">{formatPayload(entry.result)}</pre></div> : null}
+              </div>
+            </details>
           );
         }
-        if (entry.kind === "notice") return <p key={entry.id} className="text-center text-[11px] text-[#8d8984]">{entry.text}</p>;
-        if (entry.kind === "error") return <p key={entry.id} className="border-l border-[#dc2626] pl-3 text-sm leading-6 text-[#f18181]">{entry.text}</p>;
+        if (entry.kind === "notice") return <p key={entry.id} className="text-center text-xs leading-6 text-[#a7a29c]">{entry.text}</p>;
+        if (entry.kind === "error") return <p key={entry.id} role="alert" className="rounded-xl border border-[#f18181]/20 px-4 py-3 text-sm leading-6 text-[#f18181]">{entry.text}</p>;
         if (entry.kind === "user") {
-          return <article key={entry.id} className="border-l border-[#f7f5f2]/28 pl-3"><p className="mb-2 text-[11px] text-[#8d8984]">you</p><p className="whitespace-pre-wrap text-sm leading-7 text-[#f7f5f2]">{entry.text}</p></article>;
+          return <article key={entry.id} className="ml-auto max-w-[90%] rounded-2xl bg-white/[0.06] px-5 py-3"><span className="sr-only">You</span><p className="whitespace-pre-wrap break-words text-sm leading-7 text-[#f7f5f2]">{entry.text}</p></article>;
         }
-        return <article key={entry.id}><p className="mb-2 text-[11px] text-[#dc2626]">0sec</p><p className="whitespace-pre-wrap text-sm leading-7 text-[#e4e0dc]">{entry.text}</p></article>;
+        return (
+          <article key={entry.id} className="min-w-0 text-[#e4e0dc]">
+            <p className="mb-3 text-xs font-medium text-[#a7a29c]">0sec</p>
+            <ChatMessage text={entry.text} streaming={streaming && index === entries.length - 1} />
+          </article>
+        );
       })}
-      <div ref={endRef} />
     </div>
   );
 }
@@ -173,30 +218,45 @@ function Composer({
   onSubmit: () => void;
   onCancel: () => void;
 }) {
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 224)}px`;
+  }, [value]);
   return (
     <form
-      className="border border-[#f7f5f2]/18 bg-transparent"
+      className="overflow-hidden rounded-2xl border border-[#f7f5f2]/15 bg-[#141414] shadow-sm transition-colors focus-within:border-[#f7f5f2]/35"
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit();
+        if (!disabled && !working) onSubmit();
       }}
     >
       <textarea
+        ref={inputRef}
+        autoFocus
+        aria-label="Message 0sec"
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
-            onSubmit();
+            if (!disabled && !working) onSubmit();
           }
         }}
-        placeholder={working ? "0sec is working…" : "Ask 0sec to investigate…"}
-        className="min-h-24 w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 text-[#f7f5f2] outline-none placeholder:text-[#726f6b] disabled:cursor-not-allowed"
+        placeholder={working ? "Write your next message…" : "Ask a question, or describe what to investigate…"}
+        rows={2}
+        className="min-h-20 w-full resize-none overflow-y-auto bg-transparent px-5 pt-4 pb-2 text-sm leading-7 text-[#f7f5f2] outline-none placeholder:text-[#8d8984] disabled:cursor-not-allowed"
       />
-      <div className="flex items-center justify-between border-t border-[#f7f5f2]/10 px-3 py-2">
-        <p className="text-[10px] text-[#726f6b]">enter to send · shift+enter for newline</p>
-        {working ? <button type="button" className={RAIL_BUTTON} onClick={onCancel}>stop</button> : <button type="submit" className={ACTION_BUTTON} disabled={disabled || !value.trim()}>send</button>}
+      <div className="flex items-center justify-between gap-3 px-4 pb-3">
+        <p className="text-[11px] text-[#8d8984]"><span className="hidden sm:inline">Enter to send · </span>Shift+Enter for a new line</p>
+        {working ? (
+          <button type="button" aria-label="Stop response" className={RAIL_BUTTON} onClick={onCancel}><Square aria-hidden className="size-4" /></button>
+        ) : (
+          <button type="submit" aria-label="Send message" className={ACTION_BUTTON} disabled={disabled || !value.trim()}><ArrowUp aria-hidden className="size-4" /></button>
+        )}
       </div>
     </form>
   );
@@ -322,7 +382,7 @@ function SessionPanel({ sessions, activeId, open, onClose, onSelect, onNew, onSc
       <div className="mt-6 flex gap-2"><button className={ACTION_BUTTON} onClick={onNew}>new chat</button><button className={RAIL_BUTTON} onClick={onScoped}>new scoped engagement</button></div>
       <div className="mt-6 border-t border-[#f7f5f2]/10 pt-4">
         <p className="mb-3 text-[10px] tracking-[0.12em] text-[#726f6b] uppercase">live sessions</p>
-        {sessions.length === 0 ? <p className="text-xs leading-5 text-[#8d8984]">No live sessions.</p> : sessions.map((session) => <button key={session.id} type="button" onClick={() => { onSelect(session.id); onClose(); }} className={cn("block w-full border-l px-3 py-2 text-left", session.id === activeId ? "border-[#dc2626] bg-[#f7f5f2]/[0.03]" : "border-transparent hover:border-[#f7f5f2]/25")}><p className="truncate text-xs text-[#e4e0dc]">{formatTarget(session.target)}</p><p className="mt-1 text-[10px] text-[#726f6b]">{MODE_LABELS[session.autonomyMode]} · {session.status}</p></button>)}
+        {sessions.length === 0 ? <p className="text-xs leading-5 text-[#8d8984]">No live sessions.</p> : sessions.map((session) => <button key={session.id} type="button" onClick={() => { onSelect(session.id); onClose(); }} className={cn("block w-full rounded-lg px-3 py-3 text-left transition-colors", session.id === activeId ? "bg-[#f7f5f2]/[0.07]" : "hover:bg-[#f7f5f2]/[0.04]")}><p className="truncate text-xs text-[#e4e0dc]">{formatTarget(session.target)}</p><p className="mt-1 text-[11px] text-[#a7a29c]">{MODE_LABELS[session.autonomyMode]} · {session.status}</p></button>)}
       </div>
     </aside>
   );
@@ -361,7 +421,9 @@ export function ChatPage() {
   const [detailView, setDetailView] = useState<DetailView>("context");
   const [codexAuth, setCodexAuth] = useState<DesktopCodexAuthStatus | null>(null);
   const cursorRef = useRef(0);
-  const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
+  const followOutputRef = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   const activeSession = sessions.find((session) => session.id === activeId) ?? null;
 
@@ -421,9 +483,11 @@ export function ChatPage() {
       return;
     }
     let active = true;
-    let timer: ReturnType<typeof window.setTimeout> | undefined;
+    let timer: number | undefined;
     let polling = false;
     cursorRef.current = 0;
+    followOutputRef.current = true;
+    setShowJumpToLatest(false);
     setEvents([]);
     const poll = async () => {
       if (polling || !active) return;
@@ -433,8 +497,11 @@ export function ChatPage() {
         if (!active || incoming.length === 0) return;
         cursorRef.current = incoming.at(-1)?.sequence ?? cursorRef.current;
         setEvents((current) => mergeEvents(current, incoming));
-        const updates = incoming.filter((event): event is Extract<DesktopConsoleEvent, { type: "session" }> => event.type === "session");
-        if (updates.length > 0) setSessions((current) => current.map((session) => updates.find((event) => event.session.id === session.id)?.session ?? session));
+        const updates = new Map<string, DesktopConsoleSession>();
+        for (const event of incoming) {
+          if (event.type === "session") updates.set(event.session.id, event.session);
+        }
+        if (updates.size > 0) setSessions((current) => current.map((session) => updates.get(session.id) ?? session));
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
@@ -458,15 +525,28 @@ export function ChatPage() {
   useEffect(() => { if (pendingDecisions.length > 0) setDetailsOpen(true); }, [pendingDecisions.length]);
 
   const transcript = useMemo(() => buildTranscript(events), [events]);
-  const activity = useMemo(() => events.filter((event) => event.type !== "assistant-delta" && event.type !== "user").slice(-18).reverse(), [events]);
+  const activity = useMemo(() => events.filter((event) => event.type !== "assistant-delta" && event.type !== "reasoning-delta" && event.type !== "user").slice(-18).reverse(), [events]);
   const evidence = useMemo(() => events.filter((event): event is Extract<DesktopConsoleEvent, { type: "tool-result" }> => event.type === "tool-result").slice().reverse(), [events]);
 
-  useEffect(() => { transcriptEndRef.current?.scrollIntoView({ block: "end" }); }, [transcript.length]);
+  useLayoutEffect(() => {
+    const viewport = transcriptScrollRef.current;
+    if (viewport && followOutputRef.current) viewport.scrollTop = viewport.scrollHeight;
+  }, [events, detailsOpen]);
+
+  const jumpToLatest = () => {
+    const viewport = transcriptScrollRef.current;
+    if (!viewport) return;
+    followOutputRef.current = true;
+    setShowJumpToLatest(false);
+    viewport.scrollTop = viewport.scrollHeight;
+  };
 
   const send = async () => {
-    if (!activeSession || !draft.trim() || activeSession.status !== "ready") return;
+    if (submitting || !activeSession || !draft.trim() || activeSession.status !== "ready") return;
     setSubmitting(true);
     setError(null);
+    followOutputRef.current = true;
+    setShowJumpToLatest(false);
     try {
       const updated = await sendDesktopConsoleMessage(activeSession.id, draft);
       applySession(updated);
@@ -514,18 +594,81 @@ export function ChatPage() {
     finally { setSubmitting(false); }
   };
 
-  if (loading) return <main className="grid min-h-screen place-items-center bg-[#0a0a0a] text-[11px] text-[#8d8984]">opening 0sec…</main>;
+  if (loading) return <main className="grid min-h-dvh place-items-center bg-[#0a0a0a] text-sm text-[#a7a29c]" role="status">Opening your workspace…</main>;
 
   const isEmpty = transcript.length === 0;
-  const working = activeSession?.status === "working";
+  const working = activeSession?.status === "working" || activeSession?.status === "waiting";
+  const composerDisabled = submitting || !activeSession || activeSession.status === "closed" || activeSession.status === "failed";
+  let workingLabel = "Working on your request";
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event.type === "assistant-delta") {
+      workingLabel = "Writing a response";
+      break;
+    }
+    if (event.type === "tool-start") {
+      workingLabel = `Running ${event.call.name}`;
+      break;
+    }
+    if (event.type === "user" || event.type === "reasoning-delta" || event.type === "tool-result") break;
+  }
+  if (pendingDecisions.length > 0) workingLabel = "Waiting for your approval";
+  const composer = <Composer value={draft} disabled={Boolean(composerDisabled)} working={working} onChange={setDraft} onSubmit={() => void send()} onCancel={() => void cancel()} />;
   return (
-    <main className="relative flex h-screen min-h-[38rem] overflow-hidden bg-[#0a0a0a] font-sans text-[#f7f5f2]">
+    <main className="relative flex h-dvh min-h-0 overflow-hidden bg-[#0a0a0a] font-sans text-[#f7f5f2] selection:bg-white/20">
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-[#f7f5f2]/10 px-4 sm:px-6">
-          <div className="flex min-w-0 items-center gap-5"><Wordmark /><div className="hidden min-w-0 items-center gap-3 text-[11px] text-[#8d8984] sm:flex"><span className="truncate">{activeSession ? formatTarget(activeSession.target) : "target: not set"}</span><span>scope: {activeSession?.scopeConfigured ? "set" : "on demand"}</span><span>{activeSession ? MODE_LABELS[activeSession.autonomyMode] : "standard"}</span></div></div>
-          <div className="flex items-center gap-1"><HeaderButton onClick={() => setSessionsOpen(true)}>sessions {sessions.length}</HeaderButton><HeaderButton onClick={() => { setDetailView("context"); setDetailsOpen(true); }}>context</HeaderButton><HeaderButton onClick={() => void createSession()} >new</HeaderButton><Link className="px-2 py-1 text-[11px] text-[#8d8984] transition hover:text-[#f7f5f2]" to="/dashboard">operations</Link></div>
+        <header className="flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[#f7f5f2]/8 px-4 py-2 sm:px-6">
+          <div className="flex min-w-0 items-center gap-4">
+            <Wordmark />
+            <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-[#a7a29c]">Development</span>
+            <span className="hidden max-w-64 truncate text-xs text-[#a7a29c] lg:block">{activeSession?.target ? formatTarget(activeSession.target) : "Local workspace"}</span>
+          </div>
+          <div className="flex items-center gap-0.5">
+            <HeaderButton onClick={() => setSessionsOpen(true)}>Chats</HeaderButton>
+            <HeaderButton onClick={() => { setDetailView("context"); setDetailsOpen(true); }}>Context{pendingDecisions.length ? ` · ${pendingDecisions.length}` : ""}</HeaderButton>
+            <HeaderButton onClick={() => void createSession()}>New chat</HeaderButton>
+            <Link className="rounded-md px-2.5 py-2 text-xs text-[#a7a29c] transition hover:bg-white/5 hover:text-[#f7f5f2] focus-visible:outline-2 focus-visible:outline-[#b6b2ad]" to="/dashboard">Operations</Link>
+          </div>
         </header>
-        {isEmpty ? <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 pb-16"><div className="w-full max-w-[34rem]"><div className="mb-8 text-center"><p className="text-[10px] tracking-[0.18em] text-[#726f6b] uppercase">0sec · operator console</p><h1 className="mt-3 text-2xl font-medium tracking-[-0.035em] text-[#f7f5f2]">What are we looking at?</h1><p className="mx-auto mt-3 max-w-sm text-xs leading-5 text-[#8d8984]">Start with the outcome you need. Scope and approval stay explicit when the work reaches a boundary.</p></div><Composer value={draft} disabled={submitting || activeSession?.status !== "ready"} working={Boolean(working)} onChange={setDraft} onSubmit={() => void send()} onCancel={() => void cancel()} />{error ? <p className="mt-3 text-center text-[11px] text-[#f18181]">{error}</p> : null}</div></div> : <><div className="min-h-0 flex-1 overflow-y-auto"><Transcript entries={transcript} endRef={transcriptEndRef} /></div><div className="mx-auto w-full max-w-[44rem] px-5 pb-5 sm:px-8"><Composer value={draft} disabled={submitting || activeSession?.status !== "ready"} working={Boolean(working)} onChange={setDraft} onSubmit={() => void send()} onCancel={() => void cancel()} />{error ? <p className="mt-3 text-[11px] text-[#f18181]">{error}</p> : null}</div></>}
+        {isEmpty ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-5 py-10">
+            <div className="w-full max-w-[40rem]">
+              <div className="mb-9">
+                <p className="mb-3 text-xs text-[#a7a29c]">Your local security workspace</p>
+                <h1 className="text-3xl font-medium tracking-[-0.04em] text-[#f7f5f2] sm:text-4xl">What are we investigating?</h1>
+                <p className="mt-4 max-w-lg text-sm leading-7 text-[#a7a29c]">Start with a question or an outcome. Follow the work as it happens, with scope and approvals kept explicit.</p>
+              </div>
+              {composer}
+              <div className="mt-4 flex flex-wrap gap-2">
+                {["Explain how scope and approvals work", "Help me plan a source review"].map((prompt) => (
+                  <button key={prompt} type="button" className="rounded-full border border-white/10 px-3 py-2 text-xs text-[#a7a29c] transition hover:border-white/25 hover:text-[#f7f5f2] focus-visible:outline-2 focus-visible:outline-[#b6b2ad]" onClick={() => setDraft(prompt)}>{prompt}</button>
+                ))}
+              </div>
+              {error ? <p role="alert" className="mt-4 text-sm text-[#f18181]">{error}</p> : null}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="relative min-h-0 flex-1">
+              <div ref={transcriptScrollRef} className="h-full overflow-y-auto overscroll-contain" onScroll={(event) => {
+                const viewport = event.currentTarget;
+                const following = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80;
+                followOutputRef.current = following;
+                setShowJumpToLatest(!following);
+              }}>
+                <Transcript entries={transcript} streaming={activeSession?.status === "working"} />
+              </div>
+              {showJumpToLatest ? <button type="button" className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/15 bg-[#1a1a1a] px-4 py-2 text-xs text-[#f7f5f2] shadow-sm focus-visible:outline-2 focus-visible:outline-[#b6b2ad]" onClick={jumpToLatest}><ArrowDown aria-hidden className="size-3.5" />Latest response</button> : null}
+            </div>
+            <div className="mx-auto w-full max-w-[48rem] px-5 pb-5 sm:px-8">
+              <div role="status" aria-live="polite" className="mb-3 flex min-h-5 items-center gap-2 text-xs text-[#a7a29c]">
+                {working ? <><LoaderCircle aria-hidden className="size-3.5 motion-safe:animate-spin" /><span>{workingLabel}</span></> : <span>{activeSession?.status === "ready" ? "Ready for your next message" : activeSession?.status}</span>}
+              </div>
+              {composer}
+              {error ? <p role="alert" className="mt-3 text-sm text-[#f18181]">{error}</p> : null}
+            </div>
+          </>
+        )}
       </section>
       <Details open={detailsOpen} view={detailView} session={activeSession} pending={pendingDecisions} activity={activity} evidence={evidence} auth={codexAuth} busy={submitting} onClose={() => setDetailsOpen(false)} onView={setDetailView} onResolve={resolveDecision} onConnect={connectCodex} onCancelConnect={cancelCodex} />
       <SessionPanel sessions={sessions} activeId={activeId} open={sessionsOpen} onClose={() => setSessionsOpen(false)} onSelect={setActiveId} onNew={() => void createSession()} onScoped={() => { setSessionsOpen(false); setScopedOpen(true); }} />

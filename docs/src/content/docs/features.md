@@ -41,7 +41,7 @@ Use `--auth` for target credentials, not model credentials. The scan command
 accepts a JSON value or a JSON file for bearer, cookie, basic, or custom-header
 authentication. Prefer a restricted file over putting a real token into shell
 history. See [credential formats](/commands/#--auth-credential-formats) and
-[Scope & Access](/cloud/scope-and-access/) for engagement preparation.
+[Authorized Engagements](/engagements/) for engagement preparation.
 
 ### API spec import
 
@@ -106,9 +106,8 @@ research strategies. [Agent Loop](/agent-loop/) explains the control flow;
 [Budget Management](/budget-management/) distinguishes turn limits from spend
 limits; [Configuration](/configuration/) owns feature settings and defaults.
 
-Use [Console](/console/) for interactive work and [Desktop](/desktop/) for the
-local desktop interface. They are interfaces to the engine, not separate public
-documentation sites.
+Use [Console](/console/) for interactive work. Desktop is in development; see
+[Roadmap](/roadmap/#desktop) for status.
 
 ## Benchmarks
 
@@ -121,4 +120,4 @@ are not current-target guarantees or a managed-service availability statement.
 For the integrations that actually ship in this repository, use
 [Integrations](/integrations/). Do not infer an operational integration merely
 because another tool appears in an architecture diagram or ecosystem comparison.
-The managed offering is documented in [Cloud](/cloud/).
+The managed offering (0cloud) is in development; see [Roadmap](/roadmap/#0cloud) for status.

@@ -18,9 +18,15 @@ on the published npm package and the GitHub Release tag.
   current notes in later runs. Verification stays cold, and changed or unsafe
   evidence is excluded. A real-model learning lifecycle check is available in
   the trusted-main evolution workflow.
-- Unified CLI and managed-cloud documentation at `docs.0.security`, including
-  task-oriented command navigation, source-audited workflow guides, and
-  website-aligned light/dark styling with responsive navigation.
+- Canonical CLI documentation at `docs.0.security`, with task-oriented command
+  navigation, source-audited workflow guides, neutral light/dark styling, and
+  responsive navigation. Unreleased 0cloud and desktop guides remain contributor
+  drafts, excluded from public routes and search.
+  Existing product-guide URLs redirect to their roadmap status.
+- Development desktop chat now renders streamed Markdown, expandable tool
+  activity, and interruption states without duplicating final responses.
+  Following output respects manual scrolling; code copying is limited to the
+  focused local dashboard, while clipboard reads remain denied.
 - `pnpm docs:sync` refreshes registered CLI arguments, options, defaults, and
   aliases without replacing reviewed workflow or safety notes. `pnpm docs:check`
   blocks stale command references in CI and before documentation deployment.

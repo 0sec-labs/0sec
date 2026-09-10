@@ -96,8 +96,15 @@ function installApplicationMenu(): void {
 }
 
 function installPermissionPolicy(): void {
-  session.defaultSession.setPermissionCheckHandler(() => false);
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  const canWriteClipboard = (contents: Electron.WebContents | null, permission: string, origin: string) =>
+    permission === "clipboard-sanitized-write" &&
+    contents === mainWindow?.webContents &&
+    contents.isFocused() &&
+    isTrustedDashboardUrl(origin);
+  session.defaultSession.setPermissionCheckHandler((contents, permission, origin) =>
+    canWriteClipboard(contents, permission, origin));
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) =>
+    callback(canWriteClipboard(contents, permission, details.requestingUrl)));
 }
 
 function installIpcPolicy(): void {

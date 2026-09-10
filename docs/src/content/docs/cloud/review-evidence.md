@@ -1,7 +1,12 @@
 ---
-title: Review Evidence
-description: Review delivered findings, distinguish verification from triage, identify coverage gaps, and prepare a retest.
+title: 0cloud evidence review — development draft
+description: Unpublished evidence-review considerations for the unreleased 0cloud product.
+draft: true
+pagefind: false
 ---
+
+**0cloud is not released.** This is draft planning material, not a description
+of an available delivery workflow. Verify it before publishing.
 
 Start with the tested scope and its limits, then inspect each finding. A report
 is evidence about the tests performed, not a guarantee that no other

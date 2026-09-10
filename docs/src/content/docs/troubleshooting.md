@@ -205,7 +205,7 @@ file, or matches a `out_of_scope` deny rule (deny takes precedence). See
 Run `0sec auth login` to re-authenticate, or use `--token` for the manual path:
 
 ```bash
-0sec auth login --host https://cloud.0.security --token "your-token"
+0sec auth login --host https://control-plane.example.com --token "your-token"
 ```
 
 ## Provider issues

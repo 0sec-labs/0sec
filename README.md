@@ -51,19 +51,21 @@ source builds, and your first scan.
 
 ## Documentation
 
-[docs.0.security](https://docs.0.security/) is the shared public documentation
-home for the CLI and managed cloud:
+[docs.0.security](https://docs.0.security/) is the public documentation
+home for the CLI:
 
 - [CLI quickstart](https://docs.0.security/getting-started/) and [scan workflows](https://docs.0.security/scan-workflows/).
-- [Console](https://docs.0.security/console/) and [desktop](https://docs.0.security/desktop/).
+- [Console](https://docs.0.security/console/): interactive investigations and saved conversations.
 - [Commands](https://docs.0.security/commands/), [configuration](https://docs.0.security/configuration/), and [API keys](https://docs.0.security/api-keys/).
 - [Integrations and CI](https://docs.0.security/integrations/), [research workflows](https://docs.0.security/research-workflows/), and [troubleshooting](https://docs.0.security/troubleshooting/).
-- [Cloud engagements](https://docs.0.security/cloud/): access, scope, and evidence review.
 - [Verification](https://docs.0.security/blind-verification/): how findings are checked and where verification can stop.
 - [Research](https://0.security/research/): published investigations and upstream fixes.
 
 Docs follow the source checkout; use `0sec --version` and command-specific
 `--help` when comparing an installed release with newly documented features.
+
+**0cloud and Desktop are not released.** Both are in development; their draft
+guides are not published as user documentation. See the [roadmap](https://docs.0.security/roadmap/).
 
 ## Research preview
 
@@ -89,6 +91,11 @@ tables without replacing workflow or safety notes. New or removed commands
 require a reviewed documentation section; CI rejects missing sections and
 stale reference data. Public fork code is not executed by the PR workflow.
 Changes on `main` publish automatically after the docs freshness check and build.
+
+Keep unreleased product guides marked `draft: true`. They are available to
+contributors through the docs development server but excluded from production
+pages, search, and the sitemap. Remove draft status only when the product is
+released and its onboarding instructions have been verified.
 
 ## License
 

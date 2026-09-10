@@ -1,7 +1,13 @@
 ---
-title: Desktop
-description: The 0sec native desktop application — sidecar security boundary, platform build requirements, launch workflow, and UI overview.
+title: Desktop — development draft
+description: Contributor notes for the unreleased 0sec Desktop application and its local CLI sidecar.
+draft: true
+pagefind: false
 ---
+
+**Desktop is not released and is under construction.** These notes are for
+contributors testing development builds, not installation instructions for a
+released app. Packaging support does not imply downloadable or signed releases.
 
 The 0sec desktop is an [Electron](https://www.electronjs.org/) application
 (v42, Chromium-based) that provides a native windowed control plane for the
@@ -14,21 +20,22 @@ security boundary.
 
 ### Source development
 
-From the monorepo root, the CLI, dashboard, and sidecar binary must be built
-first:
+Use Node.js 24+, the repository's pinned pnpm, and Bun 1.3.14 (matching CI).
+From the monorepo root, build the CLI and dashboard before launching:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm build
-bash scripts/bun-compile.sh "" "dist-bin/0sec-linux-x64"
+pnpm --filter '0sec-cli...' build
+pnpm --filter @0sec/dashboard build
 pnpm --filter @0sec/desktop start
 ```
 
-On macOS Apple Silicon, replace the target arch:
-
-```bash
-bash scripts/bun-compile.sh "" "dist-bin/0sec-darwin-arm64"
-```
+The same development commands work on macOS Apple Silicon. A compiled
+platform-specific sidecar is needed for packaging, **not** for this source
+launch: the development app runs the built CLI entry point through Bun.
+If Bun is not on `PATH`, set `BUN_PATH` to its executable.
+The development sidecar can also run through Node.js 24+:
+`BUN_PATH=node pnpm --filter @0sec/desktop start`. Packaging still requires Bun.
 
 The desktop resolves assets from `packages/dashboard/dist/` (development) or
 `process.resourcesPath/dashboard/` (packaged), and the sidecar from
@@ -43,7 +50,7 @@ The desktop resolves assets from `packages/dashboard/dist/` (development) or
 | `OSEC_DESKTOP_DEBUG_PORT` | Bind Chromium DevTools to `127.0.0.1:<port>` for development builds only (integer, 1024–65535). Remote inspection reaches this port through an SSH tunnel only. |
 | `BUN_PATH` | Custom `bun` binary path for the development sidecar (default: `"bun"` on `PATH`) |
 
-### Packaged releases
+### Packaging development builds
 
 The build pipeline produces platform-specific artifacts through
 [electron-builder](https://www.electron.build/). Packages bundle the Electron
@@ -68,7 +75,7 @@ The desktop separates the renderer (web UI) from engine operations through a
 │  └───────────────────────────────┘  │
 │                                     │
 │  IPC:  osec:open-external (HTTPS)   │
-│  Permission: all denied             │
+│  Permission: scoped clipboard write │
 └────────────────────┬──────────────┘
                      │ spawn (stdio: pipe)
 ┌────────────────────▼──────────────┐
@@ -135,9 +142,10 @@ All other IPC channels are blocked.
 
 ### Permission policy
 
-All Chromium permission requests (camera, microphone, geolocation,
-notifications, clipboard read, etc.) are denied at the session level. The
-renderer cannot acquire any browser-level permissions.
+Clipboard writes are allowed only from the focused main dashboard window at
+the trusted local sidecar origin, so the chat's **Copy code** button works.
+Clipboard reads, camera, microphone, geolocation, notifications, and all other
+Chromium permission requests remain denied.
 
 ## Window
 
@@ -167,8 +175,11 @@ No other Node.js or Electron API is available in the renderer
 1. Launch the desktop application from your OS (or `pnpm --filter @0sec/desktop start` in development).
 2. The Electron window opens to a dashboard web UI served by the sidecar over
    a local loopback URL.
-3. Use the dashboard to configure engagements, review findings, manage provider
-   connections, and inspect scan results.
+3. Start a chat to follow responses as they stream. Markdown, code blocks, and
+   expandable tool activity stay in the conversation. **Context** exposes scope
+   and approvals; **Operations** opens the dashboard for findings and runs.
+   **Stop response** cancels the active turn. Scrolling back preserves your
+   position; **Latest response** resumes following new output.
 4. The dashboard communicates with the sidecar process only; it has no direct
    filesystem or network access beyond the sidecar's loopback HTTP server.
 5. External documentation links (e.g. provider setup pages) open in the system

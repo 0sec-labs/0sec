@@ -1,7 +1,12 @@
 ---
-title: Scope & Access
-description: Prepare authorized targets, test identities, access constraints, and stop conditions for a managed engagement.
+title: 0cloud scope and access — development draft
+description: Unpublished scope and access considerations for the unreleased 0cloud product.
+draft: true
+pagefind: false
 ---
+
+**0cloud is not released.** This is draft planning material, not a supported
+product workflow. Verify it against the released product before publishing.
 
 Scope describes what may be tested. Reachability and credentials describe what
 can be tested. Agree on both before execution; a reachable system is not

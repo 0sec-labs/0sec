@@ -7,8 +7,8 @@ A scope policy limits target destinations. It does not create permission to test
 a system and it is not an OS sandbox. Obtain authorization first, then encode
 the allowed hosts and exclusions as narrowly as possible.
 
-For managed engagement preparation rather than CLI configuration, use
-[Cloud Scope & Access](/cloud/scope-and-access/).
+Managed engagement preparation is separate from CLI configuration and is
+in development; see [Roadmap](/roadmap/#0cloud) for status.
 
 ## Minimal scope file
 

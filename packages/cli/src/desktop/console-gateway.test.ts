@@ -101,6 +101,9 @@ describe("DesktopConsoleGateway", () => {
     });
     const decision = gateway.eventsAfter(session.id).find((event) => event.type === "decision");
     if (!decision || decision.type !== "decision") throw new Error("Expected a pending tool decision.");
+    // decision.call has a stable call.id for frontend correlation
+    const callId = decision.decision.call?.id;
+    expect(callId).toEqual(expect.any(String));
     expect(gateway.list()[0]?.status).toBe("waiting");
 
     gateway.resolveDecision(session.id, decision.decision.id, { approve: true });
@@ -113,6 +116,13 @@ describe("DesktopConsoleGateway", () => {
     expect(types).toContain("assistant-delta");
     expect(types).toContain("tool-result");
     expect(types).toContain("usage");
+
+    // tool-start and tool-result carry the same call.id as the decision
+    const toolStart = gateway.eventsAfter(session.id).find((event) => event.type === "tool-start");
+    const toolResult = gateway.eventsAfter(session.id).find((event) => event.type === "tool-result");
+    if (toolStart?.type === "tool-start") expect(toolStart.call.id).toBe(callId);
+    if (toolResult?.type === "tool-result") expect(toolResult.call.id).toBe(callId);
+
     expect(gateway.list()[0]?.status).toBe("ready");
   });
 

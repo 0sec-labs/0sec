@@ -1,10 +1,13 @@
 ---
-title: Cloud Getting Started
-description: Request managed access and prepare an authorized engagement, from initial brief to agreed delivery.
+title: 0cloud preparation — development draft
+description: Unpublished engagement-preparation notes for the unreleased 0cloud product.
+draft: true
+pagefind: false
 ---
 
-Use this path if you want to arrange testing with the 0sec team. To run a scan
-yourself instead, follow the [CLI quickstart](/getting-started/).
+**0cloud is not released.** These are proposed preparation notes, not an
+available onboarding flow or invitation to use a service. Verify and rewrite
+them against the released product before publishing.
 
 ## 1. Prepare a short brief
 

@@ -442,7 +442,7 @@ anywhere without explicit action.
 Submission is disabled by any of: `0SEC_OFFLINE=1`, `0SEC_NO_TELEMETRY=1`,
 `DO_NOT_TRACK=1`. Transmission goes to the URL in `0SEC_FEEDBACK_URL`, or to
 the 0cloud feedback endpoint (`/api/cli-feedback`) when the CLI is
-authenticated with 0cloud credentials.
+authenticated with a compatible configured 0cloud deployment.
 
 The feedback payload body contains: `message`, `timestamp`, `version`, `model`,
 `mode`. The body is capped at 64 KB; request timeout is 5 seconds. Failure to
@@ -498,5 +498,4 @@ exactly like `/feedback`: local file by default, opt-in HTTPS transmission.
 - [Configuration](/configuration/) — runtime, mode, and feature settings
 - [API Keys](/api-keys/) — provider setup
 - [Scope & Authorization](/scope/) — scope file format and matching
-- [Desktop](/desktop/) — native desktop application
 - [Getting Started](/getting-started/) — install and first scan

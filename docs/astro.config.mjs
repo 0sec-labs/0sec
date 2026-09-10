@@ -28,7 +28,7 @@ export default defineConfig({
         { tag: "link", attrs: { rel: "preconnect", href: "https://0.security", crossorigin: "anonymous" } },
       ],
       description:
-        "Documentation for the 0sec CLI and managed cloud engagements: getting started, scope, workflows, and verification.",
+        "Documentation for the 0sec CLI: getting started, scope, workflows, and verification.",
       logo: {
         dark: "./src/assets/0sec-aperture-white.svg",
         light: "./src/assets/0sec-aperture-dark.svg",
@@ -57,7 +57,6 @@ export default defineConfig({
             { label: "Getting Started", slug: "getting-started" },
             { label: "Scan Workflows", slug: "scan-workflows" },
             { label: "Console", slug: "console" },
-            { label: "Desktop", slug: "desktop" },
             { label: "Recipes", slug: "recipes" },
             { label: "Features", slug: "features" },
             { label: "Troubleshooting", slug: "troubleshooting" },
@@ -75,15 +74,6 @@ export default defineConfig({
             { label: "White-Box Mode", slug: "white-box-mode" },
             { label: "Integrations", slug: "integrations" },
             { label: "GitHub CI", slug: "ci/github-action" },
-          ],
-        },
-        {
-          label: "Cloud",
-          items: [
-            { label: "Overview", slug: "cloud" },
-            { label: "Getting Started", slug: "cloud/getting-started" },
-            { label: "Scope & Access", slug: "cloud/scope-and-access" },
-            { label: "Review Evidence", slug: "cloud/review-evidence" },
           ],
         },
         {
