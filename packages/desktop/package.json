@@ -12,7 +12,7 @@
   "main": "dist/main/index.js",
   "desktopName": "0sec",
   "scripts": {
-    "build": "tsc --project tsconfig.json",
+    "build": "tsc --project tsconfig.json && tsc --project tsconfig.preload.json",
     "start": "pnpm run build && electron .",
     "test": "vitest run",
     "package": "pnpm run build && node scripts/prepare-desktop-resources.mjs && electron-builder --publish never",
@@ -75,6 +75,7 @@
     }
   },
   "devDependencies": {
+    "@0sec/shared": "workspace:*",
     "@types/node": "^25.5.0",
     "electron": "42.11.2",
     "electron-builder": "26.15.2",

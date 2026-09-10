@@ -1,7 +1,18 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  type MenuItemConstructorOptions,
+  nativeTheme,
+  session,
+  shell,
+} from "electron";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { DesktopHostCommand } from "@0sec/shared";
 import {
   createDashboardSidecarInvocation,
   findWorkspaceRoot,
@@ -20,10 +31,16 @@ if (!app.isPackaged && developmentDebugPort !== undefined) {
   app.commandLine.appendSwitch("remote-debugging-port", String(developmentDebugPort));
 }
 
+// Explicit app name so the macOS app-menu label is "0sec" regardless of the
+// npm package name (@0sec/desktop). Must be set before 'ready'.
+app.name = "0sec";
 
 let mainWindow: BrowserWindow | null = null;
 let dashboard: DashboardSidecar | null = null;
 let isQuitting = false;
+let windowReady: Promise<void> | null = null;
+let applicationStart: Promise<void> | null = null;
+let canQuit = false;
 
 function desktopAssetDirectory(): string {
   if (app.isPackaged) return join(process.resourcesPath, "dashboard");
@@ -59,13 +76,15 @@ function installNavigationPolicy(window: BrowserWindow): void {
 }
 
 function createWindow(): BrowserWindow {
-  const window = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 960,
-    minHeight: 640,
+  const isMac = process.platform === "darwin";
+
+  const options: Electron.BrowserWindowConstructorOptions = {
+    width: 1280,
+    height: 860,
+    minWidth: 900,
+    minHeight: 600,
     show: false,
-    backgroundColor: "#09090b",
+    backgroundColor: isMac ? "#00000000" : nativeTheme.shouldUseDarkColors ? "#191919" : "#ffffff",
     title: "0sec",
     webPreferences: {
       contextIsolation: true,
@@ -75,48 +94,223 @@ function createWindow(): BrowserWindow {
       webviewTag: false,
       preload: join(moduleDirectory, "../preload/index.js"),
     },
-  });
+  };
 
+  if (isMac) {
+    options.titleBarStyle = "hiddenInset";
+    options.trafficLightPosition = { x: 18, y: 18 };
+    options.vibrancy = "sidebar";
+  }
+
+  const window = new BrowserWindow(options);
   installNavigationPolicy(window);
   window.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
   window.once("ready-to-show", () => window.show());
   return window;
 }
 
+async function showMainWindow(): Promise<BrowserWindow | null> {
+  if (isQuitting || !dashboard) return null;
+  if (!mainWindow) {
+    const window = createWindow();
+    mainWindow = window;
+    window.on("closed", () => {
+      if (mainWindow === window) {
+        mainWindow = null;
+        windowReady = null;
+      }
+    });
+    windowReady = window.loadURL(`${dashboard.url}/chat`);
+  }
+  const window = mainWindow;
+  await windowReady;
+  if (window.isDestroyed() || isQuitting) return null;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+  return window;
+}
+
+function showWindowError(error: unknown): void {
+  if (!isQuitting) {
+    dialog.showErrorBox("0sec could not open", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function sendCommand(command: DesktopHostCommand): void {
+  void showMainWindow().then(async (window) => {
+    if (!window || !dashboard) return;
+    if (new URL(window.webContents.getURL()).pathname !== "/chat") {
+      await window.loadURL(`${dashboard.url}/chat`);
+    }
+    if (!window.isDestroyed()) window.webContents.send("osec:command", command);
+  }).catch(showWindowError);
+}
+
 function installApplicationMenu(): void {
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      { role: "appMenu" },
-      { role: "fileMenu" },
-      { role: "editMenu" },
-      { role: "viewMenu" },
-      { role: "windowMenu" },
-    ]),
-  );
+  const isMac = process.platform === "darwin";
+
+  const template: MenuItemConstructorOptions[] = [
+    // macOS application menu (About, Settings, Quit, etc.)
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              {
+                label: "Settings…",
+                accelerator: "CmdOrCtrl+,",
+                click: () => sendCommand("settings"),
+              },
+              { type: "separator" },
+              { role: "services" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" },
+            ],
+          } satisfies MenuItemConstructorOptions,
+        ]
+      : []),
+
+    // File: New Thread, Open Folder, Close/Quit
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Thread",
+          accelerator: "CmdOrCtrl+N",
+          click: () => sendCommand("new-thread"),
+        },
+        {
+          label: "Open Folder…",
+          accelerator: "CmdOrCtrl+O",
+          click: () => sendCommand("open-folder"),
+        },
+        { type: "separator" },
+        ...(isMac
+          ? [{ role: "close" } satisfies MenuItemConstructorOptions]
+          : [{ role: "quit" } satisfies MenuItemConstructorOptions]),
+      ],
+    } satisfies MenuItemConstructorOptions,
+
+    // Standard Edit
+    { role: "editMenu" } satisfies MenuItemConstructorOptions,
+
+    // View: Toggle Sidebar, reload, zoom, fullscreen
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Toggle Sidebar",
+          accelerator: "CmdOrCtrl+B",
+          click: () => sendCommand("toggle-sidebar"),
+        },
+        { type: "separator" },
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    } satisfies MenuItemConstructorOptions,
+
+    // Window (macOS gets a standard window menu; non-mac gets Settings here)
+    ...(isMac
+      ? [
+          { role: "windowMenu" } satisfies MenuItemConstructorOptions,
+        ]
+      : [
+          {
+            label: "Window",
+            submenu: [
+              {
+                label: "Settings",
+                accelerator: "CmdOrCtrl+,",
+                click: () => sendCommand("settings"),
+              },
+              { type: "separator" },
+              { role: "minimize" },
+              { role: "zoom" },
+            ],
+          } satisfies MenuItemConstructorOptions,
+        ]),
+
+    {
+      role: "help",
+      submenu: [
+        { label: "0sec Documentation", click: () => { void shell.openExternal("https://docs.0.security"); } },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function installPermissionPolicy(): void {
-  const canWriteClipboard = (contents: Electron.WebContents | null, permission: string, origin: string) =>
+  const canWriteClipboard = (
+    contents: Electron.WebContents | null,
+    permission: string,
+    origin: string,
+  ) =>
     permission === "clipboard-sanitized-write" &&
     contents === mainWindow?.webContents &&
     contents.isFocused() &&
     isTrustedDashboardUrl(origin);
-  session.defaultSession.setPermissionCheckHandler((contents, permission, origin) =>
-    canWriteClipboard(contents, permission, origin));
-  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) =>
-    callback(canWriteClipboard(contents, permission, details.requestingUrl)));
+  session.defaultSession.setPermissionCheckHandler(
+    (contents, permission, origin) =>
+      canWriteClipboard(contents, permission, origin),
+  );
+  session.defaultSession.setPermissionRequestHandler(
+    (contents, permission, callback, _details) =>
+      callback(canWriteClipboard(contents, permission, _details.requestingUrl)),
+  );
+}
+
+function isTrustedMainRenderer(event: Electron.IpcMainInvokeEvent): boolean {
+  return mainWindow !== null &&
+    event.sender === mainWindow.webContents &&
+    event.senderFrame === mainWindow.webContents.mainFrame &&
+    isTrustedDashboardUrl(event.senderFrame?.url ?? "");
 }
 
 function installIpcPolicy(): void {
   ipcMain.handle("osec:open-external", async (event, candidate: unknown) => {
-    if (!isTrustedDashboardUrl(event.senderFrame?.url ?? "") || typeof candidate !== "string" || !isExternalHttpsUrl(candidate)) {
+    if (
+      !isTrustedMainRenderer(event) ||
+      typeof candidate !== "string" ||
+      !isExternalHttpsUrl(candidate)
+    ) {
       throw new Error("Desktop denied an untrusted external navigation request.");
     }
     await shell.openExternal(candidate);
   });
+
+  ipcMain.handle("osec:choose-directory", async (event) => {
+    if (!isTrustedMainRenderer(event)) {
+      throw new Error("Desktop denied an untrusted directory picker request.");
+    }
+    if (!mainWindow) throw new Error("No main window available.");
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openDirectory"],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
 }
 
 async function startApplication(): Promise<void> {
+  if (isQuitting) return;
+  if (!app.isPackaged && process.platform === "darwin") {
+    app.dock?.setIcon(join(moduleDirectory, "../../build/icon.png"));
+  }
   installApplicationMenu();
   installPermissionPolicy();
   installIpcPolicy();
@@ -127,18 +321,18 @@ async function startApplication(): Promise<void> {
     cwd: sidecarWorkingDirectory(),
     packaged: app.isPackaged,
     resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-    projectRoot: app.isPackaged ? undefined : findWorkspaceRoot(process.env.OSEC_DESKTOP_ROOT ?? process.cwd()),
+    projectRoot: app.isPackaged
+      ? undefined
+      : findWorkspaceRoot(process.env.OSEC_DESKTOP_ROOT ?? process.cwd()),
   });
   dashboard = await startDashboardSidecar(invocation);
 
-  mainWindow = createWindow();
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
-  await mainWindow.loadURL(dashboard.url);
+  await showMainWindow();
 }
 
 async function stopApplication(): Promise<void> {
+  // Quit can arrive while the sidecar is still announcing readiness.
+  await applicationStart?.catch(() => undefined);
   const runningDashboard = dashboard;
   dashboard = null;
   await runningDashboard?.stop();
@@ -148,22 +342,40 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+    void showMainWindow().catch(showWindowError);
   });
 
-  app.whenReady().then(startApplication).catch((error: unknown) => {
+  app.whenReady().then(() => {
+    applicationStart = startApplication();
+    return applicationStart;
+  }).catch((error: unknown) => {
+    if (isQuitting) return;
     const message = error instanceof Error ? error.message : String(error);
     dialog.showErrorBox("0sec could not start", message);
-    app.exit(1);
+    void stopApplication().finally(() => app.exit(1));
   });
 
-  app.on("window-all-closed", () => app.quit());
+  // macOS: closing the last window keeps the app and sidecar alive.
+  // Non-mac: last-window close quits the app.
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+
+  // macOS dock/activation: re-create a window without spawning a second sidecar.
+  app.on("activate", () => {
+    void showMainWindow().catch(showWindowError);
+  });
+
   app.on("before-quit", (event) => {
-    if (isQuitting) return;
+    if (canQuit) return;
     event.preventDefault();
+    if (isQuitting) return;
     isQuitting = true;
-    void stopApplication().finally(() => app.quit());
+    void stopApplication().finally(() => {
+      canQuit = true;
+      app.quit();
+    });
   });
 }

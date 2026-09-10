@@ -340,6 +340,9 @@ importers:
 
   packages/desktop:
     devDependencies:
+      '@0sec/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@types/node':
         specifier: ^25.5.0
         version: 25.9.1

@@ -5,7 +5,20 @@ const ChatPage = lazy(async () => ({ default: (await import("@/pages/chat-page")
 const OperationsApp = lazy(async () => ({ default: (await import("@/pages/operations-app")).OperationsApp }));
 
 function LoadingWorkspace({ label }: { label: string }) {
-  return <div className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">{label}</div>;
+  return (
+    <div
+      role="status"
+      className="grid min-h-screen place-items-center text-sm"
+      style={{
+        colorScheme: "light dark",
+        background: "Canvas",
+        color: "CanvasText",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      }}
+    >
+      {label}
+    </div>
+  );
 }
 
 export function App() {
@@ -15,7 +28,7 @@ export function App() {
       <Route
         path="/chat"
         element={(
-          <Suspense fallback={<LoadingWorkspace label="Opening operator workspace…" />}>
+          <Suspense fallback={<LoadingWorkspace label="Opening 0sec…" />}>
             <ChatPage />
           </Suspense>
         )}

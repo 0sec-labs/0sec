@@ -9,6 +9,7 @@ import type {
   DesktopConsoleOperatorAnswer,
   DesktopConsoleRole,
   DesktopConsoleSession,
+  DesktopHostCommand,
 } from "@0sec/shared";
 import {
   cancelDesktopCodexDeviceAuth,
@@ -22,15 +23,28 @@ import {
   startDesktopCodexDeviceAuth,
 } from "@/api";
 import { cn } from "@/lib/utils";
-import { ArrowDown, ArrowUp, Check, ChevronRight, LoaderCircle, Square } from "lucide-react";
+import { usePersistentState } from "@/lib/use-persistent-state";
+import { useKeyboardShortcuts } from "@/lib/use-keyboard-shortcuts";
+import {
+  ArrowDown, ArrowUp, Check, ChevronRight, LoaderCircle, Square,
+  PanelLeft, Plus, Search, Settings, FileText, FolderOpen,
+  X, Sparkles,
+} from "lucide-react";
 import { ChatMessage } from "@/components/chat-message";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import brandMark from "../../../../assets/0sec-aperture-ink.svg";
+import "@/desktop.css";
 
+const EMPTY_EVENTS: readonly DesktopConsoleEvent[] = [];
+
+/* ─── Types ─────────────────────────────────────────────────── */
 type DetailView = "context" | "activity" | "evidence";
 
 type TranscriptEntry =
   | { id: string; kind: "user" | "assistant" | "notice" | "error"; text: string }
   | { id: string; kind: "tool"; callId?: string; name: string; arguments: unknown; result?: unknown; status: "running" | "complete" | "interrupted" };
 
+/* ─── Constants ─────────────────────────────────────────────── */
 const MODE_LABELS: Record<DesktopConsoleAutonomyMode, string> = {
   standard: "standard",
   recon: "recon",
@@ -38,9 +52,7 @@ const MODE_LABELS: Record<DesktopConsoleAutonomyMode, string> = {
   yolo: "yolo",
 };
 
-const RAIL_BUTTON = "rounded-lg border border-[#f7f5f2]/12 px-3 py-2 text-xs text-[#b6b2ad] transition hover:border-[#f7f5f2]/30 hover:text-[#f7f5f2] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b6b2ad] disabled:cursor-not-allowed disabled:opacity-45";
-const ACTION_BUTTON = "rounded-lg border border-[#f7f5f2] bg-[#f7f5f2] px-3 py-2 text-xs font-medium text-[#1a1815] transition hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b6b2ad] disabled:cursor-not-allowed disabled:opacity-45";
-
+/* ─── Helpers ────────────────────────────────────────────────── */
 function formatTarget(target: string): string {
   if (!target) return "target: not set";
   try {
@@ -122,8 +134,6 @@ function buildTranscript(events: readonly DesktopConsoleEvent[]): TranscriptEntr
         if (last?.kind === "assistant") last.text += suffix;
         else entries.push({ id: `assistant-final-${event.sequence}`, kind: "assistant", text: suffix });
       } else {
-        // A runtime can supply authoritative text that was never streamed.
-        // Replace this turn's provisional text, retaining its tool activity.
         let retained = turnStart;
         for (let index = turnStart; index < entries.length; index++) {
           const entry = entries[index];
@@ -151,59 +161,13 @@ function mergeEvents(current: readonly DesktopConsoleEvent[], incoming: readonly
   return [...current, ...incoming.filter((event) => !known.has(event.sequence))];
 }
 
-function Wordmark() {
-  return (
-    <div className="flex items-center gap-2 text-[13px] font-medium tracking-[-0.03em] text-[#f7f5f2]">
-      <span className="relative grid size-4 place-items-center border border-[#f7f5f2]/80 text-[10px] leading-none">
-        0
-        <span aria-hidden className="absolute h-px w-[1.3rem] rotate-[-55deg] bg-[#dc2626]" />
-      </span>
-      <span>0sec</span>
-    </div>
-  );
+/* ─── Logo ──────────────────────────────────────────────────── */
+function DesktopMark() {
+  return <span className="desktop-wordmark" role="img" aria-label="0sec" style={{ maskImage: `url("${brandMark}")` }} />;
 }
 
-function HeaderButton({ children, active = false, onClick }: { children: ReactNode; active?: boolean; onClick?: () => void }) {
-  return <button type="button" onClick={onClick} className={cn("rounded-md px-2.5 py-2 text-xs transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b6b2ad]", active ? "bg-white/5 text-[#f7f5f2]" : "text-[#a7a29c] hover:bg-white/5 hover:text-[#f7f5f2]")}>{children}</button>;
-}
-
-function Transcript({ entries, streaming }: { entries: readonly TranscriptEntry[]; streaming: boolean }) {
-  return (
-    <div className="mx-auto flex w-full max-w-[48rem] flex-col gap-7 px-5 pb-8 pt-10 sm:px-8" aria-label="Conversation">
-      {entries.map((entry, index) => {
-        if (entry.kind === "tool") {
-          return (
-            <details key={entry.id} className="group min-w-0 rounded-xl border border-white/8 bg-white/[0.02]">
-              <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 text-xs text-[#b6b2ad] focus-visible:outline-2 focus-visible:outline-[#b6b2ad]">
-                {entry.status === "running" ? <LoaderCircle aria-hidden className="size-3.5 motion-safe:animate-spin" /> : entry.status === "complete" ? <Check aria-hidden className="size-3.5" /> : <Square aria-hidden className="size-3.5" />}
-                <span className="min-w-0 flex-1 truncate font-mono text-[#e4e0dc]">{entry.name}</span>
-                <span>{entry.status === "complete" ? "Finished" : entry.status === "running" ? "Running" : "Interrupted"}</span>
-                <ChevronRight aria-hidden className="size-3.5 transition-transform group-open:rotate-90 motion-reduce:transition-none" />
-              </summary>
-              <div className="space-y-3 border-t border-white/8 px-4 py-3">
-                <div><p className="mb-2 text-[11px] text-[#a7a29c]">Input</p><pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-[#b6b2ad]">{formatPayload(entry.arguments)}</pre></div>
-                {entry.status === "complete" ? <div><p className="mb-2 text-[11px] text-[#a7a29c]">Result</p><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-[#b6b2ad]">{formatPayload(entry.result)}</pre></div> : null}
-              </div>
-            </details>
-          );
-        }
-        if (entry.kind === "notice") return <p key={entry.id} className="text-center text-xs leading-6 text-[#a7a29c]">{entry.text}</p>;
-        if (entry.kind === "error") return <p key={entry.id} role="alert" className="rounded-xl border border-[#f18181]/20 px-4 py-3 text-sm leading-6 text-[#f18181]">{entry.text}</p>;
-        if (entry.kind === "user") {
-          return <article key={entry.id} className="ml-auto max-w-[90%] rounded-2xl bg-white/[0.06] px-5 py-3"><span className="sr-only">You</span><p className="whitespace-pre-wrap break-words text-sm leading-7 text-[#f7f5f2]">{entry.text}</p></article>;
-        }
-        return (
-          <article key={entry.id} className="min-w-0 text-[#e4e0dc]">
-            <p className="mb-3 text-xs font-medium text-[#a7a29c]">0sec</p>
-            <ChatMessage text={entry.text} streaming={streaming && index === entries.length - 1} />
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function Composer({
+/* ─── Composer ───────────────────────────────────────────────── */
+function DesktopComposer({
   value,
   disabled,
   working,
@@ -223,11 +187,11 @@ function Composer({
     const input = inputRef.current;
     if (!input) return;
     input.style.height = "auto";
-    input.style.height = `${Math.min(input.scrollHeight, 224)}px`;
+    input.style.height = `${Math.min(input.scrollHeight, 200)}px`;
   }, [value]);
   return (
     <form
-      className="overflow-hidden rounded-2xl border border-[#f7f5f2]/15 bg-[#141414] shadow-sm transition-colors focus-within:border-[#f7f5f2]/35"
+      className="desktop-composer-form"
       onSubmit={(event) => {
         event.preventDefault();
         if (!disabled && !working) onSubmit();
@@ -248,21 +212,29 @@ function Composer({
         }}
         placeholder={working ? "Write your next message…" : "Ask a question, or describe what to investigate…"}
         rows={2}
-        className="min-h-20 w-full resize-none overflow-y-auto bg-transparent px-5 pt-4 pb-2 text-sm leading-7 text-[#f7f5f2] outline-none placeholder:text-[#8d8984] disabled:cursor-not-allowed"
+        className="desktop-composer-input"
       />
-      <div className="flex items-center justify-between gap-3 px-4 pb-3">
-        <p className="text-[11px] text-[#8d8984]"><span className="hidden sm:inline">Enter to send · </span>Shift+Enter for a new line</p>
-        {working ? (
-          <button type="button" aria-label="Stop response" className={RAIL_BUTTON} onClick={onCancel}><Square aria-hidden className="size-4" /></button>
-        ) : (
-          <button type="submit" aria-label="Send message" className={ACTION_BUTTON} disabled={disabled || !value.trim()}><ArrowUp aria-hidden className="size-4" /></button>
-        )}
+      <div className="desktop-composer-toolbar">
+        <span className="desktop-composer-hint"><span className="hidden sm:inline">Enter to send · </span>Shift+Enter for a new line</span>
+        <div className="desktop-composer-actions">
+          {working ? (
+            <button type="button" aria-label="Stop response" className="desktop-btn" onClick={onCancel}>
+              <Square aria-hidden className="size-3.5" />
+              <span>Stop</span>
+            </button>
+          ) : (
+            <button type="submit" aria-label="Send message" className="desktop-btn desktop-send" disabled={disabled || !value.trim()}>
+              <ArrowUp aria-hidden className="size-3.5" />
+            </button>
+          )}
+        </div>
       </div>
     </form>
   );
 }
 
-function DecisionPanel({ decision, busy, onResolve }: { decision: DesktopConsoleDecision; busy: boolean; onResolve: (response: DesktopConsoleDecisionResponse) => Promise<void> }) {
+/* ─── Decision panel ──────────────────────────────────────────── */
+function DesktopDecisionPanel({ decision, busy, onResolve }: { decision: DesktopConsoleDecision; busy: boolean; onResolve: (response: DesktopConsoleDecisionResponse) => Promise<void> }) {
   const [answers, setAnswers] = useState<Record<string, DesktopConsoleOperatorAnswer>>({});
   const respond = (approve: boolean) => {
     const response: DesktopConsoleDecisionResponse = decision.kind === "operator-question"
@@ -272,62 +244,90 @@ function DecisionPanel({ decision, busy, onResolve }: { decision: DesktopConsole
   };
 
   return (
-    <section className="border border-[#d7b56d]/35 p-4">
-      <p className="text-[11px] text-[#d7b56d]">approval required</p>
-      <h2 className="mt-2 text-sm font-medium text-[#f7f5f2]">{decision.title}</h2>
-      <p className="mt-2 text-xs leading-5 text-[#aaa59f]">{decision.detail}</p>
-      {decision.call ? <pre className="mt-3 max-h-36 overflow-auto border-l border-[#f7f5f2]/18 pl-3 text-[11px] leading-5 text-[#aaa59f]">{decision.call.name} {formatPayload(decision.call.arguments)}</pre> : null}
-      {decision.requestedUrls?.map((url) => <p className="mt-2 break-all font-mono text-[11px] text-[#d7b56d]" key={url}>{url}</p>)}
-      {decision.requestedPath ? <p className="mt-2 break-all font-mono text-[11px] text-[#d7b56d]">{decision.requestedPath}</p> : null}
+    <section className="desktop-decision-panel">
+      <p className="desktop-decision-label">approval required</p>
+      <h2 className="desktop-decision-title">{decision.title}</h2>
+      <p className="desktop-decision-detail">{decision.detail}</p>
+      {decision.call ? <pre className="desktop-decision-call">{decision.call.name} {formatPayload(decision.call.arguments)}</pre> : null}
+      {decision.requestedUrls?.map((url) => <p className="desktop-decision-url" key={url}>{url}</p>)}
+      {decision.requestedPath ? <p className="desktop-decision-url">{decision.requestedPath}</p> : null}
       {decision.questions?.map((question) => {
         const answer = answers[question.header] ?? { header: question.header };
         return (
-          <div className="mt-4 border-t border-[#f7f5f2]/10 pt-3" key={question.header}>
-            <p className="text-xs text-[#f7f5f2]">{question.header}</p>
-            <p className="mt-1 text-xs leading-5 text-[#aaa59f]">{question.question}</p>
-            {question.options?.length ? <div className="mt-3 flex flex-wrap gap-2">{question.options.map((option) => {
-              const selected = answer.selectedLabels?.includes(option.label) ?? false;
-              return <button
-                type="button"
-                key={option.label}
-                onClick={() => setAnswers((current) => {
-                  const prior = current[question.header] ?? { header: question.header };
-                  const labels = new Set(prior.selectedLabels ?? []);
-                  if (labels.has(option.label)) labels.delete(option.label);
-                  else if (question.multiSelect) labels.add(option.label);
-                  else {
-                    labels.clear();
-                    labels.add(option.label);
-                  }
-                  return { ...current, [question.header]: { ...prior, selectedLabels: [...labels] } };
+          <div className="desktop-question" key={question.header}>
+            <p className="desktop-question-header">{question.header}</p>
+            <p className="desktop-question-text">{question.question}</p>
+            {question.options?.length ? (
+              <div className="desktop-question-options">
+                {question.options.map((option) => {
+                  const selected = answer.selectedLabels?.includes(option.label) ?? false;
+                  return (
+                    <button
+                      type="button"
+                      key={option.label}
+                      onClick={() => setAnswers((current) => {
+                        const prior = current[question.header] ?? { header: question.header };
+                        const labels = new Set(prior.selectedLabels ?? []);
+                        if (labels.has(option.label)) labels.delete(option.label);
+                        else if (question.multiSelect) labels.add(option.label);
+                        else { labels.clear(); labels.add(option.label); }
+                        return { ...current, [question.header]: { ...prior, selectedLabels: [...labels] } };
+                      })}
+                      className={cn("desktop-question-option", selected && "desktop-question-option-selected")}
+                    >
+                      {option.label}
+                    </button>
+                  );
                 })}
-                className={cn(RAIL_BUTTON, selected && "border-[#d7b56d]/60 text-[#f7f5f2]")}
-              >{option.label}</button>;
-            })}</div> : null}
-            {question.allowCustom ? <input value={answer.customText ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.header]: { ...answer, customText: event.target.value } }))} className="mt-3 h-8 w-full border border-[#f7f5f2]/12 bg-transparent px-2 text-xs text-[#f7f5f2] outline-none" placeholder="optional context" /> : null}
+              </div>
+            ) : null}
+            {question.allowCustom ? (
+              <input
+                value={answer.customText ?? ""}
+                onChange={(event) => setAnswers((current) => ({
+                  ...current,
+                  [question.header]: { ...answer, customText: event.target.value }
+                }))}
+                className="desktop-question-input"
+                placeholder="optional context"
+              />
+            ) : null}
           </div>
         );
       })}
-      <div className="mt-4 flex justify-end gap-2"><button type="button" className={RAIL_BUTTON} disabled={busy} onClick={() => respond(false)}>decline</button><button type="button" className={ACTION_BUTTON} disabled={busy} onClick={() => respond(true)}>{decision.kind === "operator-question" ? "submit" : "approve"}</button></div>
+      <div className="desktop-decision-actions">
+        <button type="button" className="desktop-btn" disabled={busy} onClick={() => respond(false)}>Decline</button>
+        <button type="button" className="desktop-btn desktop-btn-primary" disabled={busy} onClick={() => respond(true)}>
+          {decision.kind === "operator-question" ? "Submit" : "Approve"}
+        </button>
+      </div>
     </section>
   );
 }
 
-function CodexConnection({ status, busy, onStart, onCancel }: { status: DesktopCodexAuthStatus | null; busy: boolean; onStart: () => Promise<void>; onCancel: () => Promise<void> }) {
+/* ─── Codex connection section ────────────────────────────────── */
+function DesktopCodexSection({ status, busy, onStart, onCancel }: { status: DesktopCodexAuthStatus | null; busy: boolean; onStart: () => Promise<void>; onCancel: () => Promise<void> }) {
   if (!status || status.phase === "connected") return null;
   const running = status.phase === "running";
   return (
-    <section className="border-t border-[#f7f5f2]/10 pt-4">
-      <p className="text-xs text-[#f7f5f2]">ChatGPT Codex</p>
-      <p className="mt-1 text-[11px] leading-5 text-[#8d8984]">Device sign-in stays in the local daemon. Credentials never enter this window.</p>
-      {status.lines.length > 0 ? <pre className="mt-3 max-h-28 overflow-auto text-[11px] leading-5 text-[#aaa59f]">{status.lines.join("\n")}</pre> : null}
-      {status.phase === "failed" ? <p className="mt-2 text-[11px] text-[#f18181]">{status.message}</p> : null}
-      <div className="mt-3">{running ? <button className={RAIL_BUTTON} disabled={busy} onClick={() => void onCancel()}>cancel sign-in</button> : <button className={RAIL_BUTTON} disabled={busy} onClick={() => void onStart()}>connect Codex</button>}</div>
-    </section>
+    <div className="desktop-codex-section">
+      <p className="desktop-codex-label">ChatGPT Codex</p>
+      <p className="desktop-codex-desc">Device sign-in stays in the local daemon. Credentials never enter this window.</p>
+      {status.lines.length > 0 ? <pre className="desktop-codex-output">{status.lines.join("\n")}</pre> : null}
+      {status.phase === "failed" ? <p className="desktop-codex-error">{status.message}</p> : null}
+      <div className="mt-2">
+        {running ? (
+          <button className="desktop-btn" disabled={busy} onClick={() => void onCancel()}>Cancel sign-in</button>
+        ) : (
+          <button className="desktop-btn" disabled={busy} onClick={() => void onStart()}>Connect Codex</button>
+        )}
+      </div>
+    </div>
   );
 }
 
-function Details({
+/* ─── Inspector panel ──────────────────────────────────────────── */
+function DesktopInspector({
   open,
   view,
   session,
@@ -356,97 +356,444 @@ function Details({
   onConnect: () => Promise<void>;
   onCancelConnect: () => Promise<void>;
 }) {
-  if (!open) return null;
   return (
-    <aside className="absolute inset-y-0 right-0 z-20 w-full max-w-sm overflow-y-auto border-l border-[#f7f5f2]/12 bg-[#0a0a0a] px-5 py-4 sm:w-[22rem]">
-      <div className="flex items-center justify-between"><p className="text-[11px] text-[#f7f5f2]">details</p><button className="text-[11px] text-[#8d8984] hover:text-[#f7f5f2]" onClick={onClose}>close</button></div>
-      <div className="mt-5 flex gap-4 border-b border-[#f7f5f2]/10 pb-2">{(["context", "activity", "evidence"] as const).map((tab) => <HeaderButton key={tab} active={view === tab} onClick={() => onView(tab)}>{tab}</HeaderButton>)}</div>
-      <div className="mt-5 space-y-5">
-        {pending.map((decision) => <DecisionPanel key={decision.id} decision={decision} busy={busy} onResolve={(response) => onResolve(decision, response)} />)}
-        {view === "context" ? <>
-          <dl className="space-y-4 text-xs"><div><dt className="text-[#8d8984]">target</dt><dd className="mt-1 break-all font-mono text-[#e4e0dc]">{session?.target || "not set"}</dd></div><div className="flex justify-between"><dt className="text-[#8d8984]">mode</dt><dd className="text-[#e4e0dc]">{session ? MODE_LABELS[session.autonomyMode] : "standard"}</dd></div><div className="flex justify-between"><dt className="text-[#8d8984]">approvals</dt><dd className="text-[#e4e0dc]">{pending.length}</dd></div></dl>
-          <CodexConnection status={auth} busy={busy} onStart={onConnect} onCancel={onCancelConnect} />
-        </> : null}
-        {view === "activity" ? (activity.length === 0 ? <p className="text-xs leading-5 text-[#8d8984]">Activity appears when a turn begins, a tool runs, or an approval is needed.</p> : activity.map((event) => <div key={event.sequence} className="border-l border-[#f7f5f2]/15 pl-3"><p className="text-xs text-[#e4e0dc]">{eventLabel(event)}</p><p className="mt-1 text-[10px] text-[#726f6b]">{new Date(event.occurredAt).toLocaleTimeString()}</p></div>)) : null}
-        {view === "evidence" ? (evidence.length === 0 ? <p className="text-xs leading-5 text-[#8d8984]">Evidence-producing tool results appear here. Findings remain in the Findings route.</p> : evidence.map((event) => <article key={event.sequence} className="border-l border-[#f7f5f2]/15 pl-3"><p className="font-mono text-[11px] text-[#e4e0dc]">{event.call.name}</p><pre className="mt-2 max-h-40 overflow-auto text-[11px] leading-5 text-[#aaa59f]">{formatPayload(event.result)}</pre></article>)) : null}
+    <aside className={cn("desktop-inspector", open && "desktop-inspector-open")} inert={!open} aria-hidden={!open}>
+      <div className="desktop-inspector-inner">
+        <div className="desktop-inspector-header">
+          <span className="desktop-inspector-header-label">Inspector</span>
+          <button className="desktop-btn-icon" aria-label="Close inspector" onClick={onClose}>
+            <X aria-hidden className="size-3.5" />
+          </button>
+        </div>
+        <div className="desktop-inspector-tabs" role="tablist">
+          {(["context", "activity", "evidence"] as const).map((tab) => (
+            <button
+              key={tab}
+              role="tab"
+              aria-selected={view === tab}
+              className={cn("desktop-inspector-tab", view === tab && "desktop-inspector-tab-active")}
+              onClick={() => onView(tab)}
+            >
+              {tab === "context" ? "Context" : tab === "activity" ? "Activity" : "Evidence"}
+            </button>
+          ))}
+        </div>
+        <div className="desktop-inspector-body">
+          {pending.map((decision) => (
+            <div key={decision.id} className="mb-4">
+              <DesktopDecisionPanel decision={decision} busy={busy} onResolve={(response) => onResolve(decision, response)} />
+            </div>
+          ))}
+          {view === "context" ? (
+            <>
+              <dl className="desktop-inspector-dl">
+                <div>
+                  <dt className="desktop-inspector-dt">Target</dt>
+                  <dd className={cn("desktop-inspector-dd", "desktop-inspector-dd-mono")}>{session?.target || "not set"}</dd>
+                </div>
+                <div className="desktop-inspector-row">
+                  <dt className="desktop-inspector-dt">Mode</dt>
+                  <dd className="desktop-inspector-dd">{session ? MODE_LABELS[session.autonomyMode] : "standard"}</dd>
+                </div>
+                <div className="desktop-inspector-row">
+                  <dt className="desktop-inspector-dt">Approvals</dt>
+                  <dd className="desktop-inspector-dd">{pending.length}</dd>
+                </div>
+              </dl>
+              <DesktopCodexSection status={auth} busy={busy} onStart={onConnect} onCancel={onCancelConnect} />
+            </>
+          ) : view === "activity" ? (
+            activity.length === 0 ? (
+              <p className="desktop-inspector-empty">Activity appears when a turn begins, a tool runs, or an approval is needed.</p>
+            ) : (
+              activity.map((event) => (
+                <div key={event.sequence} className="desktop-inspector-event">
+                  <p className="desktop-inspector-event-label">{eventLabel(event)}</p>
+                  <p className="desktop-inspector-event-time">{new Date(event.occurredAt).toLocaleTimeString()}</p>
+                </div>
+              ))
+            )
+          ) : (
+            evidence.length === 0 ? (
+              <p className="desktop-inspector-empty">Evidence-producing tool results appear here. Findings remain in the Findings route.</p>
+            ) : (
+              evidence.map((event) => (
+                <article key={event.sequence} className="desktop-inspector-evidence">
+                  <p className="desktop-inspector-evidence-name">{event.call.name}</p>
+                  <pre className="desktop-inspector-evidence-payload">{formatPayload(event.result)}</pre>
+                </article>
+              ))
+            )
+          )}
+        </div>
       </div>
     </aside>
   );
 }
 
-function SessionPanel({ sessions, activeId, open, onClose, onSelect, onNew, onScoped }: { sessions: readonly DesktopConsoleSession[]; activeId: string | null; open: boolean; onClose: () => void; onSelect: (id: string) => void; onNew: () => void; onScoped: () => void }) {
-  if (!open) return null;
+/* ─── Sidebar ─────────────────────────────────────────────────── */
+function DesktopSidebar({
+  sessions,
+  activeId,
+  collapsed,
+  draftMap,
+  titles,
+  busy,
+  threadSearch,
+  onToggle,
+  onSelect,
+  onNew,
+  onScoped,
+  onSettings,
+  onSearchChange,
+}: {
+  sessions: readonly DesktopConsoleSession[];
+  activeId: string | null;
+  collapsed: boolean;
+  draftMap: Record<string, string>;
+  titles: Record<string, string>;
+  busy: boolean;
+  threadSearch: string;
+  onToggle: () => void;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+  onScoped: () => void;
+  onSettings: () => void;
+  onSearchChange: (value: string) => void;
+}) {
+  const filtered = useMemo(() => {
+    if (!threadSearch.trim()) return sessions;
+    const q = threadSearch.toLowerCase();
+    return sessions.filter((s) => {
+      const target = formatTarget(s.target).toLowerCase();
+      const draft = (draftMap[s.id] ?? "").toLowerCase();
+      return target.includes(q) || (titles[s.id] ?? "").toLowerCase().includes(q) || draft.includes(q);
+    });
+  }, [sessions, threadSearch, draftMap, titles]);
+
   return (
-    <aside className="absolute inset-y-0 left-0 z-20 w-full max-w-sm overflow-y-auto border-r border-[#f7f5f2]/12 bg-[#0a0a0a] px-5 py-4 sm:w-[22rem]">
-      <div className="flex items-center justify-between"><Wordmark /><button className="text-[11px] text-[#8d8984] hover:text-[#f7f5f2]" onClick={onClose}>close</button></div>
-      <div className="mt-6 flex gap-2"><button className={ACTION_BUTTON} onClick={onNew}>new chat</button><button className={RAIL_BUTTON} onClick={onScoped}>new scoped engagement</button></div>
-      <div className="mt-6 border-t border-[#f7f5f2]/10 pt-4">
-        <p className="mb-3 text-[10px] tracking-[0.12em] text-[#726f6b] uppercase">live sessions</p>
-        {sessions.length === 0 ? <p className="text-xs leading-5 text-[#8d8984]">No live sessions.</p> : sessions.map((session) => <button key={session.id} type="button" onClick={() => { onSelect(session.id); onClose(); }} className={cn("block w-full rounded-lg px-3 py-3 text-left transition-colors", session.id === activeId ? "bg-[#f7f5f2]/[0.07]" : "hover:bg-[#f7f5f2]/[0.04]")}><p className="truncate text-xs text-[#e4e0dc]">{formatTarget(session.target)}</p><p className="mt-1 text-[11px] text-[#a7a29c]">{MODE_LABELS[session.autonomyMode]} · {session.status}</p></button>)}
+    <aside className={cn("desktop-sidebar", collapsed && "desktop-sidebar-collapsed")} inert={collapsed} aria-hidden={collapsed}>
+      <div className="desktop-sidebar-header">
+        <DesktopMark />
+        <div className="desktop-sidebar-header-actions">
+          <button
+            className="desktop-btn-icon"
+            aria-label="Toggle sidebar"
+            onClick={onToggle}
+          >
+            <PanelLeft aria-hidden className="size-3.5" />
+          </button>
+        </div>
+      </div>
+      <div className="desktop-sidebar-new">
+        <button className="desktop-sidebar-action" onClick={onNew} disabled={busy}>
+          <Plus aria-hidden className="size-3.5" />
+          <span>New thread</span>
+          <span className="desktop-kbd" style={{ marginLeft: "auto" }}>
+            {navigator.platform?.includes("Mac") ? "⌘" : "Ctrl"}+N
+          </span>
+        </button>
+        <button className="desktop-sidebar-action" onClick={onScoped} disabled={busy}>
+          <FolderOpen aria-hidden className="size-3.5" />
+          <span>Choose target</span>
+        </button>
+      </div>
+      <div className="desktop-sidebar-search">
+        <div style={{ position: "relative" }}>
+          <Search
+            aria-hidden
+            style={{
+              position: "absolute",
+              left: "6px",
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: "12px",
+              height: "12px",
+              color: "var(--desktop-sidebar-muted)",
+              pointerEvents: "none",
+            }}
+          />
+          <input
+            className="desktop-sidebar-search-input"
+            style={{ paddingLeft: "22px" }}
+            placeholder="Filter threads…"
+            value={threadSearch}
+            onChange={(e) => onSearchChange(e.target.value)}
+            aria-label="Filter threads"
+          />
+        </div>
+      </div>
+      <nav className="desktop-sidebar-threads" aria-label="Threads">
+        {filtered.length === 0 ? (
+          <p className="desktop-sidebar-empty">
+            {threadSearch ? "No matching threads" : "No threads yet"}
+          </p>
+        ) : (
+          filtered.map((session) => {
+            const label = titles[session.id] || (session.target ? formatTarget(session.target) : "New thread");
+            // First few chars of the active draft as a hint
+            const draftPreview = activeId === session.id
+              ? undefined
+              : draftMap[session.id]?.slice(0, 32).trim();
+            return (
+              <button
+                key={session.id}
+                aria-current={session.id === activeId ? "page" : undefined}
+                title={label}
+                className={cn(
+                  "desktop-thread-entry",
+                  session.id === activeId && "desktop-thread-entry-active",
+                )}
+                onClick={() => onSelect(session.id)}
+              >
+                <span className="desktop-thread-entry-thumb">
+                  <FileText aria-hidden className="size-3" />
+                </span>
+                <span className="desktop-thread-entry-info">
+                  <span className="desktop-thread-entry-name">
+                    {label}
+                  </span>
+                  <span className="desktop-thread-entry-meta">
+                    {MODE_LABELS[session.autonomyMode]}
+                    {draftPreview ? ` · ${draftPreview}…` : ""}
+                  </span>
+                </span>
+              </button>
+            );
+          })
+        )}
+      </nav>
+      <div className="desktop-sidebar-footer">
+        <button className="desktop-sidebar-action" onClick={onSettings}>
+          <Settings aria-hidden className="size-3.5" />
+          <span>Settings</span>
+          <span className="desktop-kbd" style={{ marginLeft: "auto" }}>
+            {navigator.platform?.includes("Mac") ? "⌘" : "Ctrl"}+,
+          </span>
+        </button>
+        <Link
+          className="desktop-sidebar-action"
+          to="/dashboard"
+          style={{ textDecoration: "none" }}
+        >
+          <Sparkles aria-hidden className="size-3.5" />
+          <span>Operations</span>
+        </Link>
       </div>
     </aside>
   );
 }
 
-function ScopedEngagement({ open, busy, onClose, onCreate }: { open: boolean; busy: boolean; onClose: () => void; onCreate: (input: { target: string; role: DesktopConsoleRole; autonomyMode: DesktopConsoleAutonomyMode }) => Promise<void> }) {
-  const [target, setTarget] = useState("");
+function DesktopDialog({ open, title, busy = false, onClose, children }: {
+  open: boolean;
+  title: string;
+  busy?: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!next && !busy) onClose(); }}>
+      <DialogContent
+        ref={contentRef}
+        className="desktop-dialog"
+        showCloseButton={false}
+        aria-describedby={undefined}
+        onOpenAutoFocus={(event) => {
+          returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          const input = contentRef.current?.querySelector<HTMLElement>("[data-initial-focus]");
+          if (input) { event.preventDefault(); input.focus(); }
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          const previous = returnFocusRef.current;
+          if (previous?.isConnected && !previous.closest("[inert]")) previous.focus();
+          else document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message 0sec"]')?.focus();
+        }}
+      >
+        <div className="desktop-dialog-header">
+          <DialogTitle className="desktop-dialog-title">{title}</DialogTitle>
+          <button type="button" className="desktop-dialog-close" aria-label="Close" disabled={busy} onClick={onClose}>
+            <X aria-hidden size={16} />
+          </button>
+        </div>
+        {children}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ─── Scoped engagement dialog ─────────────────────────────────── */
+function DesktopScopedDialog({ open, busy, onClose, onCreate, initialTarget, error }: {
+  open: boolean;
+  busy: boolean;
+  onClose: () => void;
+  onCreate: (input: { target: string; role: DesktopConsoleRole; autonomyMode: DesktopConsoleAutonomyMode }) => Promise<void>;
+  initialTarget: string;
+  error: string | null;
+}) {
+  const [target, setTarget] = useState(initialTarget);
   const [role, setRole] = useState<DesktopConsoleRole>("audit");
   const [mode, setMode] = useState<DesktopConsoleAutonomyMode>("standard");
-  if (!open) return null;
+  const [picking, setPicking] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) { setTarget(initialTarget); setPickerError(null); }
+  }, [open, initialTarget]);
+
+  const chooseDirectory = async () => {
+    if (!window.osecDesktop || picking) return;
+    setPicking(true);
+    setPickerError(null);
+    try {
+      const selected = await window.osecDesktop.chooseDirectory();
+      if (selected !== null) setTarget(selected);
+    } catch (cause) {
+      setPickerError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPicking(false);
+    }
+  };
+
   return (
-    <div className="absolute inset-0 z-30 grid place-items-center bg-black/70 p-5">
-      <form className="w-full max-w-md border border-[#f7f5f2]/20 bg-[#0a0a0a] p-5" onSubmit={(event) => { event.preventDefault(); void onCreate({ target, role, autonomyMode: mode }); }}>
-        <div className="flex items-center justify-between"><p className="text-sm text-[#f7f5f2]">new scoped engagement</p><button type="button" className="text-[11px] text-[#8d8984] hover:text-[#f7f5f2]" onClick={onClose}>close</button></div>
-        <label className="mt-5 block text-[10px] tracking-[0.12em] text-[#726f6b] uppercase" htmlFor="engagement-target">target or local path</label>
-        <input id="engagement-target" autoFocus value={target} onChange={(event) => setTarget(event.target.value)} placeholder="https://app.example.com or /workspace/repository" className="mt-2 h-10 w-full border border-[#f7f5f2]/15 bg-transparent px-3 text-sm text-[#f7f5f2] outline-none placeholder:text-[#726f6b]" />
-        <div className="mt-5 grid grid-cols-2 gap-5"><fieldset><legend className="text-[10px] tracking-[0.12em] text-[#726f6b] uppercase">role</legend><div className="mt-2 flex flex-wrap gap-2">{(["audit", "review", "discovery"] as const).map((candidate) => <button key={candidate} type="button" className={cn(RAIL_BUTTON, role === candidate && "border-[#f7f5f2]/50 text-[#f7f5f2]")} onClick={() => setRole(candidate)}>{candidate}</button>)}</div></fieldset><fieldset><legend className="text-[10px] tracking-[0.12em] text-[#726f6b] uppercase">autonomy</legend><div className="mt-2 flex flex-wrap gap-2">{(["standard", "recon", "copilot", "yolo"] as const).map((candidate) => <button key={candidate} type="button" className={cn(RAIL_BUTTON, mode === candidate && "border-[#f7f5f2]/50 text-[#f7f5f2]")} onClick={() => setMode(candidate)}>{MODE_LABELS[candidate]}</button>)}</div></fieldset></div>
-        <p className="mt-5 text-[11px] leading-5 text-[#8d8984]">Standard mode asks before effectful tools. Network and filesystem scope remain session-only.</p>
-        <div className="mt-5 flex justify-end"><button className={ACTION_BUTTON} disabled={busy}>start engagement</button></div>
+    <DesktopDialog open={open} title="New scoped thread" busy={busy || picking} onClose={onClose}>
+      <form onSubmit={(event) => {
+        event.preventDefault();
+        if (!busy && !picking && target.trim()) void onCreate({ target: target.trim(), role, autonomyMode: mode });
+      }}>
+        <label className="desktop-field-label" htmlFor="engagement-target">Target or local path</label>
+        <div className="desktop-target-field">
+          <input
+            data-initial-focus
+            id="engagement-target"
+            value={target}
+            onChange={(event) => setTarget(event.target.value)}
+            placeholder="https://app.example.com or /path/to/project"
+            className="desktop-field-input"
+            disabled={busy || picking}
+          />
+          {window.osecDesktop && (
+            <button type="button" className="desktop-btn" aria-label="Browse folder" disabled={busy || picking} onClick={() => void chooseDirectory()}>
+              <FolderOpen aria-hidden size={16} />
+            </button>
+          )}
+        </div>
+        <div className="desktop-target-options">
+          <label className="desktop-field-label">
+            Role
+            <select className="desktop-field-input" value={role} disabled={busy} onChange={(event) => setRole(event.target.value as DesktopConsoleRole)}>
+              {(["audit", "review", "discovery", "attack", "verify", "report"] as const).map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
+          </label>
+          <label className="desktop-field-label">
+            Autonomy
+            <select className="desktop-field-input" value={mode} disabled={busy} onChange={(event) => setMode(event.target.value as DesktopConsoleAutonomyMode)}>
+              {(["standard", "recon", "copilot", "yolo"] as const).map((value) => (
+                <option key={value} value={value}>{MODE_LABELS[value]}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="desktop-field-hint">
+          Choosing a folder sets context, not permission. Network and filesystem access remain subject to scope checks.
+        </p>
+        {(pickerError || error) && <p role="alert" className="desktop-entry-error">{pickerError || error}</p>}
+        <div className="desktop-dialog-footer">
+          <button type="button" className="desktop-btn" onClick={onClose} disabled={busy || picking}>Cancel</button>
+          <button type="submit" className="desktop-btn desktop-btn-primary" disabled={busy || picking || !target.trim()}>Create thread</button>
+        </div>
       </form>
-    </div>
+    </DesktopDialog>
   );
 }
 
+/* ─── Settings dialog ──────────────────────────────────────────── */
+function DesktopSettingsDialog({ open, onClose, auth, busy, onConnect, onCancelConnect }: {
+  open: boolean;
+  onClose: () => void;
+  auth: DesktopCodexAuthStatus | null;
+  busy: boolean;
+  onConnect: () => Promise<void>;
+  onCancelConnect: () => Promise<void>;
+}) {
+  const modifier = navigator.platform.includes("Mac") ? "⌘" : "Ctrl";
+  return (
+    <DesktopDialog open={open} title="Settings" onClose={onClose}>
+      <dl className="desktop-inspector-dl">
+        <div className="desktop-inspector-row">
+          <dt className="desktop-inspector-dt">Appearance</dt>
+          <dd className="desktop-inspector-dd">Follows system</dd>
+        </div>
+        <div className="desktop-inspector-row">
+          <dt className="desktop-inspector-dt">Provider</dt>
+          <dd className="desktop-inspector-dd">{auth?.phase === "connected" ? "ChatGPT Codex · Connected" : auth?.message || "Provider status unavailable"}</dd>
+        </div>
+      </dl>
+      <DesktopCodexSection status={auth} busy={busy} onStart={onConnect} onCancel={onCancelConnect} />
+      <p className="desktop-field-hint">{modifier}+N new thread · {modifier}+O open folder · {modifier}+B sidebar</p>
+      <p className="desktop-field-hint">Development build. Threads stay available while the local sidecar is running; quitting ends this session history.</p>
+      <div className="desktop-dialog-footer">
+        <button type="button" className="desktop-btn" onClick={onClose}>Done</button>
+      </div>
+    </DesktopDialog>
+  );
+}
+
+/* ─── Main ChatPage ────────────────────────────────────────────── */
 export function ChatPage() {
   const [sessions, setSessions] = useState<DesktopConsoleSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [events, setEvents] = useState<DesktopConsoleEvent[]>([]);
-  const [draft, setDraft] = useState("");
+  const visibleEvents = events[0]?.sessionId === activeId ? events : EMPTY_EVENTS;
+  const [drafts, setDrafts] = usePersistentState<Record<string, string>>("0sec:drafts", {});
+  const [threadTitles, setThreadTitles] = usePersistentState<Record<string, string>>("0sec:thread-titles", {});
+  const draft = activeId ? drafts[activeId] ?? "" : "";
+  const creatingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [sessionsOpen, setSessionsOpen] = useState(false);
-  const [scopedOpen, setScopedOpen] = useState(false);
   const [detailView, setDetailView] = useState<DetailView>("context");
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [scopedOpen, setScopedOpen] = useState(false);
+  const [scopedTarget, setScopedTarget] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState("0sec:sidebar:collapsed", window.matchMedia("(max-width: 760px)").matches);
+  const [threadSearch, setThreadSearch] = useState("");
   const [codexAuth, setCodexAuth] = useState<DesktopCodexAuthStatus | null>(null);
   const cursorRef = useRef(0);
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
   const followOutputRef = useRef(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const isNativeMacOS = window.osecDesktop?.platform === "darwin";
 
   const activeSession = sessions.find((session) => session.id === activeId) ?? null;
 
   const applySession = useCallback((session: DesktopConsoleSession) => {
     setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
-    setActiveId(session.id);
   }, []);
 
   const createSession = useCallback(async (input: { target?: string; role?: DesktopConsoleRole; autonomyMode?: DesktopConsoleAutonomyMode } = {}) => {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setSubmitting(true);
     setError(null);
     try {
       const session = await createDesktopConsoleSession(input);
       applySession(session);
+      setActiveId(session.id);
       setScopedOpen(false);
-      setSessionsOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSubmitting(false);
+      creatingRef.current = false;
     }
   }, [applySession]);
 
+  /* Initial session load */
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -465,6 +812,7 @@ export function ChatPage() {
     return () => { active = false; };
   }, [createSession]);
 
+  /* Codex auth initial + polling */
   const refreshCodexAuth = useCallback(async () => {
     setCodexAuth(await getDesktopCodexAuthStatus());
   }, []);
@@ -476,6 +824,7 @@ export function ChatPage() {
     return () => clearInterval(timer);
   }, [codexAuth?.phase, refreshCodexAuth]);
 
+  /* Event polling per active session */
   useEffect(() => {
     if (!activeId) {
       cursorRef.current = 0;
@@ -497,6 +846,11 @@ export function ChatPage() {
         if (!active || incoming.length === 0) return;
         cursorRef.current = incoming.at(-1)?.sequence ?? cursorRef.current;
         setEvents((current) => mergeEvents(current, incoming));
+        const firstMessage = incoming.find((event) => event.type === "user");
+        if (firstMessage?.type === "user") {
+          const title = firstMessage.text.trim().replace(/\s+/g, " ").slice(0, 80);
+          setThreadTitles((current) => current[activeId] ? current : { ...current, [activeId]: title });
+        }
         const updates = new Map<string, DesktopConsoleSession>();
         for (const event of incoming) {
           if (event.type === "session") updates.set(event.session.id, event.session);
@@ -511,27 +865,28 @@ export function ChatPage() {
     };
     void poll();
     return () => { active = false; clearTimeout(timer); };
-  }, [activeId]);
+  }, [activeId, setThreadTitles]);
 
+  /* Pending decisions */
   const pendingDecisions = useMemo(() => {
     const pending = new Map<string, DesktopConsoleDecision>();
-    for (const event of events) {
+    for (const event of visibleEvents) {
       if (event.type === "decision") pending.set(event.decision.id, event.decision);
       if (event.type === "decision-resolved") pending.delete(event.decisionId);
     }
     return [...pending.values()];
-  }, [events]);
+  }, [visibleEvents]);
 
-  useEffect(() => { if (pendingDecisions.length > 0) setDetailsOpen(true); }, [pendingDecisions.length]);
+  useEffect(() => { if (pendingDecisions.length > 0) setInspectorOpen(true); }, [pendingDecisions.length]);
 
-  const transcript = useMemo(() => buildTranscript(events), [events]);
-  const activity = useMemo(() => events.filter((event) => event.type !== "assistant-delta" && event.type !== "reasoning-delta" && event.type !== "user").slice(-18).reverse(), [events]);
-  const evidence = useMemo(() => events.filter((event): event is Extract<DesktopConsoleEvent, { type: "tool-result" }> => event.type === "tool-result").slice().reverse(), [events]);
+  const transcript = useMemo(() => buildTranscript(visibleEvents), [visibleEvents]);
+  const activity = useMemo(() => visibleEvents.filter((event) => event.type !== "assistant-delta" && event.type !== "reasoning-delta" && event.type !== "user").slice(-18).reverse(), [visibleEvents]);
+  const evidence = useMemo(() => visibleEvents.filter((event): event is Extract<DesktopConsoleEvent, { type: "tool-result" }> => event.type === "tool-result").slice().reverse(), [visibleEvents]);
 
   useLayoutEffect(() => {
     const viewport = transcriptScrollRef.current;
     if (viewport && followOutputRef.current) viewport.scrollTop = viewport.scrollHeight;
-  }, [events, detailsOpen]);
+  }, [visibleEvents, inspectorOpen]);
 
   const jumpToLatest = () => {
     const viewport = transcriptScrollRef.current;
@@ -540,6 +895,15 @@ export function ChatPage() {
     setShowJumpToLatest(false);
     viewport.scrollTop = viewport.scrollHeight;
   };
+
+  const handleDraftChange = useCallback((value: string) => {
+    if (activeId) setDrafts((current) => ({ ...current, [activeId]: value }));
+  }, [activeId, setDrafts]);
+
+  const handleSessionSelect = useCallback((id: string) => {
+    setActiveId(id);
+    setThreadSearch("");
+  }, []);
 
   const send = async () => {
     if (submitting || !activeSession || !draft.trim() || activeSession.status !== "ready") return;
@@ -550,7 +914,12 @@ export function ChatPage() {
     try {
       const updated = await sendDesktopConsoleMessage(activeSession.id, draft);
       applySession(updated);
-      setDraft("");
+      setDrafts((current) => {
+        if (current[activeSession.id] !== draft) return current;
+        const next = { ...current };
+        delete next[activeSession.id];
+        return next;
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -594,14 +963,49 @@ export function ChatPage() {
     finally { setSubmitting(false); }
   };
 
-  if (loading) return <main className="grid min-h-dvh place-items-center bg-[#0a0a0a] text-sm text-[#a7a29c]" role="status">Opening your workspace…</main>;
+  const openFolder = useCallback(async () => {
+    setError(null);
+    setSettingsOpen(false);
+    if (!window.osecDesktop) {
+      setScopedTarget("");
+      setScopedOpen(true);
+      return;
+    }
+    try {
+      const target = await window.osecDesktop.chooseDirectory();
+      if (target !== null) {
+        setScopedTarget(target);
+        setScopedOpen(true);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
+  useKeyboardShortcuts((command: DesktopHostCommand) => {
+    switch (command) {
+      case "new-thread": setSettingsOpen(false); setScopedOpen(false); void createSession(); break;
+      case "open-folder": void openFolder(); break;
+      case "toggle-sidebar": setSidebarCollapsed((value) => !value); break;
+      case "settings": setScopedOpen(false); setSettingsOpen(true); break;
+    }
+  });
+
+  /* ─── Empty state: NO user messages yet ──────────────────── */
+  if (loading) {
+    return (
+      <div className="desktop-layout desktop-loading">
+        <p className="desktop-loading-text" role="status">Opening your workspace…</p>
+      </div>
+    );
+  }
 
   const isEmpty = transcript.length === 0;
   const working = activeSession?.status === "working" || activeSession?.status === "waiting";
   const composerDisabled = submitting || !activeSession || activeSession.status === "closed" || activeSession.status === "failed";
   let workingLabel = "Working on your request";
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index];
+  for (let index = visibleEvents.length - 1; index >= 0; index--) {
+    const event = visibleEvents[index];
     if (event.type === "assistant-delta") {
       workingLabel = "Writing a response";
       break;
@@ -613,66 +1017,255 @@ export function ChatPage() {
     if (event.type === "user" || event.type === "reasoning-delta" || event.type === "tool-result") break;
   }
   if (pendingDecisions.length > 0) workingLabel = "Waiting for your approval";
-  const composer = <Composer value={draft} disabled={Boolean(composerDisabled)} working={working} onChange={setDraft} onSubmit={() => void send()} onCancel={() => void cancel()} />;
+
+  const threadLabel = (activeId && threadTitles[activeId]) ||
+    (activeSession?.target ? formatTarget(activeSession.target) : "New thread");
+
   return (
-    <main className="relative flex h-dvh min-h-0 overflow-hidden bg-[#0a0a0a] font-sans text-[#f7f5f2] selection:bg-white/20">
-      <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[#f7f5f2]/8 px-4 py-2 sm:px-6">
-          <div className="flex min-w-0 items-center gap-4">
-            <Wordmark />
-            <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-[#a7a29c]">Development</span>
-            <span className="hidden max-w-64 truncate text-xs text-[#a7a29c] lg:block">{activeSession?.target ? formatTarget(activeSession.target) : "Local workspace"}</span>
+    <div className={cn("desktop-layout", isNativeMacOS && "desktop-native-macos")}>
+      {!sidebarCollapsed && <button type="button" className="desktop-sidebar-backdrop" aria-label="Close sidebar" onClick={() => setSidebarCollapsed(true)} />}
+      <DesktopSidebar
+        sessions={sessions}
+        activeId={activeId}
+        collapsed={sidebarCollapsed}
+        draftMap={drafts}
+        titles={threadTitles}
+        busy={submitting}
+        threadSearch={threadSearch}
+        onToggle={() => setSidebarCollapsed((v) => !v)}
+        onSelect={handleSessionSelect}
+        onNew={() => void createSession()}
+        onScoped={() => { setError(null); setScopedTarget(""); setScopedOpen(true); }}
+        onSettings={() => setSettingsOpen(true)}
+        onSearchChange={setThreadSearch}
+      />
+
+      <div className="desktop-main">
+        {/* ── Titlebar ── */}
+        <div className="desktop-titlebar">
+          <div className="desktop-titlebar-section">
+            {sidebarCollapsed && (
+              <button
+                className="desktop-btn-icon"
+                aria-label="Show sidebar"
+                onClick={() => setSidebarCollapsed(false)}
+              >
+                <PanelLeft aria-hidden className="size-3.5" />
+              </button>
+            )}
+            {!sidebarCollapsed &&
+              <span className="desktop-titlebar-label">
+                {threadLabel || "Local workspace"}
+              </span>
+            }
           </div>
-          <div className="flex items-center gap-0.5">
-            <HeaderButton onClick={() => setSessionsOpen(true)}>Chats</HeaderButton>
-            <HeaderButton onClick={() => { setDetailView("context"); setDetailsOpen(true); }}>Context{pendingDecisions.length ? ` · ${pendingDecisions.length}` : ""}</HeaderButton>
-            <HeaderButton onClick={() => void createSession()}>New chat</HeaderButton>
-            <Link className="rounded-md px-2.5 py-2 text-xs text-[#a7a29c] transition hover:bg-white/5 hover:text-[#f7f5f2] focus-visible:outline-2 focus-visible:outline-[#b6b2ad]" to="/dashboard">Operations</Link>
+          <div className="desktop-titlebar-actions">
+            <button
+              className="desktop-titlebar-button"
+              onClick={() => { setDetailView("context"); setInspectorOpen((v) => !v); }}
+              title="Toggle inspector"
+              aria-label="Toggle inspector"
+              aria-expanded={inspectorOpen}
+            >
+              <FileText aria-hidden className="size-3.5" />
+              {pendingDecisions.length > 0 && (
+                <span style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "var(--desktop-accent)",
+                  color: "#fff",
+                  fontSize: "9px",
+                  fontWeight: 600,
+                  borderRadius: "8px",
+                  padding: "0 5px",
+                  height: "14px",
+                  minWidth: "14px",
+                  lineHeight: 1,
+                }}>{pendingDecisions.length}</span>
+              )}
+            </button>
+            <button
+              className="desktop-titlebar-button"
+              onClick={() => void createSession()}
+              title="New thread"
+              aria-label="New thread"
+              disabled={submitting}
+            >
+              <Plus aria-hidden className="size-3.5" />
+              <span className="hidden sm:inline">New</span>
+            </button>
+            <Link
+              className="desktop-titlebar-button"
+              to="/dashboard"
+              aria-label="Open Operations"
+              style={{ textDecoration: "none" }}
+            >
+              <Sparkles aria-hidden className="size-3.5" />
+            </Link>
           </div>
-        </header>
+        </div>
+
+        {/* ── Content ── */}
         {isEmpty ? (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-5 py-10">
-            <div className="w-full max-w-[40rem]">
-              <div className="mb-9">
-                <p className="mb-3 text-xs text-[#a7a29c]">Your local security workspace</p>
-                <h1 className="text-3xl font-medium tracking-[-0.04em] text-[#f7f5f2] sm:text-4xl">What are we investigating?</h1>
-                <p className="mt-4 max-w-lg text-sm leading-7 text-[#a7a29c]">Start with a question or an outcome. Follow the work as it happens, with scope and approvals kept explicit.</p>
-              </div>
-              {composer}
-              <div className="mt-4 flex flex-wrap gap-2">
-                {["Explain how scope and approvals work", "Help me plan a source review"].map((prompt) => (
-                  <button key={prompt} type="button" className="rounded-full border border-white/10 px-3 py-2 text-xs text-[#a7a29c] transition hover:border-white/25 hover:text-[#f7f5f2] focus-visible:outline-2 focus-visible:outline-[#b6b2ad]" onClick={() => setDraft(prompt)}>{prompt}</button>
-                ))}
-              </div>
-              {error ? <p role="alert" className="mt-4 text-sm text-[#f18181]">{error}</p> : null}
+          <div className="desktop-empty">
+            <div className="desktop-empty-inner">
+              <h1>New thread</h1>
+              <p className="desktop-empty-desc">Choose a target, or start with a question.</p>
             </div>
           </div>
         ) : (
-          <>
-            <div className="relative min-h-0 flex-1">
-              <div ref={transcriptScrollRef} className="h-full overflow-y-auto overscroll-contain" onScroll={(event) => {
-                const viewport = event.currentTarget;
-                const following = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80;
-                followOutputRef.current = following;
-                setShowJumpToLatest(!following);
-              }}>
-                <Transcript entries={transcript} streaming={activeSession?.status === "working"} />
+            <div className="desktop-transcript">
+              <div
+                ref={transcriptScrollRef}
+                className="desktop-transcript-scroll"
+                onScroll={(event) => {
+                  const viewport = event.currentTarget;
+                  const following = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80;
+                  followOutputRef.current = following;
+                  setShowJumpToLatest(!following);
+                }}
+              >
+                <div className="desktop-transcript-inner" aria-label="Conversation">
+                  {transcript.map((entry, index) => {
+                    if (entry.kind === "tool") {
+                      return (
+                        <details key={entry.id} className="desktop-tool-entry">
+                          <summary className="desktop-tool-summary">
+                            {entry.status === "running" ? (
+                              <LoaderCircle aria-hidden className="size-3.5 desktop-spinner" />
+                            ) : entry.status === "complete" ? (
+                              <Check aria-hidden className="size-3.5" />
+                            ) : (
+                              <Square aria-hidden className="size-3" />
+                            )}
+                            <span className="desktop-tool-name">{entry.name}</span>
+                            <span className="desktop-tool-status">
+                              {entry.status === "complete" ? "Finished" : entry.status === "running" ? "Running" : "Interrupted"}
+                            </span>
+                            <ChevronRight aria-hidden className="size-3.5 desktop-tool-chevron" />
+                          </summary>
+                          <div className="desktop-tool-body">
+                            <div>
+                              <p className="desktop-tool-section-label">Input</p>
+                              <pre className="desktop-tool-payload">{formatPayload(entry.arguments)}</pre>
+                            </div>
+                            {entry.status === "complete" ? (
+                              <div>
+                                <p className="desktop-tool-section-label">Result</p>
+                                <pre className="desktop-tool-payload">{formatPayload(entry.result)}</pre>
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
+                      );
+                    }
+                    if (entry.kind === "notice") {
+                      return <p key={entry.id} className="desktop-entry-notice">{entry.text}</p>;
+                    }
+                    if (entry.kind === "error") {
+                      return (
+                        <p key={entry.id} role="alert" className="desktop-entry-error">
+                          {entry.text}
+                        </p>
+                      );
+                    }
+                    if (entry.kind === "user") {
+                      return (
+                        <article key={entry.id} className="desktop-entry-user">
+                          <span className="sr-only">You</span>
+                          <p className="desktop-entry-user-text">{entry.text}</p>
+                        </article>
+                      );
+                    }
+                    return (
+                      <article key={entry.id} className="desktop-entry-assistant">
+                        <p className="desktop-entry-assistant-label">0sec</p>
+                        <ChatMessage
+                          text={entry.text}
+                          streaming={activeSession?.status === "working" && index === transcript.length - 1}
+                        />
+                      </article>
+                    );
+                  })}
+                </div>
               </div>
-              {showJumpToLatest ? <button type="button" className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/15 bg-[#1a1a1a] px-4 py-2 text-xs text-[#f7f5f2] shadow-sm focus-visible:outline-2 focus-visible:outline-[#b6b2ad]" onClick={jumpToLatest}><ArrowDown aria-hidden className="size-3.5" />Latest response</button> : null}
+              {showJumpToLatest && (
+                <button
+                  type="button"
+                  className="desktop-jump-btn"
+                  onClick={jumpToLatest}
+                >
+                  <ArrowDown aria-hidden className="size-3.5" />
+                  Latest response
+                </button>
+              )}
             </div>
-            <div className="mx-auto w-full max-w-[48rem] px-5 pb-5 sm:px-8">
-              <div role="status" aria-live="polite" className="mb-3 flex min-h-5 items-center gap-2 text-xs text-[#a7a29c]">
-                {working ? <><LoaderCircle aria-hidden className="size-3.5 motion-safe:animate-spin" /><span>{workingLabel}</span></> : <span>{activeSession?.status === "ready" ? "Ready for your next message" : activeSession?.status}</span>}
-              </div>
-              {composer}
-              {error ? <p role="alert" className="mt-3 text-sm text-[#f18181]">{error}</p> : null}
-            </div>
-          </>
+
         )}
-      </section>
-      <Details open={detailsOpen} view={detailView} session={activeSession} pending={pendingDecisions} activity={activity} evidence={evidence} auth={codexAuth} busy={submitting} onClose={() => setDetailsOpen(false)} onView={setDetailView} onResolve={resolveDecision} onConnect={connectCodex} onCancelConnect={cancelCodex} />
-      <SessionPanel sessions={sessions} activeId={activeId} open={sessionsOpen} onClose={() => setSessionsOpen(false)} onSelect={setActiveId} onNew={() => void createSession()} onScoped={() => { setSessionsOpen(false); setScopedOpen(true); }} />
-      <ScopedEngagement open={scopedOpen} busy={submitting} onClose={() => setScopedOpen(false)} onCreate={createSession} />
-    </main>
+            {/* ── Composer ── */}
+            <div className="desktop-composer-area">
+              <div role="status" aria-live="polite" className="desktop-composer-status">
+                {working ? (
+                  <><LoaderCircle aria-hidden className="size-3.5 desktop-spinner" /><span>{workingLabel}</span></>
+                ) : (
+                  <span>{activeSession?.status === "ready" ? (activeSession.target ? formatTarget(activeSession.target) : "Local · No target selected") : activeSession?.status}</span>
+                )}
+                {activeSession && (
+                  <span style={{ marginLeft: "auto", fontSize: "10px", color: "var(--desktop-muted)" }}>
+                    {MODE_LABELS[activeSession.autonomyMode]}
+                  </span>
+                )}
+              </div>
+              <DesktopComposer
+                value={draft}
+                disabled={Boolean(composerDisabled)}
+                working={working}
+                onChange={handleDraftChange}
+                onSubmit={() => void send()}
+                onCancel={() => void cancel()}
+              />
+              {error ? (
+                <p role="alert" className="mt-2" style={{ fontSize: "12px", color: "var(--desktop-danger)" }}>
+                  {error}
+                </p>
+              ) : null}
+            </div>
+      </div>
+
+      <DesktopInspector
+        open={inspectorOpen}
+        view={detailView}
+        session={activeSession}
+        pending={pendingDecisions}
+        activity={activity}
+        evidence={evidence}
+        auth={codexAuth}
+        busy={submitting}
+        onClose={() => setInspectorOpen(false)}
+        onView={setDetailView}
+        onResolve={resolveDecision}
+        onConnect={connectCodex}
+        onCancelConnect={cancelCodex}
+      />
+
+      <DesktopScopedDialog
+        open={scopedOpen}
+        busy={submitting}
+        onClose={() => setScopedOpen(false)}
+        onCreate={createSession}
+        initialTarget={scopedTarget}
+        error={error}
+      />
+
+      <DesktopSettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        auth={codexAuth}
+        busy={submitting}
+        onConnect={connectCodex}
+        onCancelConnect={cancelCodex}
+      />
+    </div>
   );
 }

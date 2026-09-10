@@ -110,3 +110,28 @@ export type DesktopConsoleEventPayload =
   | { type: "error"; message: string };
 
 export type DesktopConsoleEvent = DesktopConsoleEventBase & DesktopConsoleEventPayload;
+
+// ── Desktop Bridge Contract ─────────────────────────────────────────────
+// Typed contract between Electron main/preload and the dashboard renderer.
+// The renderer accesses these through window.osecDesktop (set by the preload
+// script), which is always defined in the desktop shell.
+
+export type DesktopHostCommand =
+  | "new-thread"
+  | "open-folder"
+  | "toggle-sidebar"
+  | "settings";
+
+export interface DesktopHostBridge {
+  /** Immutable platform string (process.platform from Electron). */
+  readonly platform: string;
+  /** Open a URL in the system default browser. Only HTTPS URLs are allowed. */
+  openExternal(url: string): Promise<void>;
+  /** Show a native directory picker. Returns null on cancellation. */
+  chooseDirectory(): Promise<string | null>;
+  /**
+   * Subscribe to native menu commands. Returns an unsubscribe function.
+   * The listener is invoked synchronously for every matching command.
+   */
+  onCommand(listener: (command: DesktopHostCommand) => void): () => void;
+}
