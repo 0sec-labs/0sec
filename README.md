@@ -77,6 +77,15 @@ and runtime and kernel, need different tooling to reach, so they usually go unte
 
 Run `0 --help` for the rest. Full docs: **[docs.0.security](https://docs.0.security)**.
 
+For evidence-driven follow-up, `review --fix-commit <sha> --variants-only`
+finds potential incomplete application fixes without model calls. Stateful
+authorization workflows compare owner-visible state before and after another
+identity's requests. `verify --create-bundle` packages a PoC and allowlisted
+sources; `verify --bundle --runner local|docker` checks vulnerable and patched
+snapshots with a negative control.
+See [configuration and safety constraints](https://docs.0.security/configuration/#stateful-authorization-and-fix-verification).
+
+
 ### Primary workflow
 
 Run `0` to open the primary OpenTUI chat. Type `/run` to open its engagement

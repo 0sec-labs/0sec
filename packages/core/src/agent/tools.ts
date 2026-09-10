@@ -1851,6 +1851,8 @@ export interface ProbeResponse {
   status: number;
   contentType: string;
   body: string;
+  /** Set when the response body exceeds the 10k capture ceiling. */
+  truncated?: boolean;
 }
 
 /** Normalize a response body for similarity comparison. */
@@ -4151,6 +4153,7 @@ export class ToolExecutor {
         status: res.status,
         contentType: res.headers.get("content-type") ?? "",
         body: text.slice(0, 10_000),
+        ...(text.length > 10_000 ? { truncated: true } : {}),
       };
     } finally {
       clearTimeout(timer);
@@ -4262,6 +4265,142 @@ export class ToolExecutor {
     });
 
     return { success: true, output };
+  }
+
+  private static readonly workflowSchema = z.object({
+    allow_mutation: z.literal(true),
+    owner_identity: z.string().min(1),
+    actor_identity: z.string().min(1),
+    observation_url: z.string().min(1),
+    observation_json_pointer: z.string().regex(/^(?:\/(?:[^~]|~[01])*)?$/),
+    expected_state: z.string().max(500),
+    steps: z.array(z.object({
+      method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]),
+      url: z.string().min(1),
+      body: z.string().optional(),
+      headers: z.record(z.string()).optional(),
+    }).strict()).min(1).max(10),
+  }).strict();
+
+  /** State transitions are evidence only when both owner observations succeed. */
+  private async accessControlWorkflow(raw: Record<string, unknown>): Promise<ToolResult> {
+    const parsed = ToolExecutor.workflowSchema.safeParse(raw);
+    if (!parsed.success) return { success: false, output: null, error: parsed.error.message };
+    const args = parsed.data;
+    const principals = this.resolveProbeIdentities();
+    const owner = principals.find((p) => p.label === args.owner_identity);
+    const actor = principals.find((p) => p.label === args.actor_identity);
+    if (!owner || !actor || owner.label === actor.label) {
+      return { success: false, output: null, error: "Configure distinct owner_identity and actor_identity principals" };
+    }
+    const ownerHeaders = owner.headers();
+    const actorHeaders = actor.headers();
+    const canonicalHeaders = (headers: Record<string, string>) =>
+      JSON.stringify(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]).sort(([a], [b]) => a.localeCompare(b)));
+    if (canonicalHeaders(ownerHeaders) === canonicalHeaders(actorHeaders)) {
+      return { success: false, output: null, error: "Owner and actor have identical authentication; no authorization boundary can be tested" };
+    }
+    // Reject configured custom credential headers as well as standard ones.
+    const authHeaderNames = new Set([...Object.keys(ownerHeaders), ...Object.keys(actorHeaders)].map((key) => key.toLowerCase()));
+    for (const name of ["authorization", "cookie", "proxy-authorization", "host", "x-api-key", "x-auth-token"]) authHeaderNames.add(name);
+    const secrets = authSecretValues(this.ctx.authConfig);
+    const collectSecrets = (headers: Record<string, string>) => {
+      for (const [name, value] of Object.entries(headers)) {
+        secrets.push(value);
+        if (name.toLowerCase() === "authorization") secrets.push(value.replace(/^(?:Bearer|Basic)\s+/i, ""));
+        if (name.toLowerCase() === "cookie") {
+          for (const cookie of value.split(";")) secrets.push(cookie.slice(cookie.indexOf("=") + 1).trim());
+        }
+      }
+    };
+    collectSecrets(ownerHeaders);
+    collectSecrets(actorHeaders);
+    const safe = (value: string) => redactAuthValues(value, secrets);
+    try {
+      validateTargetUrl(this.ctx.target, args.observation_url, this.ctx.scope, this.ctx.enforcement);
+      for (const step of args.steps) {
+        validateTargetUrl(this.ctx.target, step.url, this.ctx.scope, this.ctx.enforcement);
+        if (step.method === "GET" && step.body !== undefined) throw new Error("GET steps cannot have a request body");
+        // Headers validates HTTP names/values before any earlier step can mutate.
+        const headers = new Headers(step.headers);
+        for (const key of headers.keys()) {
+          if (authHeaderNames.has(key.toLowerCase())) throw new Error(`Actor step cannot override authentication or routing header: ${key}`);
+        }
+      }
+    } catch (error) {
+      return { success: false, output: null, error: safe(error instanceof Error ? error.message : String(error)) };
+    }
+    const evidence: Array<Record<string, unknown>> = [];
+    let before: Record<string, unknown> | null = null;
+    let after: Record<string, unknown> | null = null;
+    const finish = (verdict: "confirmed" | "no_change" | "inconclusive", reason: string): ToolResult => {
+      // Capture cookies obtained during the workflow before redacting evidence.
+      collectSecrets(owner.headers());
+      collectSecrets(actor.headers());
+      const sanitize = (value: unknown): unknown => {
+        if (typeof value === "string") return safe(value);
+        if (Array.isArray(value)) return value.map(sanitize);
+        if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitize(item)]));
+        return value;
+      };
+      const output = {
+        workflow: "access_control_workflow", owner_identity: safe(owner.label), actor_identity: safe(actor.label),
+        observation_url: safe(args.observation_url), observation_json_pointer: safe(args.observation_json_pointer),
+        expected_state: safe(args.expected_state), observation_before: sanitize(before), steps: sanitize(evidence),
+        observation_after: sanitize(after), verdict, reason: safe(reason),
+      };
+      this.persistToolArtifact("access_control_workflow", output);
+      return { success: true, output };
+    };
+    const observe = async (): Promise<{ evidence: Record<string, unknown>; value?: unknown; error?: string }> => {
+      try {
+        const response = await this.fetchAs(owner, args.observation_url, "GET", undefined, {});
+        const observation: Record<string, unknown> = { status: response.status, truncated: response.truncated ?? false };
+        if (response.status < 200 || response.status >= 300 || response.truncated) {
+          return { evidence: observation, error: "Owner observation was unsuccessful or truncated" };
+        }
+        let value: unknown;
+        try { value = JSON.parse(response.body); }
+        catch { return { evidence: observation, error: "Owner observation was not valid JSON" }; }
+        const pointer = args.observation_json_pointer;
+        for (const token of pointer === "" ? [] : pointer.slice(1).split("/")) {
+          const key = token.replace(/~1/g, "/").replace(/~0/g, "~");
+          if (typeof value !== "object" || value === null || !Object.hasOwn(value, key) ||
+              (Array.isArray(value) && !/^(0|[1-9]\d*)$/.test(key))) {
+            return { evidence: observation, error: "Observation JSON pointer is missing" };
+          }
+          value = (value as Record<string, unknown>)[key];
+        }
+        observation.field_present = true;
+        observation.json_pointer_value = typeof value === "string" ? value.slice(0, 500) : value === null ? null : typeof value;
+        return { evidence: observation, value };
+      } catch (error) {
+        return { evidence: {}, error: safe(error instanceof Error ? error.message : String(error)) };
+      }
+    };
+    const baseline = await observe();
+    before = baseline.evidence;
+    if (baseline.error) return finish("inconclusive", baseline.error);
+    if (baseline.value === args.expected_state) return finish("no_change", "Expected marker was already present; actor requests were not sent");
+    let transportFailed = false;
+    for (const [index, step] of args.steps.entries()) {
+      try {
+        const response = await this.fetchAs(actor, step.url, step.method, step.body, step.headers ?? {});
+        evidence.push({ step_index: index, method: step.method, url: step.url, status: response.status,
+          body_length: response.body.length, truncated: response.truncated ?? false });
+        // An HTTP denial is observable evidence; a transport error is not.
+      } catch (error) {
+        evidence.push({ step_index: index, method: step.method, url: step.url, error: safe(error instanceof Error ? error.message : String(error)) });
+        transportFailed = true;
+        break;
+      }
+    }
+    const observation = await observe();
+    after = observation.evidence;
+    if (observation.error || transportFailed) return finish("inconclusive", observation.error ?? "Actor workflow failed to complete");
+    if (observation.value === args.expected_state) return finish("confirmed", "Owner observed the unique expected marker only after the distinct actor workflow");
+    if (Object.is(observation.value, baseline.value)) return finish("no_change", "Actor requests did not change the observed state");
+    return finish("inconclusive", "State changed, but not to the declared marker; attribution is uncertain");
   }
 
   /**
@@ -8632,6 +8771,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     "crawl",
     "submit_form",
     "access_control_probe",
+    "access_control_workflow",
     "bash",
     ...browserTools,
     ...webSearchTools,

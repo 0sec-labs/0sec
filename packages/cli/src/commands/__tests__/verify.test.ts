@@ -573,29 +573,6 @@ describe("runVerify", () => {
     expect(VerificationResultSchema.parse(outcome.result)).toEqual(outcome.result);
   });
 
-  it("reserved --bundle path emits the shared VerificationResult error shape", async () => {
-    const previousExitCode = process.exitCode;
-    const outPath = join(tmpRoot, "bundle-error.json");
-    const program = new Command();
-    program.exitOverride();
-    registerVerifyCommand(program);
-
-    try {
-      await program.parseAsync(
-        ["verify", "--bundle", "bundle.zip", "--finding-id", "finding-1", "--output", outPath],
-        { from: "user" },
-      );
-      expect(process.exitCode).toBe(3);
-      const parsed = VerificationResultSchema.parse(
-        JSON.parse(readFileSync(outPath, "utf8")),
-      );
-      expect(parsed.status).toBe("error");
-      expect(parsed.finding_id).toBe("unknown");
-      expect(parsed.error_reason).toMatch(/reserved for a follow-up/);
-    } finally {
-      process.exitCode = previousExitCode;
-    }
-  });
 });
 
 // ── Public process-action containment ────────────────────────────────────────

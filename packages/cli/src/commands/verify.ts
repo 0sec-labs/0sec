@@ -14,9 +14,8 @@
  *   - Emit a JSON {@link VerificationResult} to stdout (or to `--output`).
  *   - Exit 0 (reproduced) / 1 (not_reproduced) / 2 (skipped) / 3 (error).
  *
- * Bundle support (`--finding-id <id> --bundle <zip>`) is reserved for a
- * follow-up; the proposed flag is parsed and rejected explicitly so the
- * cloud side can detect engine capability without a silent miss.
+ * Reproduction bundles package explicit source allowlists without execution,
+ * then replay vulnerable and patched snapshots with an explicit runner.
  */
 
 import type { Command } from "commander";
@@ -35,6 +34,8 @@ import {
   loadScope,
   evidenceKindForFinding,
   oracleForCategory,
+  createReproductionBundle,
+  runReproductionBundle,
   type PocExecutionReport,
   type PocExecutionTarget,
   type PocStepResult,
@@ -54,7 +55,7 @@ import {
   VerificationResultSchema,
 } from "@0sec/shared";
 import { z } from "zod";
-import { findingSchema, formatZodError } from "./schemas.js";
+import { findingSchema, formatZodError } from "@0sec/shared";
 
 // ── Public output schema ────────────────────────────────────────────────────
 
@@ -486,7 +487,6 @@ function fixtureResultToShared(result: Awaited<ReturnType<typeof runCliPathTrave
 
 interface VerifyOpts {
   finding?: string;
-  findingId?: string;
   bundle?: string;
   target?: string;
   fixture?: string;
@@ -516,6 +516,8 @@ interface VerifyOpts {
   qemuKernel?: string;
   /** Static BusyBox binary for --runner qemu. */
   qemuBusybox?: string;
+  /** Path to a BundlePlan JSON for reproducible bundle creation. */
+  createBundle?: string;
 }
 
 function readJson<T>(path: string, kind: string): T {
@@ -904,6 +906,55 @@ export async function runDeterministicReplayCli(args: {
 }
 
 async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promise<void> {
+  if ((opts.bundle || opts.createBundle) && (opts.target || opts.fixtureCommand ||
+      opts.fixtureMode || opts.retainArtifacts || opts.artifactDir || opts.kernelTree ||
+      opts.attempts || opts.wallClock || opts.qemuBinary || opts.qemuKernel || opts.qemuBusybox)) {
+    throw new Error("Bundle modes cannot be combined with target, fixture, or kernel execution options");
+  }
+  if ((opts.bundle || opts.createBundle) && opts.format && opts.format !== "json") {
+    throw new Error("Bundle modes support only JSON output");
+  }
+  // ── Reproducible bundle creation (Phase 1) ──────────────────────────────
+  // Creates a sealed bundle from a BundlePlan — NO PoC execution.
+  // Mutually exclusive with all other verify paths.
+  if (opts.createBundle) {
+    if (opts.finding || opts.fixture || opts.bundle || opts.runner ||
+        opts.kernelFinding || positionalFinding || opts.scope || opts.dockerNetwork) {
+      throw new Error(
+        "--create-bundle cannot be combined with --finding / --fixture / --bundle / --runner / --kernel-finding / <finding> positional",
+      );
+    }
+    if (!opts.out) {
+      throw new Error("--create-bundle requires --out <bundle-dir>");
+    }
+
+    // Bundle creation must not execute any PoC steps.
+    const { manifest, bundleDir } = await createReproductionBundle(
+      opts.createBundle,
+      opts.out,
+    );
+
+    const result = JSON.stringify(
+      {
+        status: "bundle_created",
+        bundle_dir: bundleDir,
+        finding_id: manifest.finding.id,
+        engine_version: VERSION,
+        created_at: manifest.created_at,
+        runner: manifest.runner_compatibility.runner,
+      },
+      null,
+      2,
+    );
+    if (opts.output) {
+      writeFileSync(resolve(opts.output), result + "\n", "utf8");
+    } else {
+      process.stdout.write(result + "\n");
+    }
+    process.exitCode = 0;
+    return;
+  }
+
   // Kernel-finding (#271 Tier 2) mode is a separate pipeline from the
   // deterministic-replay verifier — handle it first and exit.
   if (opts.kernelFinding) {
@@ -920,12 +971,11 @@ async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promi
       opts.finding ||
       opts.fixture ||
       opts.bundle ||
-      opts.findingId ||
       positionalFinding ||
       opts.runner
     ) {
       throw new Error(
-        "--kernel-finding cannot be combined with --finding / --fixture / --bundle / --finding-id / <finding> positional / --runner",
+        "--kernel-finding cannot be combined with --finding / --fixture / --bundle / <finding> positional / --runner",
       );
     }
     const attempts = opts.attempts ? parseInt(opts.attempts, 10) : undefined;
@@ -953,7 +1003,7 @@ async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promi
 
   // Deterministic replay path: triggered by a positional finding path or an
   // explicit runner selection.
-  if (positionalFinding || opts.runner) {
+  if (!opts.bundle && (positionalFinding || opts.runner)) {
     if (positionalFinding && opts.finding) {
       throw new Error(
         "pass a finding path EITHER as a positional argument OR via --finding, not both",
@@ -986,19 +1036,42 @@ async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promi
     return;
   }
 
-  // Validate flag combinations early so users get a clear error rather than
-  // a confusing "no finding loaded" downstream.
-  if (opts.findingId || opts.bundle) {
-    if (opts.findingId && !opts.bundle) {
-      throw new Error("--finding-id requires --bundle <path>");
+  // ── Reproducible bundle replay (Phase 2) ──────────────────────────────────
+  // Replays a sealed reproduction bundle through the configured runner.
+  // Mutually exclusive with --finding / --fixture / positional finding.
+  // Runner selection is explicit: never silently execute bundle code on the host.
+
+  if (opts.bundle) {
+    if (opts.finding || opts.fixture || positionalFinding || opts.kernelFinding) {
+      throw new Error(
+        "--bundle cannot be combined with --finding / --fixture / --kernel-finding / <finding> positional",
+      );
     }
-    if (opts.bundle && !opts.findingId) {
-      throw new Error("--bundle requires --finding-id <id>");
+    if (opts.runner !== "local" && opts.runner !== "docker") {
+      throw new Error(
+        "--bundle requires --runner local or --runner docker (qemu not supported)",
+      );
     }
-    throw new Error(
-      "--finding-id / --bundle is reserved for a follow-up. Use --finding <path> for now.",
-    );
+    const bundleRunner = opts.runner;
+
+    const bundleResult = await runReproductionBundle({
+      bundleDir: opts.bundle,
+      runner: bundleRunner,
+      outDir: opts.out,
+      scope: opts.scope ? loadScope(opts.scope) : undefined,
+      dockerNetwork: opts.dockerNetwork,
+    });
+
+    const json = JSON.stringify(bundleResult, null, 2);
+    if (opts.output) {
+      writeFileSync(resolve(opts.output), json + "\n", "utf8");
+    } else {
+      process.stdout.write(json + "\n");
+    }
+    process.exitCode = bundleResult.exitCode;
+    return;
   }
+
   if (opts.fixture && opts.finding) {
     throw new Error("--fixture and --finding are mutually exclusive");
   }
@@ -1073,14 +1146,17 @@ export function registerVerifyCommand(program: Command): void {
       "--out <dir>",
       "0sec#193 run directory (artifacts go under <out>/artifacts/). Defaults to a fresh tmpdir.",
     )
-    .option("--finding <path>", "Path to a finding.json (required for now).")
-    .option(
-      "--finding-id <id>",
-      "[reserved] Finding id; pair with --bundle for cloud-bundle mode (not yet implemented).",
-    )
+    .option("--finding <path>", "Path to a finding.json.")
     .option(
       "--bundle <path>",
-      "[reserved] Artifact bundle zip; pair with --finding-id (not yet implemented).",
+      "Path to a reproduction bundle directory; requires --runner local|docker. " +
+      "Replays the bundle's vulnerable and patched snapshots through the configured runner " +
+      "and emits an aggregate ReproductionBundleResult.",
+    )
+    .option(
+      "--create-bundle <plan.json>",
+      "Path to a BundlePlan JSON. Creates a reproduction bundle without executing " +
+      "any PoC steps. Requires --out <bundle-dir>.",
     )
     .option(
       "--target <path>",

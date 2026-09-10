@@ -305,9 +305,138 @@ static leads. Set `0SEC_STATIC=semgrep` to route them through Semgrep instead;
 `--changed-only` narrowing works with either. Dependency advisory checks (`npm
 audit`, OSV, OCI inventory) run separately for package targets regardless.
 
+The static runner uses `foxguard` from `PATH` when provisioned. Otherwise it
+launches `npx --yes foxguard@v0.12.0`, which requires Node/npm and access to the
+package and release download on first use. Native v1 JSON reports and legacy
+finding arrays are accepted. Launch failures, invalid reports, and scanner
+error exits trigger a warning and a Semgrep fallback; exit 1 with a valid
+report means findings were detected.
+Scans run from the requested source root, so an explicitly selected installed
+package is not skipped just because an ancestor directory is `node_modules`.
+Finding paths are resolved back to that source root.
+
+This pre-agent scan is separate from `0SEC_FEATURE_MULTIMODAL=1`, the opt-in
+white-box cross-validation layer. Cross-validation and `kernel variant-hunt`
+require an installed Foxguard binary (`--foxguard` can override it for
+variant hunting). Static hits and scanner agreement remain leads, not proof
+of exploitability.
+
 ```bash
 env 0SEC_STATIC=semgrep 0sec review ./repo --depth quick
 ```
+
+## Stateful authorization and fix verification
+
+Foxguard findings are static leads. Three complementary paths test authorization
+state changes, find incomplete application fixes, and replay a PoC with a negative
+control.
+
+### Stateful authorization
+
+The agent tool `access_control_workflow` observes a JSON resource as its owner,
+executes up to ten ordered requests as a distinct actor, then observes it again.
+It uses the existing per-identity sessions, cookie jars, scope checks, attribution,
+and rate limiter without switching the active identity.
+
+```json
+{
+  "allow_mutation": true,
+  "owner_identity": "owner",
+  "actor_identity": "other-tenant",
+  "observation_url": "https://app.example/api/items/42",
+  "observation_json_pointer": "/marker",
+  "expected_state": "fresh-disposable-test-marker",
+  "steps": [
+    {
+      "method": "PATCH",
+      "url": "https://app.example/api/items/42",
+      "body": "{\"marker\":\"fresh-disposable-test-marker\"}"
+    }
+  ]
+}
+```
+
+Use only disposable resources covered by the engagement. There is no automatic
+cleanup or rollback. Every step is validated before requests start; actor requests
+cannot override authentication headers. Both owner observations must succeed and
+contain complete JSON. `confirmed` requires an exact string-marker transition,
+not merely HTTP 2xx. An unchanged state is `no_change`; incomplete observations,
+transport failures, or an unexpected state change are `inconclusive`. Choose a
+unique marker to reduce ambiguity from concurrent legitimate activity.
+
+### Application incomplete-fix hunting
+
+```bash
+0sec review ./repo --fix-commit <sha> --variants-only
+0sec review ./repo --fix-commit <sha>
+```
+
+`--variants-only` emits deterministic JSON without model calls. The second command
+feeds candidates into the normal review pipeline as low-confidence `SeedFinding`
+leads. The hunter compares the fix commit to its first parent, extracts added
+authorization/validation checks, and searches current tracked working-tree files
+in the affected directories for similar unguarded functions.
+
+Extraction is heuristic for JavaScript, TypeScript, and Python—not a complete AST,
+control-flow, or exploitability analysis. Other languages are explicitly skipped.
+The default bound is 200 related files and 50 candidates; source files over 1 MiB
+are skipped with an error entry. Guarded siblings are excluded. This is separate
+from Foxguard's kernel `variant-hunt`.
+
+### Reproduction bundles
+
+Create a plan with exactly one of `finding_path` or an inline `finding`, explicit
+source roots, and file allowlists. Finding JSON uses the same schema as `verify
+--finding`, including `timestamp`. Plan-relative paths resolve beside the plan.
+
+```json
+{
+  "version": 1,
+  "finding_path": "./finding.json",
+  "vulnerable_root": "./before",
+  "patched_root": "./after",
+  "files": {
+    "vulnerable": ["app.cjs"],
+    "patched": ["app.cjs"]
+  },
+  "runner": "local"
+}
+```
+
+```bash
+0sec verify --create-bundle ./plan.json --out ./bundle
+0sec verify --bundle ./bundle --runner local --out ./replay-results
+```
+
+Creation never executes PoC steps. Replay requires an explicit runner, validates
+SHA-256 content, sizes, paths, and compatibility before execution, and uses fresh
+vulnerable/patched workspaces. Output directories must be empty. Symlinks,
+traversal paths, source/output overlap, and dirty output are rejected. Snapshot
+content is bounded to 256 MiB; plans and manifests to 4 MiB.
+
+`confirmed` (exit 0) requires reproduction on the vulnerable side and a genuine
+assertion failure on a successfully executed patched side. Reproduction on both
+sides is `inconclusive` (exit 1); failure to reproduce the vulnerable side is
+`not_reproduced` (exit 1). A crash, failed setup, timeout, or missing command is
+`error` (exit 3), never proof of a fix. PoC processes must exit zero on both sides
+and express the exploit condition through assertions. Results include both sides;
+`vulnerable.json`, `patched.json`, and `result.json` are retained with artifacts.
+
+Local execution runs trusted PoC code **on the host**, not in a sandbox. It checks
+the exact Node/engine version and host platform/architecture, but does not capture
+external tools or services. Digests detect corruption, not malicious authorship.
+Review bundles before execution and before sharing: allowlisted sources, finding
+metadata, and process output can contain secrets.
+
+For Docker, set `"runner": "docker"` in the plan and provide
+`docker_shell_image` / `docker_http_image` for the action types used, each as a full
+`repository@sha256:<64-hex-digest>` reference. Docker action images must also be
+digest-pinned. Replay binds the images to those references and uses the existing
+Docker isolation controls; provision images locally first. HTTP replay additionally
+requires `--scope <scope.json>` and an explicit `--docker-network <name>`.
+Local replay supports shell actions; Docker supports shell, container, and scoped
+HTTP actions. Notes are not executable bundle steps.
+
 
 ### Docker executor overrides
 

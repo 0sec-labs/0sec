@@ -727,6 +727,7 @@ const NETWORK_CAPABLE_TOOLS: Record<string, true> = {
   crawl: true,
   submit_form: true,
   access_control_probe: true,
+  access_control_workflow: true,
   browser: true,
   wp_fingerprint: true,
   discover_api_surface: true,

@@ -193,6 +193,8 @@ Deep source code security review of a local repo or GitHub URL.
 | `--profile <p>` | Review profile: `default`, `c-library`, `linux-kernel` | `default` |
 | `--diff-base <ref>` | Git base ref for diff-aware review | (none) |
 | `--changed-only` | Restrict static scanner leads + prioritization to changed files | `false` |
+| `--fix-commit <sha>` | Derive incomplete-fix application leads from a commit in a local Git repository | (none) |
+| `--variants-only` | Emit fix-variant JSON without model calls; requires `--fix-commit` | `false` |
 | `--timeout <ms>` | AI agent timeout in milliseconds | `600000` |
 | `--api-key <key>` | API key for LLM provider | (from env) |
 | `--model <model>` | Specific LLM model to use | provider default |

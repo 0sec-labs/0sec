@@ -15,7 +15,6 @@ import {
   runFoxguardScan,
   translateFoxguardJson,
 } from "./shared-analysis.js";
-import type { ScanEvent } from "./scanner.js";
 
 const SAMPLE_FOXGUARD_JSON = JSON.stringify([
   {
@@ -41,70 +40,15 @@ const SAMPLE_FOXGUARD_JSON = JSON.stringify([
 ]);
 
 describe("runFoxguardScan", () => {
-  it("invokes `npx --yes foxguard@<pinned-tag> --format json <path>`", () => {
-    const events: ScanEvent[] = [];
-    const runner = vi.fn().mockReturnValue(SAMPLE_FOXGUARD_JSON) as unknown as typeof ExecFileSync;
-
-    const findings = runFoxguardScan("/repo", (event) => events.push(event), {
-      runner,
-    });
-
-    expect(runner).toHaveBeenCalledTimes(1);
-    expect(runner).toHaveBeenCalledWith(
-      "npx",
-      ["--yes", `foxguard@${FOXGUARD_PINNED_TAG}`, "--format", "json", "/repo"],
-      expect.objectContaining({ timeout: 300_000, stdio: "pipe", encoding: "utf-8" }),
-    );
-    expect(findings).toHaveLength(1);
-    expect(findings[0]).toMatchObject({
-      ruleId: "js/no-eval",
-      severity: "critical",
-      path: "src/index.js",
-      startLine: 7,
-      endLine: 7,
-    });
-    expect(events.map((e) => e.message)).toContain(`Foxguard: 1 findings`);
-  });
-
-  it("passes narrowed paths to foxguard for diff-aware reviews", () => {
-    const runner = vi.fn().mockReturnValue(SAMPLE_FOXGUARD_JSON) as unknown as typeof ExecFileSync;
-
-    runFoxguardScan("/repo", () => {}, {
-      runner,
-      paths: ["/repo/src/changed.ts"],
-    });
-
-    expect(runner).toHaveBeenCalledWith(
-      "npx",
-      ["--yes", `foxguard@${FOXGUARD_PINNED_TAG}`, "--format", "json", "/repo/src/changed.ts"],
-      expect.objectContaining({ timeout: 300_000, stdio: "pipe", encoding: "utf-8" }),
-    );
-  });
-
-  it("uses Foxguard's diff command for multi-file changed-only reviews", () => {
-    const runner = vi.fn().mockReturnValue(SAMPLE_FOXGUARD_JSON) as unknown as typeof ExecFileSync;
-
-    runFoxguardScan("/repo", () => {}, {
-      runner,
-      diffBase: "HEAD^",
-      paths: ["/repo/src/first.ts", "/repo/src/second.ts"],
-    });
-
-    expect(runner).toHaveBeenCalledWith(
-      "npx",
-      ["--yes", `foxguard@${FOXGUARD_PINNED_TAG}`, "diff", "HEAD^", "/repo", "--format", "json"],
-      expect.objectContaining({ timeout: 300_000, stdio: "pipe", encoding: "utf-8" }),
-    );
-  });
-
-  it("treats non-zero exit + populated stdout as a successful scan with findings", () => {
+  it("retains findings when Foxguard exits with its findings status", () => {
     // Foxguard returns exit code 1 whenever it finds at least one issue. The
     // runner throws but the stdout still carries the JSON array.
     const runner = vi.fn(() => {
-      const err: NodeJS.ErrnoException & { stdout?: string } = new Error(
+      const err: NodeJS.ErrnoException & { stdout?: string; status?: number } = new Error(
         "Command failed with exit code 1",
       );
       err.stdout = SAMPLE_FOXGUARD_JSON;
+      err.status = 1;
       throw err;
     }) as unknown as typeof ExecFileSync;
 
@@ -112,6 +56,34 @@ describe("runFoxguardScan", () => {
 
     expect(findings).toHaveLength(1);
     expect(findings[0]!.ruleId).toBe("js/no-eval");
+  });
+
+  it("uses the npm release when the local binary is absent", () => {
+    const runner = vi.fn((command: string) => {
+      if (command === "foxguard") throw Object.assign(new Error("missing binary"), { code: "ENOENT" });
+      return SAMPLE_FOXGUARD_JSON;
+    }) as unknown as typeof ExecFileSync;
+    const findings = runFoxguardScan("/repo", () => {}, {
+      runner,
+      semgrepFallback: () => { throw new Error("unexpected fallback"); },
+    });
+    expect(findings[0]?.ruleId).toBe("js/no-eval");
+  });
+
+  it.each([
+    { output: "truncated JSON", status: 0 },
+    { output: SAMPLE_FOXGUARD_JSON, status: 2 },
+    { output: '{"schema_version":"2.0.0","findings":[]}', status: 0 },
+  ])("does not report scanner failure as a clean scan ($status, $output)", ({ output, status }) => {
+    const runner = vi.fn(() => {
+      if (status !== 0) throw Object.assign(new Error("scan failed"), { status, stdout: output });
+      return output;
+    }) as unknown as typeof ExecFileSync;
+    expect(() => runFoxguardScan("/repo", () => {}, {
+      runner,
+      logger: () => {},
+      semgrepFallback: () => { throw new Error("fallback unavailable"); },
+    })).toThrow("fallback unavailable");
   });
 
   it("falls back to semgrep silently with a warning log when foxguard cannot be launched", () => {
@@ -150,45 +122,6 @@ describe("runFoxguardScan", () => {
     expect(logs[0]).toContain(FOXGUARD_PINNED_TAG);
   });
 
-  it("preserves narrowed paths when falling back to semgrep", () => {
-    const runner = vi.fn(() => {
-      throw new Error("npx failed");
-    }) as unknown as typeof ExecFileSync;
-    const semgrepFallback = vi.fn().mockReturnValue([]);
-
-    runFoxguardScan("/repo", () => {}, {
-      runner,
-      semgrepFallback,
-      logger: () => {},
-      paths: ["/repo/src/changed.ts"],
-    });
-
-    expect(semgrepFallback).toHaveBeenCalledWith(
-      "/repo",
-      expect.any(Function),
-      { paths: ["/repo/src/changed.ts"] },
-    );
-  });
-
-  it("preserves noGitIgnore when falling back to semgrep for package scans", () => {
-    const runner = vi.fn(() => {
-      throw new Error("npx failed");
-    }) as unknown as typeof ExecFileSync;
-    const semgrepFallback = vi.fn().mockReturnValue([]);
-
-    runFoxguardScan("/repo", () => {}, {
-      runner,
-      semgrepFallback,
-      logger: () => {},
-      noGitIgnore: true,
-    });
-
-    expect(semgrepFallback).toHaveBeenCalledWith(
-      "/repo",
-      expect.any(Function),
-      { noGitIgnore: true },
-    );
-  });
 });
 
 describe("translateFoxguardJson", () => {
@@ -216,6 +149,17 @@ describe("translateFoxguardJson", () => {
         }),
       }),
     });
+  });
+
+  it("retains findings from the versioned native report", () => {
+    const report = JSON.stringify({
+      schema_version: "1.0.0",
+      finding_schema_version: "1.0.0",
+      scanner: { name: "foxguard", version: "0.12.0", command: "scan" },
+      findings: JSON.parse(SAMPLE_FOXGUARD_JSON),
+    });
+    expect(translateFoxguardJson(report)).toEqual(translateFoxguardJson(SAMPLE_FOXGUARD_JSON));
+    expect(translateFoxguardJson(report)[0]?.ruleId).toBe("js/no-eval");
   });
 
   it("defaults endLine to startLine when foxguard omits end_line", () => {

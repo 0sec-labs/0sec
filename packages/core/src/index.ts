@@ -82,6 +82,12 @@ export type { PackageAuditOptions } from "./audit.js";
 // Source code review
 export { sourceReview } from "./review.js";
 export type { SourceReviewOptions } from "./review.js";
+export { huntAppFixVariants, appFixVariantsToSeedFindings } from "./review/app-fix-variants.js";
+export type {
+  AppFixVariantCandidate,
+  AppFixVariantHuntResult,
+  AppFixVariantHuntOptions,
+} from "./review/app-fix-variants.js";
 // FoxGuard cross-validation: ranked/deduped lead helpers + the typed result
 // surfaced on the review report (0sec FoxGuard cross-validation, Phase 2).
 export {
@@ -2062,6 +2068,16 @@ export type {
   RunDeterministicReplayOpts,
   StepResult as VerifyStepResult,
 } from "./verify/index.js";
+export {
+  createReproductionBundle,
+  runReproductionBundle,
+  validateBundlePlan,
+} from "./verify/reproduction-bundle.js";
+export type {
+  BundlePlan,
+  BundleManifest,
+  ReproductionBundleResult,
+} from "./verify/reproduction-bundle.js";
 // in the cli package; this surface is the programmatic entry point.
 export {
   loadH1Credentials,

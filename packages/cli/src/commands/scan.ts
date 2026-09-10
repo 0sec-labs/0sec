@@ -6,7 +6,7 @@ import type { ScanDepth, OutputFormat, RuntimeMode, ScanMode, AuthConfig } from 
 import { networkScopeRequiredRefusal, targetRequiresScope } from "@0sec/core";
 import { renderReplay } from "../formatters/replay.js";
 import { runUnified } from "./run.js";
-import { reportSummarySchema, formatZodError } from "./schemas.js";
+import { reportSummarySchema, formatZodError } from "@0sec/shared";
 
 /**
  * Parse the --auth flag value into an AuthConfig object.

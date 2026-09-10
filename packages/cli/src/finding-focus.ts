@@ -6,7 +6,7 @@ import {
   osecDB,
   resolveOsecDbPath,
 } from "@0sec/db";
-import { findingSchema, formatZodError } from "./commands/schemas.js";
+import { findingSchema, formatZodError } from "@0sec/shared";
 
 
 export type FindingFocus = {

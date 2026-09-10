@@ -74,7 +74,14 @@ Use the **access_control_probe** tool to test authorization boundaries:
 3. The tool replays the same request as each identity and diffs status + body.
    A comparison identity that gets the SAME resource = confirmed broken access
    control; a lower-privileged identity reaching an admin endpoint = vertical
-   privilege escalation. Save a finding with the returned A-vs-B evidence.`;
+   privilege escalation. Save a finding with the returned A-vs-B evidence.
+
+For write endpoints or multi-step workflows, use \`access_control_workflow\`
+on disposable, in-scope resources with explicit \`allow_mutation: true\`.
+Read the resource as its owner before and after the other identity's actions.
+Choose a fresh expected state marker. A successful HTTP response alone is not
+proof: require the owner-visible state to change to that marker. Treat missing,
+truncated, or failed observations as inconclusive, never as a confirmed break.`;
 }
 
 // JIT skill tool mention (#458). Appended to attack / research / shell

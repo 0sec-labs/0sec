@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 
 // Hoisted subprocess mock — `runSemgrepScan` calls `execFileSync` directly
 // (no test seam), so we intercept it at the module boundary. The mock
-// dispatches by command name (`semgrep` vs `npx`) and returns the canned
+// dispatches by command name (`semgrep` vs `foxguard`) and returns the canned
 // JSON the corresponding parser expects.
 const execFileSyncMock = vi.fn();
 vi.mock("node:child_process", async () => {
@@ -32,7 +32,7 @@ vi.mock("node:child_process", async () => {
   return { ...actual, execFileSync: execFileSyncMock };
 });
 
-const { runFoxguardScan, runSemgrepScan, FOXGUARD_PINNED_TAG } = await import(
+const { runFoxguardScan, runSemgrepScan } = await import(
   "../shared-analysis.js"
 );
 
@@ -90,14 +90,11 @@ describe("scanner parity: runSemgrepScan vs runFoxguardScan on vuln-eval.js", ()
           ],
         });
       }
-      if (cmd === "npx") {
-        // Foxguard's JSON output for the same fixture, canned to mirror
-        // foxguard@v0.8.1's `Finding` struct (see src/lib.rs).
-        expect(args).toContain("--yes");
-        expect(args).toContain(`foxguard@${FOXGUARD_PINNED_TAG}`);
-        expect(args).toContain("--format");
-        expect(args).toContain("json");
-        return JSON.stringify([
+      if (cmd === "foxguard") {
+        return JSON.stringify({
+          schema_version: "1.0.0",
+          finding_schema_version: "1.0.0",
+          findings: [
           {
             rule_id: "js/no-eval",
             severity: "critical",
@@ -111,7 +108,8 @@ describe("scanner parity: runSemgrepScan vs runFoxguardScan on vuln-eval.js", ()
             snippet: "eval(code);",
             taint_hops: 1,
           },
-        ]);
+          ],
+        });
       }
       throw new Error(`unexpected subprocess command in test: ${cmd}`);
     });

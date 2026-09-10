@@ -21,7 +21,7 @@ import { promisify } from "node:util";
 import { existsSync, readFileSync } from "node:fs";
 import { promises as fsp } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, basename, resolve } from "node:path";
+import { join, resolve, posix } from "node:path";
 import { inferCategoryFromRule, parseFoxguardSarif, type FoxguardFinding } from "./foxguard-sarif.js";
 export {
   inferCategoryFromRule,
@@ -111,21 +111,23 @@ export function extractFilesFromFinding(finding: Finding): string[] {
 // Agreement computation
 // ────────────────────────────────────────────────────────────────────
 
-function basenameOf(p: string): string {
-  return basename(p.split(":")[0] ?? p);
+function normalizeFindingPath(path: string): string {
+  return posix.normalize(path.replaceAll("\\", "/")).replace(/^\.\//, "");
 }
 
 export function computeAgreement(
   finding: Finding,
   foxguardFindings: FoxguardFinding[],
 ): MultiModalResult {
-  const osecFiles = extractFilesFromFinding(finding);
-  const osecBasenames = new Set(osecFiles.map(basenameOf));
-
-  // Match by basename (most portable across cwd / sandbox layouts).
-  const matchedByFile = foxguardFindings.filter((f) =>
-    osecBasenames.has(basenameOf(f.file)),
-  );
+  const osecFiles = extractFilesFromFinding(finding).map(normalizeFindingPath);
+  // Match full paths or a repo-relative suffix at a directory boundary.
+  // Basename-only matches incorrectly corroborate unrelated users.ts files.
+  const matchedByFile = foxguardFindings.filter((f) => {
+    const file = normalizeFindingPath(f.file);
+    return osecFiles.some((path) =>
+      file === path || file.endsWith(`/${path}`) || path.endsWith(`/${file}`),
+    );
+  });
 
   if (matchedByFile.length === 0) {
     // Foxguard scanned but had no finding in 0sec's file. Weak FP signal.
@@ -136,7 +138,7 @@ export function computeAgreement(
       reasoning:
         osecFiles.length === 0
           ? "0sec finding has no extractable file path; foxguard has no matching rule"
-          : `foxguard scanned but reported no finding in ${Array.from(osecBasenames).join(", ")}`,
+          : `foxguard scanned but reported no finding in ${osecFiles.join(", ")}`,
     };
   }
 
@@ -215,7 +217,6 @@ export async function checkMultiModalAgreement(
     `foxguard-scan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.sarif`,
   );
   const args = [
-    "scan",
     resolve(sourceDir),
     "--format",
     "sarif",

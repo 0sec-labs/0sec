@@ -40,6 +40,88 @@ export const accessControlToolDefinitions: Record<string, ToolDefinition> = {
     },
     required: ["url"],
   },
+  access_control_workflow: {
+    name: "access_control_workflow",
+    description:
+      "Stateful access-control workflow: observe a JSON resource as the owner, execute " +
+      "a bounded sequence of HTTP requests as a different identity (the actor), then " +
+      "re-observe and detect whether the actor caused a state transition to an expected " +
+      "marker value. Complements access_control_probe by detecting UNAUTHORIZED STATE " +
+      "CHANGE, not just unauthorized read (2xx). " +
+      "Caller must set allow_mutation=true and explain disposable-resource use; the tool " +
+      "never auto-creates destructive cleanup. Returns explicit confirmed / no_change / " +
+      "inconclusive verdicts with per-step evidence.",
+    parameters: {
+      allow_mutation: {
+        type: "boolean",
+        description:
+          "Explicit opt-in acknowledging that the actor steps may mutate target state. " +
+          "Set to true only after confirming the target resource is disposable and the " +
+          "operator is aware of the state-changing request.",
+      },
+      owner_identity: {
+        type: "string",
+        description: "Label of the identity that legitimately owns the resource and can observe its state via GET.",
+      },
+      actor_identity: {
+        type: "string",
+        description: "Label of the identity being tested for unauthorized state mutation. Must differ from owner_identity.",
+      },
+      observation_url: {
+        type: "string",
+        description: "URL the owner reads (HTTP GET) to observe resource state before and after the actor steps.",
+      },
+      observation_json_pointer: {
+        type: "string",
+        description:
+          "JSON pointer (RFC 6901) into the observation response body, selecting the " +
+          "field whose value is the state marker (e.g. /status/state, /data/0/active).",
+      },
+      expected_state: {
+        type: "string",
+        description:
+          "Explicit string value the owner should observe at the JSON pointer location " +
+          "AFTER the actor steps complete. The tool compares this to both before and after " +
+          "observations to decide the verdict.",
+      },
+      steps: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            method: {
+              type: "string",
+              enum: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+              description: "HTTP method for this step request.",
+            },
+            url: { type: "string", description: "Target URL for this step request." },
+            body: {
+              type: "string",
+              description: "Optional request body sent verbatim with this step.",
+            },
+            headers: {
+              type: "object",
+              description:
+                "Optional extra headers for this step. Authorization, Cookie, and " +
+                'Proxy-Authorization are rejected pre-flight — the actor identity\'s ' +
+                "own auth is injected automatically.",
+            },
+          },
+          required: ["method", "url"],
+        },
+        description: "Bounded ordered list of requests executed as the actor identity (max 10). Prevalidated before any request is sent.",
+      },
+    },
+    required: [
+      "allow_mutation",
+      "owner_identity",
+      "actor_identity",
+      "observation_url",
+      "observation_json_pointer",
+      "expected_state",
+      "steps",
+    ],
+  },
 };
 
 // Tool-name → ToolExecutor handler-method name (0sec#614). Co-located with
@@ -48,4 +130,5 @@ export const accessControlToolDefinitions: Record<string, ToolDefinition> = {
 // executor instance in agent/tools.ts (handler bodies stay private methods).
 export const accessControlDispatch: Record<string, string> = {
   access_control_probe: "accessControlProbe",
+  access_control_workflow: "accessControlWorkflow",
 };

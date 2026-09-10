@@ -89,6 +89,20 @@ export type {
   KernelRunResult,
 } from "../agent/tools/kernel-run.js";
 
+// 0sec#194 follow-up — reproducible verification bundles.
+export {
+  createReproductionBundle,
+  runReproductionBundle,
+  validateBundlePlan,
+} from "./reproduction-bundle.js";
+export type {
+  BundlePlan,
+  BundleManifest,
+  BundleSideManifest,
+  RunnerCompatibility,
+  ReproductionBundleResult,
+} from "./reproduction-bundle.js";
+
 // 0sec#193 — deterministic replay runner public surface.
 export {
   runDeterministicReplay,

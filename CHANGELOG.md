@@ -12,6 +12,26 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+### Added
+
+- Stateful `access_control_workflow` verification with isolated identities,
+  explicit mutation consent, scoped multi-step requests, and owner-observed
+  state transitions rather than HTTP-status-only claims.
+- `review --fix-commit <sha> [--variants-only]` for bounded, heuristic
+  JavaScript/TypeScript/Python incomplete-fix leads.
+- Two-phase `verify --create-bundle` and `verify --bundle` with allowlisted
+  snapshots, integrity and runtime checks, explicit runner selection, and
+  vulnerable/patched negative controls. Failed processes never confirm a fix.
+
+### Fixed
+
+- Foxguard integration accepts native v1 reports, preserves finding metadata,
+  uses the installed binary or pinned npm v0.12.0, and reports scanner failures
+  before falling back to Semgrep.
+- Finding and PoC JSON validation is shared between CLI ingestion and bundle
+  replay rather than maintained as divergent schemas.
+
+
 ## [0.16.2] - 2026-09-09
 
 ### Fixed

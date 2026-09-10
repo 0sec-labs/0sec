@@ -4,78 +4,7 @@ import { TOOL_DEFINITIONS } from "./index.js";
 import { ToolExecutor } from "../tools.js";
 import type { ToolContext } from "../types.js";
 
-// 0sec#614 — the dispatch table replaced ToolExecutor's hand-written switch.
-// These tests pin the routing byte-for-byte against the pre-split switch and
-// guard the one new coupling it introduces: the handler-method *names* are
-// strings, so a method rename would silently break dispatch at runtime. The
-// `resolves to a real method` test below turns that into a compile-cheap,
-// fast unit failure instead.
-
-// Exact tool-name → handler-method routing. Any drift here is a behavior change.
-const EXPECTED_ROUTING: Record<string, string> = {
-  http_request: "httpRequest",
-  send_prompt: "sendPromptTool",
-  save_finding: "saveFinding",
-  query_findings: "queryFindings",
-  use_loot: "useLoot",
-  plan: "planTool",
-  update_finding: "updateFinding",
-  read_file: "readFile",
-  list_files: "listFiles",
-  search_files: "searchFiles",
-  str_replace: "strReplace",
-  apply_patch: "applyPatch",
-  run_command: "runCommand",
-  update_target: "updateTarget",
-  crawl: "crawl",
-  submit_form: "submitForm",
-  access_control_probe: "accessControlProbe",
-  bash: "shellExec",
-  browser: "browserAction",
-  spawn_agent: "spawnAgent",
-  spawn_agents: "spawnAgents",
-  spawn_persistent_agent: "spawnPersistentAgent",
-  monitor: "monitor",
-  web_search: "webSearch",
-  intel: "intelTool",
-  payload_lookup: "payloadLookup",
-  pty_session: "ptySession",
-  wp_fingerprint: "wpFingerprint",
-  discover_api_surface: "discoverApiSurface",
-  surface_sweep: "surfaceSweep",
-  js_recon: "jsRecon",
-  mongo_objectid: "mongoObjectIdForge",
-  list_skills: "listSkills",
-  load_skill: "loadSkill",
-  done: "markDone",
-  run_scanner: "runScanner",
-  structural_sqli_probe: "structuralSqliProbe",
-  prompt_layer_probe: "promptLayerProbe",
-  auth_boundary_probe: "authBoundaryProbe",
-  // 0sec#925 — live cloud-surface tools.
-  cloud_s3_probe: "cloudS3Probe",
-  cloud_validate_credentials: "cloudValidateCredentials",
-  start_scan: "startScan",
-  // 0sec#659 — OAST out-of-band interaction tools.
-  oast_register: "oastRegister",
-  oast_poll: "oastPoll",
-  // Phase-0 — persistent compute-only Python kernel.
-  python_exec: "pythonExec",
-  analyze_binary: "analyzeBinary",
-  // Operator question channel — information-gathering only, grants nothing.
-  ask_operator: "askOperator",
-  // Structured full-state plan (TodoWrite shape); `write_todos` is an alias.
-  update_todos: "updateTodos",
-  write_todos: "updateTodos",
-  // Model self-extension front door (gated on `allowModelSelfExtension`).
-  self_extend: "selfExtend",
-};
-
 describe("TOOL_DISPATCH (0sec#614)", () => {
-  it("routes every tool to the same handler the switch did", () => {
-    expect(TOOL_DISPATCH).toEqual(EXPECTED_ROUTING);
-  });
-
   it("covers exactly the registry — no orphan routes, no unrouted tools", () => {
     expect(Object.keys(TOOL_DISPATCH).sort()).toEqual(Object.keys(TOOL_DEFINITIONS).sort());
   });

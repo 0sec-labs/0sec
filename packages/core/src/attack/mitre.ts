@@ -294,6 +294,7 @@ const TOOL_MAP: Record<string, AttackTechnique[]> = {
   // ── Web exploitation probes ──
   structural_sqli_probe: chain("T1190", "T1595.002"),
   access_control_probe: chain("T1190", "T1078"),
+  access_control_workflow: chain("T1190", "T1078"),
   auth_boundary_probe: chain("T1078", "T1190"),
 
   // ── LLM target probes ──

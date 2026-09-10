@@ -71,6 +71,16 @@ identity, replays the SAME request as another identity, and diffs the result.
    [low-priv user, anonymous], expect_denied = true.
 3. A 2xx for the low-priv / anonymous identity = vertical privilege escalation.
 
+### Cross-tenant writes and multi-step workflows
+1. Use a disposable resource and a fresh marker within the approved scope.
+2. Call \`access_control_workflow\` with the owner and actor identities,
+   an owner-visible JSON observation, the actor's ordered requests, and
+   \`allow_mutation: true\`.
+3. Confirm only when the owner-visible state changes to the expected marker.
+   A 2xx/no-op is not proof, and a 403 can still hide a committed state change.
+4. Keep before/after and per-step evidence. Missing observations, transport
+   errors, or a marker already present before the attempt are inconclusive.
+
 ### Tips
 - The HTTP tools are now stateful: a session cookie captured via submit_form is
   auto-re-injected, so you do NOT need manual \`curl -c/-b\` jars.

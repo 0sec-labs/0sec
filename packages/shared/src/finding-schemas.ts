@@ -1,21 +1,11 @@
 /**
- * Runtime validation schemas for the two highest-risk `JSON.parse(...) as T`
- * sites in the CLI: `0sec verify --finding <path>` (external user-supplied
- * JSON) and `0sec disclose` (DB-stored `pocSteps` blob).
- *
- * These schemas mirror the canonical TypeScript types in `@0sec/shared`
- * (`Finding`, `PocStep`, and friends). They are intentionally permissive on
- * unknown top-level fields (`.passthrough()`) — the shared `Finding` type
- * grows over time and old fixtures should keep working — but strict on the
- * fields the rest of the codebase actually reads.
- *
- * Keep these schemas in lockstep with `packages/shared/src/types.ts`. If a
- * new field is added to `Finding` and downstream code starts depending on
- * it, mirror it here.
+ * Canonical runtime validation for externally supplied findings, PoC steps,
+ * and persisted report summaries. Shared by CLI ingestion and bundle replay.
+ * Unknown finding metadata is preserved; execution-relevant fields are checked.
  */
 
 import { z } from "zod";
-import type { AttackCategory, Finding, PocStep, ReportSummary } from "@0sec/shared";
+import type { AttackCategory, Finding, PocStep, ReportSummary } from "./types.js";
 
 // ── Enum mirrors ────────────────────────────────────────────────────────────
 //

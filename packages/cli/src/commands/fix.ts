@@ -10,7 +10,7 @@ import {
   type SourceFixResult,
 } from "@0sec/core";
 import { z } from "zod";
-import { findingSchema, formatZodError } from "./schemas.js";
+import { findingSchema, formatZodError } from "@0sec/shared";
 import { loadFindingFocus } from "../finding-focus.js";
 
 type FixRuntimeType = Extract<RuntimeType, "api">;

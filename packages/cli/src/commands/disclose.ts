@@ -7,7 +7,7 @@ import type { Finding, AttackCategory, Severity, Evidence, FindingStatus, PocSte
 import { writePresentationLine, writePresentationErrorLine } from "../presentation/process-output.js";
 import { DEFAULT_SEVERITY_FLOOR, meetsSeverityFloor } from "@0sec/shared";
 import { z } from "zod";
-import { pocStepArraySchema, formatZodError } from "./schemas.js";
+import { pocStepArraySchema, formatZodError } from "@0sec/shared";
 import {
   renderAdvisoryMarkdown,
   renderExploitScreenshot,

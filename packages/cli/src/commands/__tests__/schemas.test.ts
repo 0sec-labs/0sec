@@ -17,7 +17,7 @@ import {
   pocStepSchema,
   reportSummarySchema,
   formatZodError,
-} from "../schemas.js";
+} from "@0sec/shared";
 
 function validFinding(): Record<string, unknown> {
   return {

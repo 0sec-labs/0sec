@@ -156,6 +156,19 @@ export function registerReviewCommand(program: Command): void {
       "JSON array of prior findings. Fresh review treats it as untrusted context and investigates variants without repeating the originals.",
     )
     .option(
+      "--fix-commit <sha>",
+      "Analyze a security-fix commit and hunt for structurally similar unpatched code paths (variant hunting). " +
+        "Requires a local git repo. Resolves the commit to its full SHA and first-parent preimage. " +
+        "When used alone, feeds candidates as SeedFindings into the review pipeline. " +
+        "Combine with --variants-only to emit candidates as JSON without model/network calls.",
+    )
+    .option(
+      "--variants-only",
+      "Emit full variant-hunt result as JSON (candidates, language coverage, errors) and exit. " +
+        "Requires --fix-commit. No model, cloud, or network calls are made.",
+      false,
+    )
+    .option(
       "--npm-dynamic",
       "Also run the npm dynamic-discovery detector sweep (SSPP fuzz / validation read-stability / SSRF parser-diff) over the package in a disposable sandbox. Only effective with --ecosystem npm. Confirmed leads flow into the same verify → disclosure path.",
       false,
@@ -184,6 +197,12 @@ export function registerReviewCommand(program: Command): void {
         );
       }
 
+      if (opts.variantsOnly && (opts.seedFindings || opts.seedOnly || opts.resume)) {
+        throw new Error("--variants-only cannot be combined with seed input or resume options");
+      }
+      if (opts.fixCommit && (opts.harnessTier === "2" || opts.harnessTier === "3")) {
+        throw new Error("--fix-commit cannot be combined with harness execution tiers");
+      }
       let seedFindings: SeedFinding[] | undefined;
       const seedPath = opts.seedFindings as string | undefined;
       if (seedPath) {
@@ -195,10 +214,62 @@ export function registerReviewCommand(program: Command): void {
           ),
         );
       }
+
+
+      // --fix-commit / --variants-only — application security-fix variant hunting.
+      const fixCommit = opts.fixCommit as string | undefined;
+      const variantsOnly = opts.variantsOnly as boolean;
+
+      if (variantsOnly && !fixCommit) {
+        throw new Error(
+          "--variants-only requires --fix-commit <sha>: there is no fix to derive variants from.",
+        );
+      }
+
+      if (fixCommit) {
+        const { huntAppFixVariants, appFixVariantsToSeedFindings } = await import("@0sec/core");
+        const result = huntAppFixVariants({
+          repoPath: repo,
+          fixCommit,
+        });
+
+        if (variantsOnly) {
+          // Print the full result as JSON and exit. No model/cloud/network.
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+
+        // Convert candidates to SeedFindings and merge with any existing seeds.
+        const fixSeeds = appFixVariantsToSeedFindings(result);
+        if (fixSeeds.length > 0) {
+          console.log(
+            chalk.cyan(
+              `[review] derived ${fixSeeds.length} variant SeedFinding(s) from fix commit ${result.fixCommit.slice(0, 12)} "${result.fixSubject}"`,
+            ),
+          );
+        } else {
+          console.log(
+            chalk.yellow(
+              `[review] fix commit ${result.fixCommit.slice(0, 12)} produced no unguarded variant candidates`,
+            ),
+          );
+        }
+
+        if (result.errors.length > 0) {
+          for (const err of result.errors) {
+            console.warn(chalk.yellow(`[review] variant-hunt warning: ${err}`));
+          }
+        }
+
+        if (seedFindings) {
+          seedFindings = [...seedFindings, ...fixSeeds];
+        } else {
+          seedFindings = fixSeeds.length > 0 ? fixSeeds : undefined;
+        }
+      }
       if (opts.seedOnly && (!seedFindings || seedFindings.length === 0)) {
         throw new Error("--seed-only requires --seed-findings with at least one valid lead.");
       }
-
       const harnessTier = normalizeHarnessTier(opts.harnessTier as string | undefined);
       if (harnessTier === 2) {
         // Tier-2 short-circuits the agent pipeline: 0sec just emits

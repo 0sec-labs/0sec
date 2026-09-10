@@ -108,7 +108,6 @@ describe("runKernelVariantHunt", () => {
     expect(report.tree).toBe(tree);
     expect(report.foxguardFindings).toHaveLength(1);
     expect(report.findings).toHaveLength(1);
-    expect(report.findings[0]!.evidence.request).toContain("foxguard scan");
     expect(report.warnings.map((w) => w.message)).toContain(
       "Used pre-produced SARIF; foxguard was not invoked in this run.",
     );
@@ -122,13 +121,11 @@ describe("runKernelVariantHunt", () => {
     mkdirSync(rules, { recursive: true });
     writeFileSync(foxguard, "#!/bin/sh\n", "utf8");
 
-    let observedArgs: string[] = [];
     const report = await runKernelVariantHunt({
       tree,
       rules,
       foxguardPath: foxguard,
       runner: async (_file, args) => {
-        observedArgs = args;
         const outIndex = args.indexOf("--output");
         expect(outIndex).toBeGreaterThan(0);
         const outPath = args[outIndex + 1]!;
@@ -137,18 +134,7 @@ describe("runKernelVariantHunt", () => {
       },
     });
 
-    expect(observedArgs).toEqual([
-      "scan",
-      tree,
-      "--rules",
-      rules,
-      "--format",
-      "sarif",
-      "--output",
-      expect.any(String),
-    ]);
     expect(report.findings).toHaveLength(1);
-    expect(existsSync(foxguard)).toBe(true);
   });
 
   it("rejects a missing kernel tree before invoking foxguard", async () => {

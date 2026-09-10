@@ -81,6 +81,7 @@ const TOOL_REGISTRY_ORDER = [
   "crawl",
   "submit_form",
   "access_control_probe",
+  "access_control_workflow",
   "bash",
   "browser",
   "spawn_agent",

@@ -122,6 +122,26 @@ describe("computeAgreement", () => {
     expect(result.foxguardFindings).toHaveLength(1);
   });
 
+  it("corroborates native Foxguard file URIs", () => {
+    const fox = parseFoxguardSarif(makeSarif([{
+      ruleId: "sql-injection-concat",
+      message: "SQL injection",
+      file: "file:///repo/src/routes/users.ts",
+      startLine: 42,
+    }]));
+    expect(computeAgreement(makeFinding(), fox).agreement).toBe("both_fire");
+  });
+
+  it("does not corroborate a different file with the same basename", () => {
+    const fox = parseFoxguardSarif(makeSarif([{
+      ruleId: "sql-injection-concat",
+      message: "SQL injection",
+      file: "/repo/src/admin/users.ts",
+      startLine: 42,
+    }]));
+    expect(computeAgreement(makeFinding(), fox).agreement).toBe("only_Osec");
+  });
+
   it("both_fire with medium confidence when file matches but category differs", () => {
     const f = makeFinding(); // category = sql-injection
     const fox = parseFoxguardSarif(
@@ -180,21 +200,6 @@ describe("checkMultiModalAgreement", () => {
     expect(result.confidence).toBe(0.95);
   });
 
-  it("returns only_Osec@0.5 when foxguard binary is missing", async () => {
-    const f = makeFinding();
-    // Force missing binary by supplying a nonexistent path and no override.
-    const result = await checkMultiModalAgreement(f, "/nonexistent", {
-      foxguardPath: undefined,
-      // runner will never be called because detectFoxguard fails
-    });
-    // Note: on a machine where foxguard IS installed, this would go down the
-    // real-run path. We can't deterministically prove the "missing" branch
-    // without mocking `detectFoxguard`, so accept either outcome: missing OR
-    // a bad-sourceDir reason.
-    expect(["only_Osec", "both_fire"]).toContain(result.agreement);
-    expect(result.confidence).toBeGreaterThanOrEqual(0);
-    expect(result.confidence).toBeLessThanOrEqual(1);
-  });
 });
 
 describe("fuseTriageSignals", () => {
