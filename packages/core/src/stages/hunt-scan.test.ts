@@ -620,9 +620,9 @@ describe("runHuntScan — memory-flywheel priming (0SEC_HUNT_FLYWHEEL=1)", () =>
 
     // f-0 is the true match (buried under a generically-higher judge score);
     // f-1/f-2 are unrelated noise the generic judge over-rates.
-    analysisAgentMock.mockReset();
+    // Exercise ranking without six unrelated SQLite-backed source-agent sessions.
     let call = 0;
-    analysisAgentMock.mockImplementation(async () => {
+    const finder: NonNullable<Parameters<typeof runHuntScan>[0]["finder"]> = async () => {
       const i = call++;
       const bodies = [
         ["f-0", "nf_tables element UAF", "nft_set_elem_deactivate use-after-free race with gc"],
@@ -631,7 +631,7 @@ describe("runHuntScan — memory-flywheel priming (0SEC_HUNT_FLYWHEEL=1)", () =>
       ] as const;
       const [id, title, analysis] = bodies[i % bodies.length];
       return { findings: [mkFinding(id, title, analysis)] };
-    });
+    };
     const judgeScores = new Map([
       ["f-0", 2],
       ["f-1", 8],
@@ -659,6 +659,7 @@ describe("runHuntScan — memory-flywheel priming (0SEC_HUNT_FLYWHEEL=1)", () =>
       attemptsPerCandidate: 3,
       judgeTopK: 3, // == group size: nothing is dropped, only reordered
       judgeCandidates,
+      finder,
     };
 
     const prevFlag = process.env["0SEC_HUNT_FLYWHEEL"];
