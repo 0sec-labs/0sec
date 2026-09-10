@@ -362,58 +362,36 @@ describe("append-only and idempotence", () => {
 });
 
 describe("makeSkepticVerifier wiring", () => {
-  it("records its verdict and lets a LATER verdict in the same run see it", async () => {
-    // Worker A refutes: the mocked refute pass returns no findings.
+  it("does not turn a model-only rejection into a shared known negative", async () => {
     analysisAgentMock.mockReset();
     analysisAgentMock.mockResolvedValue({ findings: [] });
     const { makeSkepticVerifier } = await import("./hunt-scan.js");
-
     const candidate = { path: "drivers/net/wireless/foo.c" };
     const finding = mkFinding(
       "use-after-free in foo_release",
       "CWE-416: ctx freed while timer_delete_sync may still run",
     );
-
-    const workerA = makeSkepticVerifier({
-      sourceRoot: dir,
-      runtime: "api",
-      model: "model-a",
-      crossFamilyRefute: false,
-      ledgerPath: ledger,
+    for (const model of ["model-a", "model-b"]) {
+      const verifier = makeSkepticVerifier({
+        sourceRoot: dir, runtime: "api", model,
+        crossFamilyRefute: false, ledgerPath: ledger,
+      });
+      expect((await verifier(finding, candidate)).confirmed).toBe(false);
+    }
+    expect(disprovenHuntClaims(loadHuntLedger(ledger))).toEqual([]);
+    expect(loadKnownNegativesFromLedger(ledger)).toEqual([]);
+    expect(unresolvedHuntClaims(loadHuntLedger(ledger))[0]).toMatchObject({
+      status: "unresolved",
+      shape: { path: candidate.path, bugClass: finding.category },
     });
-    const verdictA = await workerA(finding, candidate);
-    expect(verdictA.confirmed).toBe(false);
-
-    // The refutation is on the ledger, phrased as what it actually is.
-    const dead = disprovenHuntClaims(loadHuntLedger(ledger));
-    expect(dead).toHaveLength(1);
-    expect(dead[0].observations[0].statement).toContain("adversarial refute pass over drivers/net/wireless/foo.c");
-    expect(dead[0].assumptions[0].statement).toContain("CWE-416");
-
-    // Worker B, constructed AFTER worker A already ran (the in-run case the
-    // end-of-run corpus cannot cover), gets the prior refute in its prompt.
-    analysisAgentMock.mockClear();
-    const workerB = makeSkepticVerifier({
-      sourceRoot: dir,
-      runtime: "api",
-      model: "model-b",
-      crossFamilyRefute: false,
-      ledgerPath: ledger,
-    });
-    await workerB(finding, candidate);
-    const hint = analysisAgentMock.mock.calls.at(-1)?.[0]?.agentSystemPrompt as string;
-    expect(hint).toContain("KNOWN PRIOR REFUTE");
-    expect(hint).toContain("adversarial refute pass over drivers/net/wireless/foo.c");
   });
 
-  it("leaves the prompt untouched and writes nothing when no ledger is configured", async () => {
+  it("does not persist claims when no ledger is configured", async () => {
     analysisAgentMock.mockReset();
     analysisAgentMock.mockResolvedValue({ findings: [] });
     const { makeSkepticVerifier } = await import("./hunt-scan.js");
     const verifier = makeSkepticVerifier({ sourceRoot: dir, runtime: "api", model: "model-a", crossFamilyRefute: false });
     await verifier(mkFinding("some claim", "analysis"), { path: "a.c" });
-    const hint = analysisAgentMock.mock.calls.at(-1)?.[0]?.agentSystemPrompt as string;
-    expect(hint).not.toContain("KNOWN PRIOR REFUTE");
     expect(existsSync(ledger)).toBe(false);
   });
 

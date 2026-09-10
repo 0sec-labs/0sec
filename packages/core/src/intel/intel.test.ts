@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -427,6 +427,102 @@ describe("vulnerability intel", () => {
       expect(inferred.input.repository).toBe("acme/my-tool");
     } finally {
       rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects leaf symlink that resolves outside repo root", () => {
+    const repo = mkdtempSync(join(tmpdir(), "0sec-intel-repo-"));
+    const outsideDir = mkdtempSync(join(tmpdir(), "0sec-intel-outside-"));
+    try {
+      // Create a legitimate-looking external metadata file
+      writeFileSync(join(outsideDir, "package.json"), JSON.stringify({
+        name: "exfiltrated-package",
+        repository: "https://github.com/evil/exfiltrated",
+      }));
+
+      // Repo root has no own package.json; the symlink should NOT be followed
+      mkdirSync(join(repo, ".git"), { recursive: true });
+      symlinkSync(join(outsideDir, "package.json"), join(repo, "package.json"));
+
+      const inferred = inferTargetHistoryInputFromRepo(repo);
+
+      // package.json present as a symlink but outside — must be ignored
+      expect(inferred.sources).not.toContain("package.json");
+      expect(inferred.input.ecosystem).toBeUndefined();
+      expect(inferred.input.packageName).toBeUndefined();
+      expect(inferred.input.repository).toBeUndefined();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects intermediate directory symlink that escapes repo root", () => {
+    const repo = mkdtempSync(join(tmpdir(), "0sec-intel-repo-"));
+    const outsideDir = mkdtempSync(join(tmpdir(), "0sec-intel-outside-"));
+    try {
+      // External metadata file
+      writeFileSync(join(outsideDir, "Cargo.toml"), [
+        "[package]",
+        'name = "escaped-crate"',
+        'repository = "https://github.com/evil/escaped"',
+      ].join("\n"));
+
+      // .git is a symlink to outsideDir — .git/config should resolve outside
+      symlinkSync(outsideDir, join(repo, ".git"));
+
+      const inferred = inferTargetHistoryInputFromRepo(repo);
+
+      // .git/config via symlinked .git directory — must be ignored
+      expect(inferred.sources).not.toContain(".git/config");
+      expect(inferred.input.repository).toBeUndefined();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves normal in-root inference alongside symlink rejections", () => {
+    const repo = mkdtempSync(join(tmpdir(), "0sec-intel-repo-"));
+    const outsideDir = mkdtempSync(join(tmpdir(), "0sec-intel-outside-"));
+    try {
+      // A legitimate in-root package.json
+      mkdirSync(join(repo, ".git"), { recursive: true });
+      writeFileSync(join(repo, "package.json"), JSON.stringify({
+        name: "legitimate-pkg",
+        repository: "https://github.com/legit/pkg",
+      }));
+      writeFileSync(join(repo, ".git", "config"), [
+        "[remote \"origin\"]",
+        "\turl = git@github.com:legit/pkg.git",
+        "",
+      ].join("\n"));
+
+      // An unrelated external file + a symlink to it outside — should be ignored
+      writeFileSync(join(outsideDir, "malicious.json"), JSON.stringify({
+        name: "malicious",
+        repository: "https://github.com/evil/malicious",
+      }));
+      writeFileSync(join(outsideDir, "pyproject.toml"), [
+        "[project]",
+        'name = "poisoned"',
+        'repository = "https://github.com/evil/poisoned"',
+      ].join("\n"));
+      symlinkSync(join(outsideDir, "pyproject.toml"), join(repo, "pyproject.toml"));
+
+      const inferred = inferTargetHistoryInputFromRepo(repo);
+
+      // Legitimate in-root metadata still detected
+      expect(inferred.sources).toContain("package.json");
+      expect(inferred.input.ecosystem).toBe("npm");
+      expect(inferred.input.packageName).toBe("legitimate-pkg");
+      expect(inferred.input.repository).toBe("legit/pkg");
+
+      // pyproject.toml is a symlink to outside — must NOT be in sources
+      expect(inferred.sources).not.toContain("pyproject.toml");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
     }
   });
 

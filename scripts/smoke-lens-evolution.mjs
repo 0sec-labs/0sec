@@ -28,10 +28,12 @@ const previousRegistry = process.env["0SEC_APPSEC_LENS_REGISTRY"];
 process.env["0SEC_APPSEC_LENS_REGISTRY"] = registry;
 const cleanup = () => rmSync(root, { recursive: true, force: true });
 process.on("exit", cleanup);
+// Twelve probes execute eighteen serial finder runs; measured baseline runs
+// take 43–77s each. Keep the independent turn and dollar ceilings below.
 const deadline = setTimeout(() => {
-  console.error("Lens evolution E2E exceeded its ten-minute deadline");
+  console.error("Lens evolution E2E exceeded its thirty-minute deadline");
   process.exit(1);
-}, 600000);
+}, 1800000);
 let claim;
 try {
   const modelId = process.env["0SEC_MODEL"] || "gpt-5.6-luna";
@@ -69,9 +71,12 @@ try {
   const probe = Object.assign(async (...args) => {
     assert(++probeCalls <= 12, "bounded fixture/variant/trial count exceeded");
     assert(validationCostUsd < 6, "validation spend ceiling reached");
+    const started = performance.now();
+    console.error(JSON.stringify({ phase: "probe-start", probe: probeCalls, variant: args[0]?.id ?? "baseline", fixture: args[1].id }));
     const outcome = await realProbe(...args);
     assert(Number.isFinite(outcome.costUsd), outcome.error || "missing probe cost receipt");
     validationCostUsd += outcome.costUsd;
+    console.error(JSON.stringify({ phase: "probe-complete", probe: probeCalls, durationMs: performance.now() - started, costUsd: outcome.costUsd, findings: outcome.findings?.length, error: outcome.error }));
     return outcome;
   }, { baselineSnapshot: () => realProbe.baselineSnapshot() });
   let modelCalls = 0;

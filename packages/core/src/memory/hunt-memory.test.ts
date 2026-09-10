@@ -11,12 +11,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendFileSync,
   existsSync,
+  linkSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
   mkdirSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -294,5 +296,408 @@ describe("permissions", () => {
     const fileMode = statSync(storePath).mode & 0o777;
     expect(dirMode).toBe(0o700);
     expect(fileMode).toBe(0o600);
+  });
+});
+
+describe("rememberCodebase / recallCodebase", () => {
+  /** Create a temp workspace with real files for codebase tests. */
+  function setupWorkspace(): { ws: string; store: HuntMemoryStore } {
+    const ws = mkdtempSync(join(tmpdir(), "cb-ws-"));
+    mkdirSync(join(ws, "src"), { recursive: true });
+    writeFileSync(join(ws, "src", "index.ts"), "export const x = 1;\n");
+    writeFileSync(join(ws, "src", "util.ts"), 'export const greet = () => "hi";\n');
+    const store = new HuntMemoryStore({ home, idFactory: seqIds(), now: () => 1000 });
+    return { ws, store };
+  }
+
+  it("persists codebase evidence and survives store reload", () => {
+    const { ws, store } = setupWorkspace();
+
+    const rec = store.rememberCodebase({
+      root: ws,
+      paths: ["src/index.ts", "src/util.ts"],
+      title: "Project entry point",
+      summary: "exports and greet function",
+      source: "test:1",
+    });
+
+    expect(rec.kind).toBe("pattern");
+    expect(rec.vulnClass).toBe("codebase-context");
+    expect(rec.codebase).toBeDefined();
+    expect(rec.codebase!.files).toHaveLength(2);
+    expect(rec.codebase!.files[0].path).toBe("src/index.ts");
+    expect(rec.codebase!.files[0].digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(rec.codebase!.root).toBe(ws); // canonical = what we passed (no symlink)
+
+    // Fresh store instance reads the same record from disk.
+    const reopened = new HuntMemoryStore({ home });
+    const recalled = reopened.recallCodebase(ws);
+    expect(recalled).toHaveLength(1);
+    expect(recalled[0].id).toBe(rec.id);
+    expect(recalled[0].codebase!.files[0].digest).toBe(rec.codebase!.files[0].digest);
+
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("excludes records with changed file content", () => {
+    const { ws, store } = setupWorkspace();
+
+    store.rememberCodebase({
+      root: ws,
+      paths: ["src/index.ts"],
+      title: "Entry point",
+      summary: "original content",
+      source: "test:1",
+    });
+
+    // Modify the file content.
+    writeFileSync(join(ws, "src", "index.ts"), 'export const x = 42;\n');
+
+    expect(store.recallCodebase(ws)).toHaveLength(0);
+
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("excludes records with deleted files", () => {
+    const { ws, store } = setupWorkspace();
+
+    store.rememberCodebase({
+      root: ws,
+      paths: ["src/index.ts"],
+      title: "Entry point",
+      summary: "original content",
+      source: "test:1",
+    });
+
+    // Delete the file.
+    rmSync(join(ws, "src", "index.ts"));
+
+    expect(store.recallCodebase(ws)).toHaveLength(0);
+
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("isolates records by repository root", () => {
+    const { ws: ws1, store: s1 } = setupWorkspace();
+    const ws2 = mkdtempSync(join(tmpdir(), "cb-ws2-"));
+    mkdirSync(join(ws2, "lib"), { recursive: true });
+    writeFileSync(join(ws2, "lib", "helper.ts"), "export const y = 2;\n");
+
+    s1.rememberCodebase({
+      root: ws1,
+      paths: ["src/index.ts"],
+      title: "First repo",
+      summary: "repo one",
+      source: "test:1",
+    });
+
+    // Use the same store instance.
+    s1.rememberCodebase({
+      root: ws2,
+      paths: ["lib/helper.ts"],
+      title: "Second repo",
+      summary: "repo two",
+      source: "test:2",
+    });
+
+    expect(s1.recallCodebase(ws1)).toHaveLength(1);
+    expect(s1.recallCodebase(ws1)[0].title).toBe("First repo");
+    expect(s1.recallCodebase(ws2)).toHaveLength(1);
+    expect(s1.recallCodebase(ws2)[0].title).toBe("Second repo");
+
+    rmSync(ws1, { recursive: true, force: true });
+    rmSync(ws2, { recursive: true, force: true });
+  });
+
+  it("refuses symlink paths", () => {
+    const { ws, store } = setupWorkspace();
+    const linkTarget = join(ws, "linked.txt");
+    writeFileSync(linkTarget, "linked content\n");
+    const linkPath = join(ws, "the-link");
+    symlinkSync("linked.txt", linkPath);
+
+    expect(() =>
+      store.rememberCodebase({
+        root: ws,
+        paths: ["the-link"],
+        title: "Linked file",
+        summary: "should be rejected",
+        source: "test:1",
+      }),
+    ).toThrow(/symlink/);
+
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("refuses path traversal", () => {
+    const { ws, store } = setupWorkspace();
+    expect(() =>
+      store.rememberCodebase({
+        root: ws,
+        paths: ["../etc/passwd"],
+        title: "Traversal",
+        summary: "should be rejected",
+        source: "test:1",
+      }),
+    ).toThrow(/traversal/);
+
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("refuses absolute paths", () => {
+    const { ws, store } = setupWorkspace();
+    expect(() =>
+      store.rememberCodebase({
+        root: ws,
+        paths: ["/etc/hostname"],
+        title: "Absolute",
+        summary: "should be rejected",
+        source: "test:1",
+      }),
+    ).toThrow(/absolute/);
+
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("returns no results for non-existent root", () => {
+    const { ws, store } = setupWorkspace();
+    expect(store.recallCodebase(join(ws, "nonexistent"))).toEqual([]);
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("does not recall records without codebase evidence", () => {
+    const store = new HuntMemoryStore({ home, idFactory: seqIds() });
+    // Add a regular (non-codebase) record.
+    store.append(baseInput({ createdAt: 100 }));
+    // Also add a codebase-context record with no codebase field via direct append.
+    store.append({
+      kind: "pattern",
+      target: "*",
+      vulnClass: "codebase-context",
+      title: "No evidence",
+      summary: "no codebase attached",
+      source: "test",
+      createdAt: 200,
+    });
+
+    // Neither should appear in recallCodebase.
+    expect(store.recallCodebase("*")).toHaveLength(0);
+    expect(store.recallCodebase("anything")).toHaveLength(0);
+  });
+
+  it("rejects empty paths array", () => {
+    const ws = mkdtempSync(join(tmpdir(), "cb-empty-"));
+    const store = new HuntMemoryStore({ home, idFactory: seqIds() });
+    expect(() =>
+      store.rememberCodebase({
+        root: ws,
+        paths: [],
+        title: "Empty",
+        summary: "no files",
+        source: "test",
+      }),
+    ).toThrow(/at least one path/);
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("rejects too many paths", () => {
+    const ws = mkdtempSync(join(tmpdir(), "cb-toomany-"));
+    mkdirSync(ws, { recursive: true });
+    const paths = Array.from({ length: 17 }, (_, i) => `file${i}.ts`);
+    for (const p of paths) writeFileSync(join(ws, p), `// ${p}\n`);
+    const store = new HuntMemoryStore({ home, idFactory: seqIds() });
+
+    expect(() =>
+      store.rememberCodebase({
+        root: ws,
+        paths,
+        title: "Too many",
+        summary: "exceeds max",
+        source: "test",
+      }),
+    ).toThrow(/too many paths/);
+
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("accepts filenames containing dots (component-aware .. check)", () => {
+    const ws = mkdtempSync(join(tmpdir(), "cb-dots-"));
+    writeFileSync(join(ws, "some..file.ts"), "export const x = 1;\n");
+    const store = new HuntMemoryStore({ home, idFactory: seqIds() });
+    expect(() =>
+      store.rememberCodebase({
+        root: ws,
+        paths: ["some..file.ts"],
+        title: "Dotted filename",
+        summary: "should be accepted",
+        source: "test",
+      }),
+    ).not.toThrow();
+    // Verify it can also be recalled.
+    expect(store.recallCodebase(ws)).toHaveLength(1);
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("rejects recall when intermediate directory is replaced by symlink after note creation", () => {
+    const { ws, store } = setupWorkspace();
+    // Remember a note pointing at src/index.ts.
+    store.rememberCodebase({
+      root: ws,
+      paths: ["src/index.ts"],
+      title: "Entry point",
+      summary: "original content",
+      source: "test:1",
+    });
+
+    // Replace the src/ directory with a symlink pointing outside root.
+    const outside = mkdtempSync(join(tmpdir(), "cb-outside-"));
+    writeFileSync(join(outside, "index.ts"), readFileSync(join(ws, "src", "index.ts")));
+    rmSync(join(ws, "src"), { recursive: true });
+    symlinkSync(outside, join(ws, "src"));
+
+    // recallCodebase must reject the record because the resolved realpath
+    // of src/index.ts now points outside the canonical root.
+    expect(store.recallCodebase(ws)).toHaveLength(0);
+
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("rejects evidence that acquires an out-of-root hardlink", () => {
+    const root = join(home, "repo");
+    mkdirSync(root);
+    const file = join(root, "app.ts");
+    writeFileSync(file, "export const healthy = true;\n");
+    const store = new HuntMemoryStore({ home });
+    const note = {
+      root, paths: ["app.ts"], title: "Health module",
+      summary: "The module exports a health constant.", source: "test",
+    };
+    store.rememberCodebase(note);
+    linkSync(file, join(home, "outside.ts"));
+    expect(store.recallCodebase(root)).toEqual([]);
+    expect(() => store.rememberCodebase(note)).toThrow(/unsafe/);
+  });
+
+  it("ignores records with malformed stored paths", () => {
+    const ws = mkdtempSync(join(tmpdir(), "cb-malformed-"));
+    mkdirSync(join(ws, "src"), { recursive: true });
+    writeFileSync(join(ws, "src", "safe.ts"), "safe content\n");
+    const store = new HuntMemoryStore({ home, idFactory: seqIds(), now: () => 200 });
+
+    // Store a valid note via rememberCodebase, then directly append
+    // malformed ones to simulate corrupted/persisted bad evidence.
+    store.rememberCodebase({
+      root: ws,
+      paths: ["src/safe.ts"],
+      title: "Safe note",
+      summary: "valid",
+      source: "test",
+    });
+    // Malformed: absolute path in stored evidence.
+    store.append({
+      kind: "pattern",
+      target: ws,
+      vulnClass: "codebase-context",
+      title: "Absolute path in evidence",
+      summary: "should be skipped",
+      source: "test",
+      tags: [],
+      createdAt: 300,
+      codebase: { root: ws, files: [{ path: "/etc/passwd", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }] },
+    });
+    // Malformed: traversal path in stored evidence.
+    store.append({
+      kind: "pattern",
+      target: ws,
+      vulnClass: "codebase-context",
+      title: "Traversal in evidence",
+      summary: "should be skipped",
+      source: "test",
+      tags: [],
+      createdAt: 400,
+      codebase: { root: ws, files: [{ path: "../etc/passwd", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }] },
+    });
+
+    // Only the valid note should appear.
+    const result = store.recallCodebase(ws);
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe("Safe note");
+
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("rejects files exceeding size limit", () => {
+    const ws = mkdtempSync(join(tmpdir(), "cb-size-"));
+    // Create a file larger than MAX_CODEBASE_FILE_BYTES (1 MiB).
+    const buf = Buffer.alloc(2 * 1024 * 1024, "a");
+    writeFileSync(join(ws, "large.bin"), buf);
+    const store = new HuntMemoryStore({ home, idFactory: seqIds() });
+    expect(() =>
+      store.rememberCodebase({
+        root: ws,
+        paths: ["large.bin"],
+        title: "Large file",
+        summary: "should be rejected",
+        source: "test",
+      }),
+    ).toThrow(/too large/);
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("returns most recent valid records first and stops at limit", () => {
+    const ws = mkdtempSync(join(tmpdir(), "cb-limit-"));
+    mkdirSync(join(ws, "lib"), { recursive: true });
+    let t = 1000;
+    const store = new HuntMemoryStore({ home, idFactory: seqIds(), now: () => ++t });
+
+    for (let i = 1; i <= 5; i++) {
+      writeFileSync(join(ws, "lib", `f${i}.ts`), `export const f${i} = ${i};\n`);
+      store.rememberCodebase({
+        root: ws,
+        paths: [`lib/f${i}.ts`],
+        title: `Note ${i}`,
+        summary: `file ${i}`,
+        source: "test",
+      });
+    }
+
+    const result = store.recallCodebase(ws, 3);
+    expect(result).toHaveLength(3);
+    expect(result[0].title).toBe("Note 5");
+    expect(result[1].title).toBe("Note 4");
+    expect(result[2].title).toBe("Note 3");
+
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("normal memory queries remain unaffected by codebase records", () => {
+    const ws = mkdtempSync(join(tmpdir(), "cb-unaffected-"));
+    writeFileSync(join(ws, "app.ts"), "export const a = 1;\n");
+    const store = new HuntMemoryStore({ home, idFactory: seqIds(), now: () => 100 });
+
+    // Add a standard finding.
+    store.append(baseInput({ createdAt: 50, target: "a.com" }));
+    // Add a codebase note.
+    store.rememberCodebase({
+      root: ws,
+      paths: ["app.ts"],
+      title: "App file",
+      summary: "codebase note",
+      source: "test",
+    });
+
+    // Standard query should return the finding (kind=finding) but the
+    // codebase note (kind=pattern) only when asking for patterns.
+    expect(store.query({ kind: "finding" })).toHaveLength(1);
+    expect(store.query({ kind: "pattern" })).toHaveLength(1);
+    // Cross-target without filter still returns the codebase note (it has
+    // kind=pattern, vulnClass=codebase-context).
+    const cross = store.crossTarget();
+    expect(cross.length).toBeGreaterThanOrEqual(1);
+    // Unrelated queries remain intact.
+    expect(store.query({ vulnClass: "sqli" }).length).toBeGreaterThanOrEqual(1);
+
+    rmSync(ws, { recursive: true, force: true });
   });
 });

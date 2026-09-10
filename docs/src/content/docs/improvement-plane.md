@@ -40,6 +40,19 @@ Non-negotiable:
 - no overwrite of retained evidence;
 - no candidate with network access during evaluation.
 
+### Model output is not verification
+
+Reasoning text is a diagnostic signal, not an authorization or evidence receipt.
+[CoT faithfulness varies by model and task](https://arxiv.org/abs/2307.13702);
+enforce scope and promotion rules outside the model.
+
+A source claim surviving an adversarial model pass is not a reproduction.
+An empty model refutation is not proof that the claim is false, either. Both
+outcomes remain **unresolved** in the shared hunt ledger; model-only rejection
+must not become a known negative that anchors later research. Existing ledger
+files are not rewritten: re-evaluate any older model-only disprovals before
+reusing them as settled evidence.
+
 ### Source access consent
 
 Because the model proposes edits to its own source tree, the operator must

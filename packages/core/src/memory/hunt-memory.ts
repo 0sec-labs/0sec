@@ -53,15 +53,22 @@
 import {
   appendFileSync,
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
+  realpathSync,
   renameSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { dirname, join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { dirname, isAbsolute, join, sep } from "node:path";
 import { homeStateDir } from "@0sec/shared";
 
 /** Bumped when the on-disk record shape changes incompatibly. */
@@ -116,6 +123,17 @@ export interface HuntRecord {
   source: string;
   /** On-disk schema version. */
   schemaVersion: number;
+  /**
+   * Optional codebase evidence — the set of source files that ground this
+   * note. Set by {@link rememberCodebase}; absent for generic memory records.
+   * The root is the canonical real path (case-sensitive); each file entry
+   * carries the path relative to root and a working-tree content digest
+   * (`sha256:<hex>`).
+   */
+  codebase?: {
+    root: string;
+    files: Array<{ path: string; digest: string }>;
+  };
 }
 
 /** Fields a caller supplies to {@link HuntMemoryStore.append}. */
@@ -134,6 +152,12 @@ export interface HuntRecordInput {
    * store's injected `now()` is used.
    */
   createdAt?: number;
+  /**
+   * Optional codebase evidence — only set by {@link rememberCodebase}.
+   * The store validates the root and files; see {@link rememberCodebase} for
+   * the safety guards applied.
+   */
+  codebase?: { root: string; files: Array<{ path: string; digest: string }> };
 }
 
 /** Query filter for {@link HuntMemoryStore.query}. */
@@ -297,6 +321,86 @@ const DEFAULT_MAX_RECORDS = 5000;
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
 
 // ───────────────────────────────────────────────────────────────────────────
+// Codebase-file helpers
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * True when `p` contains a parent-directory (`..`) component.
+ * Properly component-aware — unlike `.includes("..")` which falsely rejects
+ * legitimate filenames containing `..` (e.g. `some..file.ts`).
+ */
+function hasParentTraversal(p: string): boolean {
+  for (const component of p.split(sep)) {
+    if (component === "..") return true;
+  }
+  return false;
+}
+
+/** Read a bounded regular file, rejecting observed path or content changes.
+ * Canonical containment and inode checks defend symlink replacement; they
+ * are not a substitute for an isolated, immutable evaluation snapshot.
+ */
+function readCodebaseFileBounded(
+  fullPath: string,
+  rootSep: string,
+  maxBytes: number,
+  label: string,
+): Buffer {
+  // Resolve any symlinks in the path and verify containment within root.
+  const realPath = realpathSync.native(fullPath);
+  if (!realPath.startsWith(rootSep)) {
+    throw new Error(`path outside root: ${label}`);
+  }
+
+  // Leaf must not be a symlink (checking the original, un-resolved path so a
+  // dangling or external symlink at the leaf is caught).
+  const lst = lstatSync(fullPath);
+  if (lst.isSymbolicLink()) {
+    throw new Error(`symlink not allowed: ${label}`);
+  }
+  if (!lst.isFile()) {
+    throw new Error(`not a regular file: ${label}`);
+  }
+
+  const fd = openSync(realPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const beforeStat = fstatSync(fd);
+    if (!beforeStat.isFile() || beforeStat.nlink !== 1 ||
+      beforeStat.ino !== lst.ino || beforeStat.dev !== lst.dev) {
+      throw new Error(`unsafe or changed file: ${label}`);
+    }
+    if (beforeStat.size > maxBytes) {
+      throw new Error(`file too large (${beforeStat.size} bytes): ${label}`);
+    }
+
+    const content = Buffer.allocUnsafe(beforeStat.size);
+    let offset = 0;
+    while (offset < content.length) {
+      const count = readSync(fd, content, offset, content.length - offset, offset);
+      if (count === 0) throw new Error(`file changed during read: ${label}`);
+      offset += count;
+    }
+
+    const afterStat = fstatSync(fd);
+    const afterPathStat = statSync(realPath);
+    if (
+      afterPathStat.ino !== beforeStat.ino ||
+      afterPathStat.dev !== beforeStat.dev ||
+      afterStat.size !== beforeStat.size ||
+      afterStat.mtimeMs !== beforeStat.mtimeMs ||
+      afterStat.ctimeMs !== beforeStat.ctimeMs ||
+      realpathSync.native(fullPath) !== realPath
+    ) {
+      throw new Error(`file changed during read: ${label}`);
+    }
+
+    return content;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Store
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -373,6 +477,7 @@ export class HuntMemoryStore {
       createdAt: input.createdAt ?? this.now(),
       source: redactSecrets(input.source),
       schemaVersion: HUNT_MEMORY_SCHEMA_VERSION,
+      ...(input.codebase !== undefined ? { codebase: input.codebase } : {}),
     };
 
     this.ensureDir();
@@ -455,6 +560,175 @@ export class HuntMemoryStore {
         ? { target: opts.excludeTarget, excludeTarget: true }
         : {}),
     });
+  }
+
+  // ── Codebase memory ─────────────────────────────────────────────────────
+
+  /** Max source files per remembered codebase note. */
+  private static readonly MAX_CODEBASE_PATHS = 16;
+
+  /** Max bytes per source file read for codebase evidence. */
+  private static readonly MAX_CODEBASE_FILE_BYTES = 1 * 1024 * 1024;
+
+  /**
+   * Record source-grounded codebase context into hunt memory.
+   *
+   * Hashes the working-tree bytes of every supplied path (bounded: ≤16 paths,
+   * ≤1 MiB/file), validates that each is a regular file within the canonical
+   * root (no symlinks, no traversal), and persists the note with file digests
+   * for future staleness checks. Returns the stored {@link HuntRecord}.
+   *
+   * Refuses empty input, absolute paths, path-traversal sequences, symlinks,
+   * out-of-scope files, and files exceeding the size budget.
+   */
+  rememberCodebase(input: {
+    root: string;
+    paths: string[];
+    title: string;
+    summary: string;
+    tags?: string[];
+    source: string;
+  }): HuntRecord {
+    if (!input.root) throw new Error("rememberCodebase: root is required");
+    if (!Array.isArray(input.paths) || input.paths.length === 0) {
+      throw new Error("rememberCodebase: at least one path is required");
+    }
+    if (input.paths.length > HuntMemoryStore.MAX_CODEBASE_PATHS) {
+      throw new Error(
+        `rememberCodebase: too many paths (max ${HuntMemoryStore.MAX_CODEBASE_PATHS})`,
+      );
+    }
+
+    // Canonicalize root (case-sensitive, symlink-resolved).
+    const rootCanonical = realpathSync.native(input.root);
+    const rootStat = statSync(rootCanonical);
+    if (!rootStat.isDirectory()) {
+      throw new Error(`rememberCodebase: root is not a directory: ${rootCanonical}`);
+    }
+    const rootSep = rootCanonical.endsWith(sep) ? rootCanonical : rootCanonical + sep;
+
+    const files: Array<{ path: string; digest: string }> = [];
+
+    for (const relPath of input.paths) {
+      // Reject absolute paths (cross-platform check).
+      if (isAbsolute(relPath)) {
+        throw new Error(`rememberCodebase: absolute path not allowed: ${relPath}`);
+      }
+      // Component-aware parent-traversal check (not substring — legitimate
+      // filenames like `some..file.ts` must be allowed).
+      if (hasParentTraversal(relPath)) {
+        throw new Error(
+          `rememberCodebase: parent traversal not allowed: ${relPath}`,
+        );
+      }
+
+      const fullPath = join(rootCanonical, relPath);
+      const content = readCodebaseFileBounded(
+        fullPath,
+        rootSep,
+        HuntMemoryStore.MAX_CODEBASE_FILE_BYTES,
+        relPath,
+      );
+
+      const hash = createHash("sha256");
+      hash.update(content);
+      files.push({ path: relPath, digest: `sha256:${hash.digest("hex")}` });
+    }
+
+    return this.append({
+      kind: "pattern",
+      target: rootCanonical,
+      vulnClass: "codebase-context",
+      title: input.title,
+      summary: input.summary,
+      tags: input.tags,
+      source: input.source,
+      codebase: { root: rootCanonical, files },
+    });
+  }
+
+  /**
+   * Recall codebase-context notes for `root` whose every cited source file
+   * still exists as a regular file with the same working-tree digest.
+   *
+   * Returns at most `limit` records (default 8), most-recent-first. Records
+   * without codebase evidence or with any stale, missing, or unsafe file do
+   * not appear. Roots are compared case-sensitively against the stored
+   * canonical path.
+   *
+   * Iterates newest-first and stops early once `limit` valid results are
+   * collected — avoids scanning the entire store when a bounded recent set
+   * satisfies the caller.
+   */
+  recallCodebase(root: string, limit?: number): HuntRecord[] {
+    this.ensureLoaded();
+    const cap = limit ?? 8;
+
+    let canonicalRoot: string;
+    try {
+      canonicalRoot = realpathSync.native(root);
+    } catch {
+      return []; // root doesn't exist or is unreachable
+    }
+    const rootSep = canonicalRoot.endsWith(sep) ? canonicalRoot : canonicalRoot + sep;
+
+    const results: HuntRecord[] = [];
+
+    // Newest records are at higher indices (insertion order). Iterate in
+    // reverse to find the most recent valid records first, and stop once we
+    // have enough — avoids costly stat/hash on stale records.
+    for (let i = this.records.length - 1; i >= 0; i--) {
+      const r = this.records[i];
+
+      // Only codebase-context pattern records with evidence.
+      if (r.kind !== "pattern" || r.vulnClass !== "codebase-context") continue;
+      if (!r.codebase) continue;
+      if (!Array.isArray(r.codebase.files) || r.codebase.files.length === 0 ||
+        r.codebase.files.length > HuntMemoryStore.MAX_CODEBASE_PATHS) continue;
+
+      // Exact case-sensitive root match.
+      if (r.codebase.root !== canonicalRoot) continue;
+
+      // Verify every cited file still exists, is within root (even if an
+      // intermediate directory was replaced by a symlink after the note was
+      // created), and has the same working-tree digest.
+      let valid = true;
+      for (const f of r.codebase.files) {
+        if (!f || typeof f.path !== "string" || isAbsolute(f.path) || hasParentTraversal(f.path)) {
+          valid = false;
+          break;
+        }
+        const fullPath = join(canonicalRoot, f.path);
+        try {
+          const content = readCodebaseFileBounded(
+            fullPath,
+            rootSep,
+            HuntMemoryStore.MAX_CODEBASE_FILE_BYTES,
+            f.path,
+          );
+
+          const hash = createHash("sha256");
+          hash.update(content);
+          const currentDigest = `sha256:${hash.digest("hex")}`;
+          if (currentDigest !== f.digest) {
+            valid = false;
+            break;
+          }
+        } catch {
+          valid = false;
+          break;
+        }
+      }
+
+      if (valid) results.push(r);
+      if (results.length >= cap) break;
+    }
+
+    // Sort by createdAt for correctness — records loaded from disk or
+    // created via direct append may have timestamps that don't perfectly
+    // track insertion order.
+    results.sort(byRecencyDesc);
+    return results;
   }
 
   /** Aggregate statistics over the retained records. */
@@ -606,6 +880,33 @@ function parseRecord(line: string): HuntRecord | null {
   const tags = Array.isArray(r.tags)
     ? r.tags.filter((t): t is string => typeof t === "string")
     : [];
+
+  // Parse optional codebase evidence (ignore malformed — corrupt field does
+  // not lose the whole record).
+  let codebase: { root: string; files: Array<{ path: string; digest: string }> } | undefined;
+  if (r.codebase && typeof r.codebase === "object") {
+    const cb = r.codebase as Record<string, unknown>;
+    if (
+      typeof cb.root === "string" &&
+      Array.isArray(cb.files) &&
+      cb.files.every(
+        (f: unknown) =>
+          typeof f === "object" &&
+          f !== null &&
+          typeof (f as Record<string, unknown>).path === "string" &&
+          typeof (f as Record<string, unknown>).digest === "string",
+      )
+    ) {
+      codebase = {
+        root: cb.root,
+        files: cb.files.map((f: unknown) => ({
+          path: (f as Record<string, unknown>).path as string,
+          digest: (f as Record<string, unknown>).digest as string,
+        })),
+      };
+    }
+  }
+
   return {
     id: r.id,
     kind: r.kind,
@@ -620,6 +921,7 @@ function parseRecord(line: string): HuntRecord | null {
     source: r.source,
     schemaVersion:
       typeof r.schemaVersion === "number" ? r.schemaVersion : HUNT_MEMORY_SCHEMA_VERSION,
+    ...(codebase !== undefined ? { codebase } : {}),
   };
 }
 

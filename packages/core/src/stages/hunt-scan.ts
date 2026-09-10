@@ -1013,15 +1013,9 @@ function ledgerId(raw: string): string {
 /**
  * Persist one skeptic verdict as a claim on the shared campaign ledger.
  *
- * The evidence stance here is chosen carefully, because mislabelling it is how
- * this feature would turn into an anchoring machine. The refute pass is a
- * re-run of `agenticScan` over `candidate.path` with the adversarial hint, and
- * the verdict is a fact ABOUT THAT PASS — re-runnable, with a locator and a
- * named producer. So the recorded observation states exactly that ("an
- * adversarial refute pass over X using model Y surfaced no reproducible
- * claim"), not the stronger and unearned "the bug is not there". The finder's
- * original claim is recorded alongside it as an ASSUMPTION, which is what it
- * is until something reproduces it.
+ * Record the observed outcome of the scoped source-analysis pass, not proof
+ * of the claim's truth or falsity. Neither survival nor an empty model result
+ * settles a claim. Terminal ledger states require independent evidence.
  *
  * Never throws — see `ledgerPath`'s doc comment for why a throwing verifier
  * deletes findings.
@@ -1043,16 +1037,13 @@ function recordVerdictInLedger(
     appendHuntClaim(opts.ledgerPath!, {
       shape: { path: candidate.path, bugClass: finding.category },
       statement: title,
-      status: survived ? "unresolved" : "disproven",
-      // A SURVIVED refute is deliberately `unresolved`, not `validated`:
-      // surviving one adversarial pass is not a reproduction, and the ledger's
-      // terminal statuses are reserved for claims something actually settled.
+      status: "unresolved",
       evidence: [
         {
           stance: "observation",
           statement: survived
             ? `adversarial refute pass over ${candidate.path} using ${refuterModel} did not refute the claim`
-            : `adversarial refute pass over ${candidate.path} using ${refuterModel} surfaced no reproducible claim`,
+            : `adversarial refute pass over ${candidate.path} using ${refuterModel} returned no finding supporting the claim`,
           source: refuterModel,
           locator: candidate.path,
         },
