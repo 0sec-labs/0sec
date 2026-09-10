@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://0.security/harness/">
-    <img src="assets/readme-cover.png" alt="The self-improving cybersecurity team. An ivory paper sculpture with a crimson edge." width="100%">
+    <img src="assets/readme-cover.png" alt="Your self-improving cybersecurity team. An ivory paper sculpture with a crimson edge." width="100%">
   </a>
 </p>
 
@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  The self-improving cybersecurity team.
+  Open-source and extensible, with your choice of models.
 </p>
 
 <p align="center">
