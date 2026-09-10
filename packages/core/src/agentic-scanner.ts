@@ -254,7 +254,7 @@ import {
   targetRequiresScope,
   SCOPE_GUARDS_INERT_EVENT,
 } from "./scope/scope-guard.js";
-import { resolveLocalTargetPath } from "./path-resolution.js";
+import { isExplicitLocalTargetPath, resolveLocalTargetPath } from "./path-resolution.js";
 import { runMemSafetyScan } from "./stages/memsafety-scan.js";
 import type { MemSafetyScanOptions } from "./stages/memsafety-scan.js";
 import type { MemSafetyTarget } from "./triage/memsafety-types.js";
@@ -542,6 +542,7 @@ async function normalizeScanConfig(config: ScanConfig): Promise<ScanConfig> {
   // this branch, and audit-mode targets aren't URLs anyway.
   if (
     config.target &&
+    !isExplicitLocalTargetPath(config.target) &&
     /\./.test(config.target) &&
     !/^[a-z][a-z0-9+.-]*:\/\//i.test(config.target)
   ) {

@@ -29,7 +29,7 @@
  */
 
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Finding, RuntimeMode, ScanConfig, ScanReport } from "@0sec/shared";
@@ -1356,7 +1356,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       const dbPath = freshHuntDb();
       try {
         const config: ScanConfig = {
-          target: run.candidate.path,
+          target: resolve(opts.sourceRoot, run.candidate.path),
           depth,
           format: "json",
           mode: "deep",

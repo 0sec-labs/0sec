@@ -162,6 +162,8 @@ export interface FinderLensProbeOptions {
   models?: string[];
   depth?: "quick" | "deep";
   concurrency?: number;
+  /** Per-fixture hunt ceiling; incomplete coverage prevents promotion. */
+  costCeilingUsd?: number;
   baseLenses?: () => FinderLens[];
   log?: (message: string) => void;
 }
@@ -193,6 +195,7 @@ export function makeFinderLensProbe(opts: FinderLensProbeOptions = {}): LensProb
         runtime, ...(models ? { models: [...models] } : {}), depth, concurrency,
         lenses: candidate ? [...structuredClone(lenses), structuredClone(candidate)] : structuredClone(lenses),
         costLedger: ledger, ...(log ? { log } : {}),
+        ...(opts.costCeilingUsd !== undefined ? { costCeilingUsd: opts.costCeilingUsd } : {}),
       });
       snapshot();
       const usage = ledger.tokenUsage();

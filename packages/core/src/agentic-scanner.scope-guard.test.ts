@@ -71,6 +71,22 @@ describe("agenticScan — scope-guard visibility (0sec#133)", () => {
     expect(fs.existsSync(dbPath)).toBe(false);
   });
 
+  it("keeps dotted source filenames local and never probes them as HTTP targets", async () => {
+    const source = `${dbPath}.source.js`;
+    fs.writeFileSync(source, "export const value = 1;\n");
+    process.env["0SEC_REQUIRE_SCOPE"] = "1";
+    const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected network request"));
+    try {
+      await expect(agenticScan({
+        config: baseConfig({ target: source, repoPath: path.dirname(source), mode: "deep" }),
+        dbPath,
+      })).rejects.toThrow(/0SEC_REQUIRE_SCOPE is set but no engagement scope is configured/);
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      fs.unlinkSync(source);
+    }
+  });
+
   it("keeps the global strictness switch for unscoped local modes", async () => {
     process.env["0SEC_REQUIRE_SCOPE"] = "1";
     await expect(

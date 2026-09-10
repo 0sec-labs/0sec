@@ -1,0 +1,64 @@
+name: "0sec: Live evolution E2E"
+
+# Explicit, billable runs on trusted main only. No pull-request trigger.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-evolution-main
+  cancel-in-progress: false
+
+jobs:
+  evolution:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [source, lens]
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      # Dependency lifecycle scripts and builds never receive the provider key.
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build production entrypoints
+        run: pnpm --filter '0sec-cli...' -r build
+      - name: Provision the isolated source worker runtime
+        if: matrix.lane == 'source'
+        run: docker pull node:22-alpine
+      - name: Exercise the real evolution lifecycle
+        env:
+          OPENAI_API_KEY: ${{ secrets.DOGFOOD_OPENAI_API_KEY }}
+          0SEC_SELECTED_PROVIDER: openai
+          0SEC_MODEL: gpt-5.6-luna
+          0SEC_CHATGPT_AUTH_FILE: /tmp/0sec-evolution-no-codex-auth.json
+        run: |
+          set -euo pipefail
+          test -n "$OPENAI_API_KEY" || {
+            echo "::error::DOGFOOD_OPENAI_API_KEY is required for live evolution."
+            exit 1
+          }
+          node scripts/smoke-${{ matrix.lane }}-evolution.mjs | tee evolution-${{ matrix.lane }}.jsonl
+      - name: Retain measured lifecycle outcomes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evolution-${{ matrix.lane }}-${{ github.sha }}
+          path: evolution-${{ matrix.lane }}.jsonl
+          if-no-files-found: warn
+          retention-days: 14
