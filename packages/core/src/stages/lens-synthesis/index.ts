@@ -41,6 +41,7 @@ export {
   getObservation,
   observationDigest,
   releaseClaim,
+  releaseStaleClaims,
   parseObservationInput,
   parseApprovedObservationShape,
 } from "./feedback.js";

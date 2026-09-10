@@ -114,6 +114,64 @@ The command:
 Unknown inputs have no ground truth and are never auto-labelled. Execution is
 always offline — no provider credentials, no network, no engagement tokens.
 
+### Deploying an evolved source finder
+
+`deep-review` can opt into the active source version instead of its native
+prompt-backed finders:
+
+```bash
+0sec deep-review ./target-repo --evolution-config ./evolution.json
+```
+
+The evolution config must evaluate the same source-finder protocol used by the
+review. Each case input has exactly these fields:
+
+```json
+{
+  "schemaVersion": "0sec.finder.input/v1",
+  "file": { "path": "src/handler.js", "content": "db.query(req.query.sql);\n" },
+  "lensId": "injection",
+  "challengeHint": "Inspect whether untrusted input reaches SQL execution."
+}
+```
+
+The command emits one JSON value with exactly these fields:
+
+```json
+{
+  "schemaVersion": "0sec.finder.output/v1",
+  "findings": [{
+    "title": "Potential SQL injection",
+    "severity": "high",
+    "line": 1,
+    "analysis": "Request input reaches the query; verify parameterization and reachability."
+  }]
+}
+```
+
+These are unconfirmed leads. Empty findings use `[]`; fixture `expected` values
+use the same output protocol and the usual controller-owned exact-JSON oracle.
+The worker cannot assign finding status, another file path, or verifier results.
+The host binds each lead to the supplied file and checks its line range.
+Ordinary independent verification still runs after finder execution.
+
+The review pins the active version before starting work. Each finder invocation
+gets a child pin bound to that same version and its own input. A promotion or
+rollback changes future reviews, not an in-flight review. The stored version's
+command, image identity, and limits remain authoritative; editing the supplied
+config cannot change an already-promoted worker.
+
+Execution uses the same isolated Docker path as `evolve exec`, with no host
+execution fallback. The worker receives one scoped file of at most 1 MiB, not a
+target-directory mount. Invalid protocol output is a worker failure and enters
+the existing rollback path. A missing active version fails closed.
+
+`--models` cannot be combined with `--evolution-config`. Local compute uses the
+stored `maxEvaluationCostUsd` budget for the review, separately from the model
+token ledger. Reports include `evolution_version_id` and
+`evolution_compute_cost_usd`. Controller records retain input digests and private
+execution receipts; worker output may quote target source and remains sensitive.
+
 ### Canary and rollback
 
 After evaluation passes, a candidate enters canary:
@@ -222,6 +280,7 @@ replacement for the stock target-facing 0sec process.
 | Finder-lens overlay | Newly started hunts load promoted lens content without rebuilding the CLI. | Active hunts retain their captured lens content and version identity. |
 | TUI evolution settings | The watcher can stop and reconfigure while the TUI remains open. | Disabling or restarting a watcher must not let stale callbacks publish a new result. |
 | Source evolution | `evolve run --watch --auto-promote` can select a new accepted snapshot for subsequent `evolve exec` runs. | Existing run IDs retain their original snapshot, stored configuration, and input identity. |
+| Source finder deployment | `deep-review --evolution-config` selects the active source snapshot for each new review. | Every finder call in that review inherits the parent pin; verification and host policy are not rewritten. |
 | Skill/router installation | Training loops install exact authorized artifact bytes. | Authorization does not hot-swap a model already loaded by another process. |
 
 Observation capture is not independent truth: source consent and operator-curated
@@ -387,7 +446,7 @@ larger independently curated positive, held-out, and clean-control corpora.
 | `model` | (none) | Model override for proposal generation. Uses the configured runtime by default. |
 | `allowModelSourceAccess` | `false` | Explicit consent: the model sees source file content in proposal prompts. `runEvolution` refuses without this. |
 | `autoPromote` | `false` | When true, a candidate passing all gates advances without per-candidate approval. Default `false`. |
-| `canaryTrials` | `2` | Number of independent evaluation repeats after a passing decision before the version becomes active. |
+| `canaryTrials` | `2` | Additional evaluation repeats on the same configured corpus before the version becomes active; not fresh-data trials. |
 | `repeats` | `3` | Executions per case per variant (baseline/candidate). At least 2. |
 | `maxIterations` | `3` | Maximum candidate-generation iterations per run. |
 | `maxModelTurns` | `12` | Maximum model turns per proposal. |
@@ -444,7 +503,7 @@ Three independent case lanes must be populated in every config:
 
 ### Evaluation cycle
 
-For each iteration iteration:
+For each iteration:
 
 1. **Snapshot** the current source into a content-addressed, immutable directory
    under `storePath/snapshots/<id>/`. Symlinks, special files, secrets, and
@@ -465,7 +524,7 @@ For each iteration iteration:
    and cost. Candidates that pass become `eligible_for_canary` (policy) or
    `requires_human_approval` (source). On failure, the reason is recorded per
    gate.
-6. **Canary** — if `autoPromote` is true, `canaryTrials` additional independent
+6. **Canary** — if `autoPromote` is true, `canaryTrials` additional repeated
    evaluations run. If all pass, the candidate becomes `active` and the previous
    version is retired. A canary interrupted by controller restart is rolled back
    before the next evolution pass.
@@ -602,7 +661,10 @@ is exploitable. The usual verification process remains separate.
 The TUI consumes approved observations without merging held-out fixtures into
 development data. Completed evaluations, including rejections and dry runs,
 retain their results rather than automatically rerunning the same input every
-poll. Stop the old worker before recovering a crash-held claim with:
+poll. On startup, the consumer can recover a claim whose recorded owner is
+demonstrably dead in the same process scope. Live owners and unverifiable,
+legacy, or different-scope claims are not automatically released. Stop the old
+worker before manually recovering those claims with:
 
 ```bash
 0sec evolve feedback status --json

@@ -6,6 +6,7 @@ import { parseEvolutionConfig } from "./config.js";
 import { publishEvolutionArtifact } from "./artifacts.js";
 import { evaluateEvolutionCandidate } from "./evaluation.js";
 import { authorizeEvolutionArtifact } from "./artifact-authorization.js";
+import { executeEvolutionVersion } from "./loop.js";
 import { createEvolutionCandidate, evolutionDigest, loadEvolutionRegistry, pinEvolutionVersion, promoteEvolutionVersion, recordEvolutionVersion, rollbackEvolutionVersion, snapshotEvolutionSource, startEvolutionCanary, verifyEvolutionSnapshot } from "./registry.js";
 import type { EvolutionConfig, EvolutionEvaluation, EvolutionVersion } from "./types.js";
 
@@ -252,6 +253,109 @@ describe("evolution promotion and replay", () => {
     await promoteEvolutionVersion(config.storePath, version.id, baseline.id);
     unlinkSync(join(config.storePath, "receipts", `${version.id}.canary-0.json`));
     expect(authorizeEvolutionArtifact(config.storePath, version.id, join(version.snapshot.root, "src/worker.cjs"), "src/worker.cjs", "source").authorized).toBe(false);
+  });
+
+  it("requires an existing parent pin before executing an engagement child", async () => {
+    await staged();
+    await expect(executeEvolutionVersion(config, "orphan-child", config.cases[0]!.input, {
+      parentRunId: "missing-parent",
+      sandbox: async () => ({ exitCode: 0, stdout: JSON.stringify(config.cases[0]!.expected), stderr: "", durationMs: 1, timedOut: false }),
+    })).rejects.toThrow();
+  });
+
+  it("refuses to reuse a child execution under a different parent engagement", async () => {
+    const { baseline, version, evaluation } = await staged();
+    await pinEvolutionVersion(config.storePath, "first-parent");
+    const sandbox = async () => ({ exitCode: 0, stdout: JSON.stringify(config.cases[0]!.expected), stderr: "", durationMs: 1, timedOut: false });
+    await executeEvolutionVersion(config, "bound-child", config.cases[0]!.input, { parentRunId: "first-parent", sandbox });
+    retainCanaries(version, evaluation);
+    await startEvolutionCanary(config.storePath, version.id, baseline.id);
+    await promoteEvolutionVersion(config.storePath, version.id, baseline.id);
+    await pinEvolutionVersion(config.storePath, "second-parent");
+    await expect(executeEvolutionVersion(config, "bound-child", config.cases[0]!.input, {
+      parentRunId: "second-parent", sandbox,
+    })).rejects.toThrow();
+  });
+
+  it("rejects a persisted worker pin for a candidate that was never activated", async () => {
+    const { version } = await staged();
+    publishEvolutionArtifact(join(config.storePath, "pins", "unapproved-worker.json"), {
+      runId: "unapproved-worker", versionId: version.id,
+      versionDigest: version.snapshot.digest, pinnedAt: new Date().toISOString(),
+    });
+    await expect(pinEvolutionVersion(config.storePath, "unapproved-worker")).rejects.toThrow(/never active/);
+  });
+
+  it("rolls back a deployed version when its consumer rejects otherwise valid JSON", async () => {
+    const { baseline, version, evaluation } = await staged();
+    retainCanaries(version, evaluation);
+    await startEvolutionCanary(config.storePath, version.id, baseline.id);
+    await promoteEvolutionVersion(config.storePath, version.id, baseline.id);
+    const result = await executeEvolutionVersion(config, "rejected-output", { index: 99, unsafe: true }, {
+      sandbox: async () => ({ exitCode: 0, stdout: '{"unsafe":true,"status":"confirmed"}', stderr: "", durationMs: 1, timedOut: false }),
+      validateExecutionOutput(output) {
+        if (output && typeof output === "object" && Object.hasOwn(output, "status")) throw new Error("self-grading is not an accepted worker output");
+      },
+    });
+    expect(result.execution.error).toBeDefined();
+    expect(loadEvolutionRegistry(config.storePath).activeId).toBe(baseline.id);
+    expect((await pinEvolutionVersion(config.storePath, "rejected-output")).id).toBe(version.id);
+  });
+
+  it("does not retire an accepted version when its worker is cancelled", async () => {
+    const { baseline, version, evaluation } = await staged();
+    retainCanaries(version, evaluation);
+    await startEvolutionCanary(config.storePath, version.id, baseline.id);
+    await promoteEvolutionVersion(config.storePath, version.id, baseline.id);
+    const controller = new AbortController();
+    await executeEvolutionVersion(config, "cancelled-worker", config.cases[0]!.input, {
+      signal: controller.signal,
+      sandbox: async () => {
+        controller.abort();
+        return { exitCode: null, stdout: "", stderr: "", durationMs: 1, timedOut: false, error: "cancelled" };
+      },
+    });
+    expect(loadEvolutionRegistry(config.storePath).activeId).toBe(version.id);
+  });
+
+  it("derives child pins from an immutable parent runId across mid-scan promotion and rollback", async () => {
+    const { baseline, version, evaluation } = await staged();
+
+    // Parent pins the current active baseline
+    const parent = await pinEvolutionVersion(config.storePath, "engagement-parent");
+    expect(parent.id).toBe(baseline.id);
+
+    // Children pin the same version as the parent, not independently re-resolving
+    const child1 = await pinEvolutionVersion(config.storePath, "engagement-child-1", undefined, "engagement-parent");
+    expect(child1.id).toBe(baseline.id);
+
+    // Promote candidate to active (requires canary proofs)
+    retainCanaries(version, evaluation);
+    await startEvolutionCanary(config.storePath, version.id, baseline.id);
+    await promoteEvolutionVersion(config.storePath, version.id, baseline.id);
+    expect(loadEvolutionRegistry(config.storePath).activeId).toBe(version.id);
+
+    // Children pinned before promotion still resolve to baseline, not the new active
+    expect((await pinEvolutionVersion(config.storePath, "engagement-child-1")).id).toBe(baseline.id);
+
+    // New children with the same parentRunId also pin baseline
+    const afterPromotion = await pinEvolutionVersion(config.storePath, "engagement-child-3", undefined, "engagement-parent");
+    expect(afterPromotion.id).toBe(baseline.id);
+
+    // A fresh run without a parent gets the new active version
+    expect((await pinEvolutionVersion(config.storePath, "fresh-after-promotion")).id).toBe(version.id);
+
+    // Rollback candidate, restoring baseline as active
+    await rollbackEvolutionVersion(config.storePath, version.id, "test rollback");
+    expect(loadEvolutionRegistry(config.storePath).activeId).toBe(baseline.id);
+
+    // All parent-child pins survive registry changes
+    expect((await pinEvolutionVersion(config.storePath, "engagement-parent")).id).toBe(baseline.id);
+    expect((await pinEvolutionVersion(config.storePath, "engagement-child-1")).id).toBe(baseline.id);
+    expect((await pinEvolutionVersion(config.storePath, "engagement-child-3")).id).toBe(baseline.id);
+
+    // A fresh pin after rollback also resolves to baseline (now active again)
+    expect((await pinEvolutionVersion(config.storePath, "fresh-after-rollback")).id).toBe(baseline.id);
   });
 
   it("rejects a canary start when the candidate snapshot has been tampered on disk despite a valid receipt", async () => {

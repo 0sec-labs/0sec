@@ -168,4 +168,8 @@ export interface EvolutionDependencies {
   sandbox?: EvolutionSandbox;
   signal?: AbortSignal;
   log?: (message: string) => void;
+  /** Parent run pins the version once; child runIds reuse the same pinned version across the engagement. */
+  parentRunId?: string;
+  /** Controller-owned output validation invoked on parsed JSON before execution record publication. Throw to record failure — no findings. */
+  validateExecutionOutput?: (output: unknown) => void;
 }

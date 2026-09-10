@@ -38,13 +38,14 @@ import type { Command } from "commander";
 import { readFileSync, statSync } from "node:fs";
 import { resolve, join, sep, relative } from "node:path";
 import type { Finding, RuntimeMode, ScanReport } from "@0sec/shared";
-import type { FinderLens, ThreatLane, VerifyLens } from "@0sec/core";
+import type { EvolutionConfig, FinderLens, ThreatLane, VerifyLens } from "@0sec/core";
 // The loader is called once for each review invocation, before target
 // preparation. That creates a stable lens snapshot for the engagement while
 // allowing the next review in a long-lived CLI process to observe a completed
 // durable-registry promotion.
-import { eventBus, loadAppsecFinderLenses, ScanCostLedger, captureObservation } from "@0sec/core";
+import { eventBus, loadAppsecFinderLenses, ScanCostLedger, captureObservation, createEvolvedFinder } from "@0sec/core";
 import { leadToCandidateFinding, type HuntOutcome } from "./hunt.js";
+import { loadEvolutionConfigFile } from "./evolve.js";
 import { resolveOsecRunStorage, writeOsecRunReport } from "@0sec/db";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -546,6 +547,8 @@ export interface RunDeepReviewOptions {
    *  When off (default), behavior is unchanged. */
   useThreatModel?: boolean;
   runtime?: RuntimeMode;
+  /** Opt into a pinned isolated source finder with private local execution receipts. */
+  evolutionConfig?: EvolutionConfig;
   timeoutMs?: number;
   /** Hard scan-wide USD ceiling. Overrides $0SEC_COST_CEILING_USD. */
   costCeilingUsd?: number;
@@ -559,6 +562,9 @@ export async function runDeepReview(
   // The active engagement owns this array from here through every finder and
   // verifier call. A later registry promotion is visible only to the next run.
   const defaultFinderSnapshot = createDefaultFinderLenses();
+  const evolvedFinder = opts.evolutionConfig
+    ? await createEvolvedFinder(opts.evolutionConfig, `deep-review-${randomUUID()}`)
+    : undefined;
   const {
     runHuntScan,
     makeMultiLensVerifier,
@@ -587,7 +593,8 @@ export async function runDeepReview(
   const hasEnvMaxOverride = !!process.env["0SEC_DEEP_REVIEW_MAX_CANDIDATES"];
   const baseMaxCandidates = explicitMaxCandidates ?? defaultMaxCandidates();
   // Single-model × 1-attempt by default; both are opt-in deeper knobs (flag > env).
-  const models = opts.models ?? defaultModels();
+  if (evolvedFinder && opts.models?.length) throw new Error("--models selects native finders and cannot be combined with --evolution-config");
+  const models = evolvedFinder ? ["evolved-source"] : opts.models ?? defaultModels();
   const attemptsPerCandidate = opts.attemptsPerCandidate ?? defaultAttempts();
 
   // Resolve a local path or a git URL into a local tree (same prepare() path
@@ -772,7 +779,7 @@ export async function runDeepReview(
     const verify = makeMultiLensVerifier(verifyLenses, {
       sourceRoot,
       runtime,
-      ...(models?.[0] ? { model: models[0] } : {}),
+      ...(!evolvedFinder && models?.[0] ? { model: models[0] } : {}),
       // Every verify lens is a refute pass on `models[0]` — the same model the
       // finders ran on. Passing the full finder set lets the cross-family
       // selector move the refutation off ALL finder families when a second
@@ -780,7 +787,7 @@ export async function runDeepReview(
       // including "it could not", which is the case worth knowing about.
       ...(opts.costCeilingUsd !== undefined ? { costCeilingUsd: opts.costCeilingUsd } : {}),
       costLedger,
-      ...(models && models.length > 0 ? { finderModels: models } : {}),
+      ...(!evolvedFinder && models && models.length > 0 ? { finderModels: models } : {}),
       ...(opts.quorum ? { quorum: opts.quorum } : {}),
       log,
     });
@@ -809,6 +816,7 @@ export async function runDeepReview(
       candidates: candidatePaths.map((path) => ({ path })),
       lenses: finderLenses,
       runtime,
+      ...(evolvedFinder ? { finder: (input) => evolvedFinder.find(sourceRoot, input) } : {}),
       concurrency: opts.concurrency ?? DEFAULT_CONCURRENCY,
       ...(opts.costCeilingUsd !== undefined ? { costCeilingUsd: opts.costCeilingUsd } : {}),
       costLedger,
@@ -899,6 +907,7 @@ export async function runDeepReview(
           scan_id: scanId,
           source_revision_digest: sourceRevisionDigest,
           lens_snapshot_digest: lensDigest,
+          ...(evolvedFinder ? { evolution_version_id: evolvedFinder.versionId, evolution_compute_cost_usd: evolvedFinder.computeCostUsd } : {}),
           source: sourceRoot,
           subsystem: opts.subsystem ?? null,
           scope_files: totalFiles,
@@ -957,6 +966,7 @@ export async function runDeepReview(
         subsystem: opts.subsystem ?? null,
         scope_files: totalFiles,
         lens_snapshot_digest: lensDigest,
+        ...(evolvedFinder ? { evolution_version_id: evolvedFinder.versionId, evolution_compute_cost_usd: evolvedFinder.computeCostUsd } : {}),
         candidates: candidatePaths.length,
         finder_lenses: finderLenses.map((l) => l.id),
         verify_lenses: verifyLenses.map((l) => l.id),
@@ -1009,6 +1019,7 @@ interface DeepReviewOpts {
   quorum?: string;
   threatModel?: boolean;
   runtime?: string;
+  evolutionConfig?: string;
   format?: string;
   output?: string;
   timeout?: string;
@@ -1048,6 +1059,7 @@ async function deepReviewAction(target: string, opts: DeepReviewOpts): Promise<v
     ...(opts.quorum ? { quorum: parsePositive("--quorum", opts.quorum, 1) } : {}),
     ...(opts.threatModel ? { useThreatModel: true } : {}),
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
+    ...(opts.evolutionConfig ? { evolutionConfig: loadEvolutionConfigFile(opts.evolutionConfig) } : {}),
     timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
   });
@@ -1075,6 +1087,7 @@ export function registerDeepReviewCommand(program: Command): void {
     .argument("<target>", "Source tree to review (a local path or a git URL)")
     .option("--profile <p>", "Lens profile: evm-onchain | solana-onchain | cardano-onchain | cairo-onchain | move-onchain (else a generic default lens set)")
     .option("--subsystem <path>", "Narrow the review scope to a subdirectory (respects the 5000-file review cap)")
+    .option("--evolution-config <path>", "Use the active source finder with private local execution receipts")
     .option("--models <a,b>", "Comma-separated finder models for diversity (default: single provider model, or $0SEC_DEEP_REVIEW_MODELS)")
     .option("--attempts <N>", `Finder attempts per candidate×lens×model, best-of-N (default ${DEFAULT_ATTEMPTS}, or $0SEC_DEEP_REVIEW_ATTEMPTS)`)
     .option("--concurrency <N>", `Max finders in flight (default ${DEFAULT_CONCURRENCY})`)

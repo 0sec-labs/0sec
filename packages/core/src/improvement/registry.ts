@@ -909,77 +909,74 @@ export async function rollbackEvolutionVersion(
   } finally { unlock(); }
 }
 
-/** Pin a version for replay / resume. runId is a worker/scan ID, not a version
- * ID. First call atomically stores runId→current activeVersionId in an
- * immutable pin file; repeat calls load the same pinned version. Returns the
- * pinned EvolutionVersion, verifying snapshot and receipt availability.
- */
-export async function pinEvolutionVersion(
-  storePath: string, runId: string, signal?: AbortSignal,
-): Promise<EvolutionVersion> {
-  if (typeof runId !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(runId)) {
-    throw new Error(`invalid runId: ${runId}`);
-  }
-
-  const pinDir = pinsDir(storePath);
-  ensureEvolutionDirectory(pinDir);
-  const pinPath = join(pinDir, `${runId}.json`);
-
-  // First call: atomically pin current active version
-  if (!existsSync(pinPath)) {
-    const unlock = await acquireLock(storePath, signal);
-    try {
-      // Double-check after lock acquisition (TOCTOU guard)
-      if (!existsSync(pinPath)) {
-        const registry = loadRegistryRaw(storePath);
-        if (registry.activeId === null) {
-          throw new Error(`no active version to pin for runId ${runId}`);
-        }
-        const version = registry.versions.find((v) => v.id === registry.activeId);
-        if (!version) {
-          throw new Error(`active version ${registry.activeId} not found in registry`);
-        }
-        // Verify snapshot is valid before pinning
-        const snapDir = snapshotDir(storePath, version.id);
-        if (!existsSync(snapDir)) {
-          throw new Error(`snapshot directory missing for active version ${version.id}`);
-        }
-        verifyEvolutionSnapshot(version.snapshot);
-
-        publishEvolutionArtifact(pinPath, {
-          runId,
-          versionId: registry.activeId,
-          pinnedAt: new Date().toISOString(),
-          versionDigest: version.snapshot.digest,
-        });
-      }
-    } finally { unlock(); }
-  }
-
-  // Load the pin and return the corresponding version
-  const pinRaw = readEvolutionArtifact(pinPath) as { runId: string; versionId: string; pinnedAt: string; versionDigest: string };
-  if (pinRaw.runId !== runId) {
-    throw new Error(`pin file runId mismatch: expected ${runId}, got ${pinRaw.runId}`);
-  }
-
+function readPinnedEvolutionVersion(storePath: string, runId: string): {
+  version: EvolutionVersion; parentRunId?: string;
+} {
+  const pin = readEvolutionArtifact(join(pinsDir(storePath), `${runId}.json`)) as {
+    runId: string; versionId: string; versionDigest: string; parentRunId?: string;
+  };
+  if (!pin || pin.runId !== runId) throw new Error("pin file runId mismatch");
+  if (pin.parentRunId !== undefined && (typeof pin.parentRunId !== "string"
+    || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(pin.parentRunId))) throw new Error("invalid stored parent run id");
   const registry = loadRegistryRaw(storePath);
-  const version = registry.versions.find((v) => v.id === pinRaw.versionId);
-  if (!version) {
-    throw new Error(`pinned version ${pinRaw.versionId} not found in registry`);
+  const version = registry.versions.find((entry) => entry.id === pin.versionId);
+  if (!version) throw new Error(`pinned version ${pin.versionId} not found in registry`);
+  if (pin.versionDigest !== version.snapshot.digest) throw new Error("pinned version digest changed");
+  if (version.parentId !== null && !registry.events.some((event) => event.type === "promoted" && event.versionId === version.id)) {
+    throw new Error("worker pins cannot authorize a version that was never active");
   }
-  if (pinRaw.versionDigest !== version.snapshot.digest) throw new Error("pinned version digest changed");
-
-  // Verify snapshot integrity (retired pinned versions must still be readable)
-  const snapDir = snapshotDir(storePath, version.id);
-  if (!existsSync(snapDir)) {
-    throw new Error(`snapshot directory missing for pinned version ${version.id}: ${snapDir}`);
-  }
+  if (!existsSync(snapshotDir(storePath, version.id))) throw new Error(`snapshot directory missing for pinned version ${version.id}`);
   verifyEvolutionSnapshot(version.snapshot);
-
   if (version.receiptDigest !== null) {
     const parent = registry.versions.find((entry) => entry.id === version.parentId);
     verifyEvolutionReceipt(storePath, version.id, version, parent?.snapshot.digest);
   }
+  return { version, ...(pin.parentRunId !== undefined ? { parentRunId: pin.parentRunId } : {}) };
+}
 
-  return { ...version };
+/**
+ * Pin the active version, or derive a child from an already-existing parent pin.
+ * A parent is never created implicitly and cannot select an unpromoted version.
+ * Existing bindings remain immutable across promotion, rollback, and replay.
+ */
+export async function pinEvolutionVersion(
+  storePath: string, runId: string, signal?: AbortSignal, parentRunId?: string,
+): Promise<EvolutionVersion> {
+  signal?.throwIfAborted();
+  if (typeof runId !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(runId)) {
+    throw new Error(`invalid runId: ${runId}`);
+  }
+  if (parentRunId !== undefined && (typeof parentRunId !== "string"
+    || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(parentRunId) || parentRunId === runId)) {
+    throw new Error("invalid parent run id");
+  }
+  const pinDir = pinsDir(storePath);
+  ensureEvolutionDirectory(pinDir);
+  const pinPath = join(pinDir, `${runId}.json`);
+  if (!existsSync(pinPath)) {
+    const unlock = await acquireLock(storePath, signal);
+    try {
+      if (!existsSync(pinPath)) {
+        const registry = loadRegistryRaw(storePath);
+        const parent = parentRunId !== undefined ? readPinnedEvolutionVersion(storePath, parentRunId) : undefined;
+        const versionId = parent?.version.id ?? registry.activeId;
+        if (versionId === null) throw new Error(`no active version to pin for runId ${runId}`);
+        const version = registry.versions.find((entry) => entry.id === versionId);
+        if (!version) throw new Error("selected pinned version is absent from the registry");
+        verifyEvolutionSnapshot(version.snapshot);
+        publishEvolutionArtifact(pinPath, {
+          runId, versionId, pinnedAt: new Date().toISOString(), versionDigest: version.snapshot.digest,
+          ...(parentRunId !== undefined ? { parentRunId } : {}),
+        });
+      }
+    } finally { unlock(); }
+  }
+  const pinned = readPinnedEvolutionVersion(storePath, runId);
+  if (parentRunId !== undefined) {
+    const parent = readPinnedEvolutionVersion(storePath, parentRunId);
+    if (pinned.parentRunId !== parentRunId || pinned.version.id !== parent.version.id) {
+      throw new Error("child run is already bound to a different parent engagement");
+    }
+  }
+  return { ...pinned.version };
 }

@@ -38,9 +38,10 @@
 import { randomUUID, createHash } from "node:crypto";
 import {
   constants, mkdirSync, openSync, readFileSync, renameSync, rmdirSync,
-  unlinkSync, fstatSync, writeFileSync, fsyncSync, closeSync,
+  unlinkSync, fstatSync, writeFileSync, fsyncSync, closeSync, readlinkSync,
 } from "node:fs";
 import { resolve, dirname } from "node:path";
+import { hostname } from "node:os";
 import { homeStateDir } from "@0sec/shared";
 import type { LensValidationReport, RegisteredLens, ValidationFixture, ValidationCorpus } from "./types.js";
 import { ensureEvolutionDirectory, readEvolutionArtifact } from "../../improvement/artifacts.js";
@@ -85,6 +86,8 @@ export interface LearningObservation {
   detectorLensVersionDigest?: string;
   /** Exclusive claim token set by claimForProcessing; cleared on releaseClaim or markProcessed. */
   claimToken?: string;
+  /** Local process identity; absent legacy/unverifiable owners require explicit release. */
+  claimOwner?: { pid: number; processScope: string };
   /**
    * Retained evaluation outcome, including rejected and non-promoting runs.
    * Registration IDs are empty when no lens was installed.
@@ -369,6 +372,10 @@ function validateObservation(v: unknown): v is LearningObservation {
   }
   if (v.rejectedReason !== undefined && typeof v.rejectedReason !== "string") return false;
   if (v.claimToken !== undefined && typeof v.claimToken !== "string") return false;
+  if (v.claimOwner !== undefined) {
+    if (!isRecord(v.claimOwner) || !Number.isSafeInteger(v.claimOwner.pid) || Number(v.claimOwner.pid) <= 0
+      || typeof v.claimOwner.processScope !== "string" || !v.claimOwner.processScope || v.claimOwner.processScope.length > 1024) return false;
+  }
   if (v.processedOutcome !== undefined) {
     if (!isRecord(v.processedOutcome)) return false;
     const outcome = v.processedOutcome;
@@ -695,6 +702,20 @@ export function observationQueueSummary(
   }
 }
 
+function currentClaimOwner(): LearningObservation["claimOwner"] {
+  let processScope = `${process.platform}:${hostname()}`;
+  if (process.platform === "linux") {
+    try {
+      const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      processScope += `:${boot}:${readlinkSync("/proc/self/ns/pid")}`;
+    } catch {
+      // Without a verifiable process namespace, retain claims for explicit recovery.
+      return undefined;
+    }
+  }
+  return { pid: process.pid, processScope };
+}
+
 /**
  * Claim approved observations for processing.
  *
@@ -703,9 +724,8 @@ export function observationQueueSummary(
  *   - {@link markProcessed} on success (requires token + outcome)
  *   - {@link releaseClaim} on failure/cancellation (reverts to approved)
  *
- * Crash recovery: on reload, approved entries with a claimToken are
- * "claimed but not completed" — the caller (watcher) should re-claim them
- * by calling releaseClaim for stale tokens and then re-attempting.
+ * Crash recovery only releases claims whose recorded owner is provably dead
+ * in this process namespace. Legacy or unverifiable claims need explicit release.
  * Claimed entries are excluded from subsequent claimForProcessing calls
  * so two watchers never process the same observation.
  */
@@ -717,6 +737,7 @@ export function claimForProcessing(
   try {
     const observations = loadAll(store);
     const claimed: ClaimedApprovedObservation[] = [];
+    const owner = currentClaimOwner();
 
     for (let i = 0; i < observations.length; i++) {
       const o = observations[i]!;
@@ -727,6 +748,7 @@ export function claimForProcessing(
 
       const claimToken = randomUUID();
       o.claimToken = claimToken;
+      o.claimOwner = owner;
       o.updatedAt = new Date().toISOString();
       observations[i] = o;
 
@@ -803,6 +825,7 @@ export function markProcessed(
       ...(outcome.rejected ? { rejected: outcome.rejected } : {}),
     };
     entry.claimToken = undefined;
+    entry.claimOwner = undefined;
     entry.updatedAt = new Date().toISOString();
     observations[idx] = entry;
     writeAll(store, observations);
@@ -833,6 +856,7 @@ export function releaseClaim(
     if (entry.status !== "approved") return false;
 
     entry.claimToken = undefined;
+    entry.claimOwner = undefined;
     entry.updatedAt = new Date().toISOString();
     observations[idx] = entry;
     writeAll(store, observations);
@@ -853,6 +877,46 @@ export function getObservation(
   const lockToken = acquireLock(store);
   try {
     return loadAll(store).find((o) => o.id === id);
+  } finally {
+    releaseLock(store, lockToken);
+  }
+}
+
+/**
+ * Recover approved observations owned by dead local processes. Live owners,
+ * foreign process namespaces, and legacy claims without owner metadata are
+ * never stolen. PID reuse or an inconclusive liveness check fails closed.
+ */
+export function releaseStaleClaims(
+  opts?: ObservationQueueOptions,
+): number {
+  const store = storePath(opts);
+  const lockToken = acquireLock(store);
+  try {
+    const observations = loadAll(store);
+    let released = 0;
+    const current = currentClaimOwner();
+    for (let i = 0; i < observations.length; i++) {
+      const o = observations[i]!;
+      if (o.status !== "approved") continue;
+      if (!o.claimToken) continue;
+      if (!current || !o.claimOwner || o.claimOwner.processScope !== current.processScope) continue;
+      try {
+        process.kill(o.claimOwner.pid, 0);
+        continue;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue;
+      }
+      o.claimToken = undefined;
+      o.claimOwner = undefined;
+      o.updatedAt = new Date().toISOString();
+      observations[i] = o;
+      released++;
+    }
+    if (released > 0) {
+      writeAll(store, observations);
+    }
+    return released;
   } finally {
     releaseLock(store, lockToken);
   }

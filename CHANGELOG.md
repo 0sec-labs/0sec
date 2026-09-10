@@ -71,6 +71,10 @@ on the published npm package and the GitHub Release tag.
   finder-lens version; changing an overlay cannot relabel an in-flight scan.
 - Extension resume restores descriptor identities atomically and rejects
   non-reconstructible contributed guards instead of silently weakening policy.
+- `deep-review --evolution-config` deploys a promoted source finder through the
+  isolated worker path. Parent/child pins preserve one version per review;
+  strict file-bound leads still pass through independent verification. Reports
+  retain version identity and separately budgeted local compute estimates.
 
 ### Fixed
 
@@ -92,6 +96,9 @@ on the published npm package and the GitHub Release tag.
   registry state, rejecting altered code even when its retained receipt is valid.
 - TUI evolution ignores stale callbacks after reconfiguration or stop and
   avoids releasing feedback claims already marked processed.
+- Approved feedback claims record process ownership. Startup recovers only
+  demonstrably dead owners in the same process scope; live or unverifiable
+  owners remain claimed, and obsolete completion tokens cannot publish results.
 - Benchmark fixtures now bind the `0sec` schema namespace introduced by the
   earlier rename. Recomputed commitments preserve the original labels and
   MSRC source-byte hashes; validators still reject tampered provenance.

@@ -355,6 +355,8 @@ export type {
 } from "./exploit/chain/index.js";
 // Hunt scan stage (parallel novel-bug discovery: fan-out finders -> skeptic+prover gate).
 export { runHuntScan, makeSkepticVerifier, composeGate, makeMultiLensVerifier } from "./stages/hunt-scan.js";
+export { createEvolvedFinder } from "./stages/evolved-finder.js";
+export type { HuntFinder } from "./stages/hunt-scan.js";
 // Deployment-context classification — path heuristics + severity cap for findings
 // that target dev/test/build-only code paths (issue #1215, deep-review postmortem).
 export { classifyDeploymentContext, applyDeploymentContextCap, stampDeploymentContext, hasTrustBoundaryBypass } from "./stages/deployment-context.js";
@@ -548,6 +550,7 @@ export {
   getObservation,
   observationDigest,
   releaseClaim,
+  releaseStaleClaims,
   parseObservationInput,
   parseApprovedObservationShape,
 } from "./stages/lens-synthesis/index.js";

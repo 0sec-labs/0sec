@@ -58,7 +58,7 @@ const EXIT_INTERRUPT = 3;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function loadConfig(path: string): EvolutionConfig {
+export function loadEvolutionConfigFile(path: string): EvolutionConfig {
   const absPath = resolve(path);
   if (!existsSync(absPath)) throw new Error(`config file not found: ${absPath}`);
   const configFile = realpathSync(absPath);
@@ -108,6 +108,7 @@ function formatRegistryStatus(registry: EvolutionRegistry, json: boolean, out: (
 
   out(`  ${chalk.dim("Versions:")} ${registry.versions.length}`);
   out(`  ${chalk.dim("Events:")}   ${registry.events.length}`);
+  out(chalk.dim("  Evaluation: canaries repeat the configured corpus; passing does not establish fresh-corpus generalization."));
 
   if (registry.events.length > 0) {
     out("");
@@ -236,7 +237,7 @@ export function registerEvolveCommand(program: Command): void {
         if (opts.maxPasses !== undefined && (!Number.isSafeInteger(opts.maxPasses) || opts.maxPasses < 1)) {
           throw new Error("--max-passes must be a positive integer");
         }
-        const rawConfig = loadConfig(opts.config);
+        const rawConfig = loadEvolutionConfigFile(opts.config);
         const config: EvolutionConfig = {
           ...rawConfig,
           ...(opts.autoPromote !== undefined ? { autoPromote: opts.autoPromote } : {}),
@@ -388,7 +389,7 @@ export function registerEvolveCommand(program: Command): void {
       const err = (l: string) => console.error(l);
 
       try {
-        const config = loadConfig(opts.config);
+        const config = loadEvolutionConfigFile(opts.config);
 
         let input: unknown;
         try {

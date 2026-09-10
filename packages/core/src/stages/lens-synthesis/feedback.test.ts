@@ -2,7 +2,7 @@ import { readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "nod
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import type { RegisteredLens, ValidationFixture } from "./types.js";
 import {
@@ -14,6 +14,7 @@ import {
   claimForProcessing,
   markProcessed,
   releaseClaim,
+  releaseStaleClaims,
   getObservation,
   observationDigest,
   parseObservationInput,
@@ -67,6 +68,7 @@ describe("feedback queue", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     try { rmSync(resolve(storePath, ".."), { recursive: true, force: true }); } catch { /* cleanup */ }
   });
 
@@ -421,5 +423,67 @@ describe("feedback queue", () => {
     expect(processed.processedOutcome?.warnings).toContain("synthesis partial: timeout on archetype B");
     expect(processed.processedOutcome?.rejected).toHaveLength(1);
     expect(processed.processedOutcome?.rejected![0]!.reason).toBe("validator rejected no lift");
+  });
+
+  it("preserves a live consumer's claim when another consumer starts", () => {
+    const entry = captureObservation(SAMPLE_OBSERVATION, { storePath });
+    approveObservation(entry.id, {
+      positives: [POS_FIXTURE], heldOut: [HO_FIXTURE], negativeControls: [NEG_FIXTURE],
+    }, { storePath });
+    const [claim] = claimForProcessing({ storePath });
+    expect(releaseStaleClaims({ storePath })).toBe(0);
+    expect(claimForProcessing({ storePath })).toEqual([]);
+    expect(releaseClaim(entry.id, claim!.claimToken, { storePath })).toBe(true);
+  });
+
+  it("recovers a dead local owner and invalidates its old processing token", () => {
+    const entry = captureObservation(SAMPLE_OBSERVATION, { storePath });
+    approveObservation(entry.id, {
+      positives: [POS_FIXTURE], heldOut: [HO_FIXTURE], negativeControls: [NEG_FIXTURE],
+    }, { storePath });
+    const [oldClaim] = claimForProcessing({ storePath });
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("owner exited"), { code: "ESRCH" });
+    });
+    expect(releaseStaleClaims({ storePath })).toBe(1);
+    expect(releaseStaleClaims({ storePath })).toBe(0);
+    const [newClaim] = claimForProcessing({ storePath });
+    expect(newClaim!.id).toBe(entry.id);
+    expect(newClaim!.claimToken).not.toBe(oldClaim!.claimToken);
+    expect(markProcessed(entry.id, { registeredLensIds: [], validatedAt: "now" }, oldClaim!.claimToken, { storePath })).toBe(false);
+    expect(markProcessed(entry.id, { registeredLensIds: [], validatedAt: "now" }, newClaim!.claimToken, { storePath })).toBe(true);
+  });
+
+  it("releaseStaleClaims does not touch processed or rejected observations", () => {
+    const a = captureObservation(SAMPLE_OBSERVATION, { storePath });
+    approveObservation(a.id, {
+      positives: [POS_FIXTURE], heldOut: [HO_FIXTURE], negativeControls: [NEG_FIXTURE],
+    }, { storePath });
+    const [claimed] = claimForProcessing({ storePath });
+    markProcessed(a.id, { registeredLensIds: ["lens-a"], validatedAt: "now" }, claimed!.claimToken, { storePath });
+
+    const b = captureObservation(
+      { ...SAMPLE_OBSERVATION, classHint: "CWE-79 XSS", exampleFileLine: "xss.ts:1" },
+      { storePath },
+    );
+    rejectObservation(b.id, "not actionable", { storePath });
+
+    expect(releaseStaleClaims({ storePath })).toBe(0);
+  });
+
+  it("leaves legacy and foreign-namespace claims for explicit recovery", () => {
+    for (const scanId of ["legacy-owner", "foreign-owner"]) {
+      const entry = captureObservation({ ...SAMPLE_OBSERVATION, scanId }, { storePath });
+      approveObservation(entry.id, {
+        positives: [POS_FIXTURE], heldOut: [HO_FIXTURE], negativeControls: [NEG_FIXTURE],
+      }, { storePath });
+    }
+    claimForProcessing({ storePath });
+    const stored = JSON.parse(readFileSync(storePath, "utf8"));
+    delete stored[0].claimOwner;
+    stored[1].claimOwner = { pid: process.pid, processScope: "another-process-namespace" };
+    writeFileSync(storePath, JSON.stringify(stored), { mode: 0o600 });
+    expect(releaseStaleClaims({ storePath })).toBe(0);
+    expect(claimForProcessing({ storePath })).toEqual([]);
   });
 });

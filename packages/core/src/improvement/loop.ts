@@ -244,7 +244,7 @@ export async function executeEvolutionVersion(
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(runId)) throw new Error("invalid evolution run id");
   canonicalEvolutionJson(input);
   const requested = parseEvolutionConfig(rawConfig);
-  const version = await pinEvolutionVersion(requested.storePath, runId);
+  const version = await pinEvolutionVersion(requested.storePath, runId, deps.signal, deps.parentRunId);
   const stored = readEvolutionArtifact(join(requested.storePath, "configs", `${version.configDigest.replace(/^sha256:/, "")}.json`));
   if (evolutionDigest(stored) !== version.configDigest) throw new Error("pinned worker configuration digest mismatch");
   const config = parseEvolutionConfig(stored);
@@ -262,14 +262,17 @@ export async function executeEvolutionVersion(
   verifyEvolutionSnapshot(version.snapshot);
   if (execution.exitCode === 0 && !execution.error && !execution.timedOut) {
     try {
-      const observed = canonicalEvolutionJson(JSON.parse(execution.stdout));
+      const parsed = JSON.parse(execution.stdout);
+      const observed = canonicalEvolutionJson(parsed);
       const inputJson = canonicalEvolutionJson(input);
       const knownCase = config.cases.find((entry) => canonicalEvolutionJson(entry.input) === inputJson);
       if (knownCase && observed !== canonicalEvolutionJson(knownCase.expected)) {
         execution.error = `worker regressed independently specified case ${knownCase.id}`;
+      } else if (deps.validateExecutionOutput) {
+        deps.validateExecutionOutput(parsed);
       }
-    } catch {
-      execution.error = "worker output was not finite JSON matching the execution protocol";
+    } catch (err) {
+      execution.error = err instanceof Error ? err.message : "worker output validation failed";
     }
   }
   const record = { versionId: version.id, inputDigest: evolutionDigest(input), execution };

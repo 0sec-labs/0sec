@@ -51,6 +51,31 @@ function mkFinding(id: string, title: string, analysis: string): Finding {
 }
 
 describe("runHuntScan — best-of-N + judge gate", () => {
+  it("keeps controller-installed finder leads behind independent confirmation gates", async () => {
+    const options: Parameters<typeof runHuntScan>[0] = {
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/reachable.c" }, { path: "/src/refuted.c" }],
+      models: ["evolved-source"],
+      runtime: "api",
+      finder: async ({ candidate }) => ({
+        findings: [mkFinding(candidate.path, "Source-worker lead", "Requires independent reproduction")],
+      }),
+    };
+    const gated = await runHuntScan({
+      ...options,
+      verify: async (finding) => ({
+        confirmed: finding.id === "/src/reachable.c",
+        reason: finding.id === "/src/reachable.c" ? "independently reproduced" : "refuted",
+      }),
+    });
+    expect(gated.confirmed.map((finding) => finding.id)).toEqual(["/src/reachable.c"]);
+    expect(gated.dropped.map((entry) => entry.finding.id)).toEqual(["/src/refuted.c"]);
+
+    const ungated = await runHuntScan(options);
+    expect(ungated.findings.map((finding) => finding.id).sort()).toEqual(["/src/reachable.c", "/src/refuted.c"]);
+    expect(ungated.confirmed).toEqual([]);
+  });
+
   it("attemptsPerCandidate=1/judgeTopK=1 (defaults) reproduces plain candidate × model fan-out, including model diversity", async () => {
     agenticScanMock.mockReset();
     // Two models, one candidate: each model's finder call returns ONE finding.
@@ -298,6 +323,27 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
     else process.env.HUNT_FINDER_TIMEOUT_MS = prevTimeout;
     if (prevRetries === undefined) delete process.env.HUNT_FINDER_MAX_RETRIES;
     else process.env.HUNT_FINDER_MAX_RETRIES = prevRetries;
+  });
+
+  it("cancels an isolated finder when the outer hunt deadline expires", async () => {
+    process.env.HUNT_FINDER_TIMEOUT_MS = "20";
+    process.env.HUNT_FINDER_MAX_RETRIES = "0";
+    let cancelled = false;
+    const result = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/slow.c" }],
+      models: ["evolved-source"],
+      runtime: "api",
+      finder: ({ signal }) => new Promise<{ findings: Finding[] }>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          cancelled = true;
+          reject(new Error("worker cancelled"));
+        }, { once: true });
+      }),
+    });
+    expect(cancelled).toBe(true);
+    expect(result.finderTimedOut).toBe(1);
+    expect(result.confirmed).toEqual([]);
   });
 
   it("a finder that never resolves is abandoned after HUNT_FINDER_TIMEOUT_MS and the run still completes with the other candidates", async () => {

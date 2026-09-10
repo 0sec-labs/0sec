@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { claimForProcessing, markProcessed, releaseClaim, type LensSynthesisResult } from "@0sec/core";
+import { claimForProcessing, markProcessed, releaseClaim, releaseStaleClaims, type LensSynthesisResult } from "@0sec/core";
 import { homeStateDir } from "@0sec/shared";
 
 import { runLensSynthesisInput, watchLensSynthCommand } from "../commands/lens-synth.js";
@@ -88,7 +88,7 @@ export function tuiLensEvolutionStatusLabel(status: TuiLensEvolutionStatus): str
 // Approved observations retain separate development and held-out corpora.
 // Each is evaluated once; completed rejections and dry runs are retained too,
 // rather than spending model budget on the same unchanged input every poll.
-// Interrupted claims are released; process-crash claims require explicit recovery.
+// Interrupted claims are released; dead local owners are recovered at startup.
 export async function consumeApprovedObservations(
   opts: { promote: boolean; pollIntervalMs: number },
   deps: {
@@ -99,6 +99,15 @@ export async function consumeApprovedObservations(
   },
 ): Promise<void> {
   const pollIntervalMs = Number.isFinite(opts.pollIntervalMs) ? Math.max(100, opts.pollIntervalMs) : 1000;
+
+  // Recover only provably dead local owners; another live consumer keeps its claims.
+  try {
+    const recovered = releaseStaleClaims();
+    if (recovered > 0) deps.log(`[consume-approved] released ${recovered} stale claim(s) from prior run`);
+  } catch (error) {
+    deps.onError(error instanceof Error ? error : new Error(String(error)));
+  }
+
   const sleep = () => new Promise<void>((done) => {
     const finish = () => {
       clearTimeout(timer);

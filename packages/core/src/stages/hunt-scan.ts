@@ -159,6 +159,16 @@ export type HuntVerifier = (
   candidate: HuntCandidate,
 ) => Promise<{ confirmed: boolean; reason: string; decorrelation?: RefuteDecorrelation }>;
 
+/** A controller-installed finder supplies leads only; all hunt gates still apply. */
+export type HuntFinder = (input: {
+  candidate: HuntCandidate;
+  lens: FinderLens;
+  model?: string;
+  attempt: number;
+  challengeHint: string;
+  signal?: AbortSignal;
+}) => Promise<{ findings: Finding[] }>;
+
 export interface HuntScanOptions {
   sourceRoot: string;
   /** Where to hunt (under-audited files / variant sites). The coverage frontier. */
@@ -166,6 +176,8 @@ export interface HuntScanOptions {
   /** Variant-hunt brief; omit for a generic bug hunt. */
   brief?: HuntBrief;
   runtime: RuntimeMode;
+  /** Opt-in isolated evolved finder; absent retains the native agentic finder. */
+  finder?: HuntFinder;
   /**
    * Shared scan-wide cost guard. When set, finder and verifier sessions use
    * the same ledger and scheduling becomes serial after the ceiling is hit.
@@ -1325,9 +1337,22 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     // finder abandoned at the timeout can still be harvested if it resolves
     // late (see the timed-out branch below). A ref object because assignments
     // happen inside the attemptOnce closure, invisible to TS's narrowing.
-    const lateRef: { current: Promise<ScanReport> | null } = { current: null };
+    const lateRef: { current: Promise<{ findings: Finding[] }> | null } = { current: null };
+    const finderAbort = opts.finder ? new AbortController() : undefined;
     const attemptOnce = async () => {
       partials = [];
+      if (opts.finder) {
+        const scanPromise = opts.finder({
+          candidate: run.candidate,
+          lens: run.lens,
+          model: run.model,
+          attempt: run.attempt,
+          challengeHint: huntHint(opts.brief, run.candidate, run.lens.challengeHint),
+          ...(finderAbort ? { signal: finderAbort.signal } : {}),
+        });
+        lateRef.current = scanPromise;
+        return await scanPromise;
+      }
       const dbPath = freshHuntDb();
       try {
         const config: ScanConfig = {
@@ -1360,6 +1385,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       }
     };
     const outcome = await runFinderResilient(attemptOnce, { timeoutMs: finderTimeoutMs, maxRetries: finderMaxRetries });
+    if (outcome.status === "timed-out") finderAbort?.abort();
     let findings: Finding[];
     if (outcome.status === "completed") {
       findings = outcome.value?.findings ?? [];

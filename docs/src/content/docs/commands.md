@@ -237,6 +237,12 @@ durable promotion with canary and rollback. A candidate is evaluated in an
 **isolated, network-none, credential-free Docker container** — never against a
 live target or engagement worker.
 
+Promoted source versions can also serve as the finder in
+`0sec deep-review ./repo --evolution-config ./evolution.json`. This requires
+the [source-finder protocol](/improvement-plane/#deploying-an-evolved-source-finder),
+pins one version for the whole review, and retains independent verification.
+It does not replace the running CLI or grant candidate code network access.
+
 ```bash
 # Run evolution: propose, evaluate, and optionally promote source candidates
 0sec evolve run --config ./evolution.json
