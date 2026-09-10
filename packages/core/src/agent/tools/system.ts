@@ -257,6 +257,17 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
     },
     required: ["action"],
   },
+  remember_codebase: {
+    name: "remember_codebase",
+    description: "Remember a reusable architecture or dataflow observation, not a vulnerability verdict. Cite relative source paths; the host derives content hashes and the repository root. Re-check notes before using them.",
+    parameters: {
+      title: { type: "string", description: "Concise observation title" },
+      summary: { type: "string", description: "Reusable source-grounded observation; do not include secrets" },
+      paths: { type: "array", items: { type: "string" }, description: "One to sixteen source paths relative to this repository" },
+      tags: { type: "array", items: { type: "string" }, description: "Optional retrieval tags" },
+    },
+    required: ["title", "summary", "paths"],
+  },
 };
 
 // Tool-name → ToolExecutor handler-method name (0sec#614). Co-located with
@@ -278,4 +289,5 @@ export const systemDispatch: Record<string, string> = {
   pty_session: "ptySession",
   plan: "planTool",
   self_extend: "selfExtend",
+  remember_codebase: "rememberCodebase",
 };

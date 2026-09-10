@@ -119,6 +119,7 @@ const TOOL_REGISTRY_ORDER = [
   // every getToolsForRole set; native-loop injects it into the model-facing tool
   // set only when the operator enabled `allowModelSelfExtension` (default OFF).
   "self_extend",
+  "remember_codebase",
 ] as const;
 
 export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = Object.fromEntries(

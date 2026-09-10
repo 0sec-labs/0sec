@@ -53,6 +53,22 @@ must not become a known negative that anchors later research. Existing ledger
 files are not rewritten: re-evaluate any older model-only disprovals before
 reusing them as settled evidence.
 
+### Revision-aware codebase learning
+
+Scoped native-API research runs can call `remember_codebase` to retain architecture
+and dataflow notes. The host selects the repository root and hashes the cited
+files; the model cannot supply its own root or evidence digests. Notes use the
+existing private, redacted hunt-memory store, not source edits or model training.
+
+A fresh eligible run receives up to six still-current notes as **untrusted
+hints**. Changed, missing, out-of-scope, symlinked, or multiply linked evidence
+invalidates the note. File hashes establish which source the note refers to,
+not whether the model's interpretation is correct.
+
+Verification runs neither receive these notes nor get the learning capability.
+`0SEC_DISABLE_HUNT_MEMORY=1` disables recall and persistence. Resumed runs keep
+their existing context rather than silently receiving new notes.
+
 ### Source access consent
 
 Because the model proposes edits to its own source tree, the operator must
@@ -784,6 +800,7 @@ After building the CLI and its dependencies, run the real provider-backed checks
 ```bash
 node scripts/smoke-source-evolution.mjs
 node scripts/smoke-lens-evolution.mjs
+node scripts/smoke-codebase-learning.mjs
 ```
 
 The source check requires a non-root account with Docker access and the
@@ -793,6 +810,9 @@ small credential-detector benchmark. It does not measure general scanner quality
 The lens check exercises synthesis, labelled positive/held-out/clean fixtures,
 promotion, next-reader reload, and retirement. Both consume real provider usage,
 disable cross-run hunt memory, and fail rather than reporting skipped work as success.
+The codebase-learning check uses a separate temporary memory store and real model
+runs to learn a source-grounded note, recall it in a later run, and invalidate it
+after a cited file changes. It tests the lifecycle, not a measured accuracy gain.
 
 The trusted-main **Live evolution E2E** workflow accepts `lane=source`,
-`lane=lens`, or `lane=all` and retains measured outcomes and failure logs.
+`lane=lens`, `lane=codebase`, or `lane=all` and retains measured outcomes and failure logs.

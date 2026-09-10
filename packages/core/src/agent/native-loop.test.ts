@@ -2318,6 +2318,68 @@ describe("runNativeAgentLoop — hunt memory integration", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
+  it("learns through a scoped tool, recalls in a later run, and expires changed evidence", async () => {
+    const path = join(tmp, "notes.jsonl");
+    writeFileSync(join(tmp, "module.ts"), "export const route = '/health';\n");
+    const note = "The health route is declared in module.ts.";
+    const config = {
+      role: "review" as const, codebaseLearning: true, scopePath: tmp,
+      systemPrompt: "Review source", tools: [], maxTurns: 1, target: tmp, scanId: "learn-source",
+    };
+    await runNativeAgentLoop({
+      config, db: null, huntMemoryStore: new HuntMemoryStore({ path }),
+      runtime: createMockRuntime([{
+        content: [{ type: "tool_use", id: "learn", name: "remember_codebase", input: {
+          title: "Health routing", summary: note, paths: ["module.ts"],
+          root: "/outside", digests: ["forged"],
+        } }],
+        stopReason: "tool_use", durationMs: 1,
+      }]),
+    });
+    const reopened = new HuntMemoryStore({ path });
+    expect(reopened.recallCodebase(tmp)[0]?.codebase?.root).toBe(tmp);
+    const seen: string[] = [];
+    const reader: NativeRuntime = {
+      type: "api", isAvailable: async () => true,
+      executeNative: async (_system, messages) => {
+        seen.push(JSON.stringify(messages));
+        return { content: [{ type: "text", text: "Review complete" }], stopReason: "end_turn", durationMs: 1 };
+      },
+    };
+    await runNativeAgentLoop({ config: { ...config, scanId: "recall-source" }, runtime: reader, db: null, huntMemoryStore: reopened });
+    expect(seen[0]).toContain(note);
+    writeFileSync(join(tmp, "module.ts"), "export const route = '/status';\n");
+    await runNativeAgentLoop({ config: { ...config, scanId: "changed-source" }, runtime: reader, db: null, huntMemoryStore: reopened });
+    expect(seen[1]).not.toContain(note);
+  });
+
+  it.each(["verify", "disabled"] as const)("keeps %s runs cold even when a model requests learning", async (mode) => {
+    const store = new HuntMemoryStore({ path: join(tmp, "notes.jsonl") });
+    writeFileSync(join(tmp, "module.ts"), "export const route = '/health';\n");
+    const note = "Private learned routing context";
+    store.rememberCodebase({ root: tmp, paths: ["module.ts"], title: "Routing", summary: note, source: "test" });
+    if (mode === "disabled") process.env[HM_ENV] = "1";
+    const runtime: NativeRuntime = {
+      type: "api", isAvailable: async () => true,
+      executeNative: async (_system, messages, tools) => {
+        expect(JSON.stringify(messages)).not.toContain(note);
+        expect(tools.some((tool) => tool.name === "remember_codebase")).toBe(false);
+        return {
+          content: [{ type: "tool_use", id: "forbidden", name: "remember_codebase", input: {
+            title: "Unapproved", summary: "Do not persist", paths: ["module.ts"],
+          } }],
+          stopReason: "tool_use", durationMs: 1,
+        };
+      },
+    };
+    await runNativeAgentLoop({
+      config: { role: mode === "verify" ? "verify" : "review", codebaseLearning: true,
+        scopePath: tmp, target: tmp, scanId: mode, systemPrompt: "Review", tools: [], maxTurns: 1 },
+      runtime, db: null, huntMemoryStore: store,
+    });
+    expect(store.all().map((record) => record.title)).toEqual(["Routing"]);
+  });
+
   function saveThenDone(input: Record<string, unknown>): NativeRuntime {
     let turn = 0;
     return {

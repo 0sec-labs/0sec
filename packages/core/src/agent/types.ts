@@ -349,6 +349,13 @@ export interface ToolContext {
    */
   role?: AgentRole;
   scopePath?: string;
+  /** Host-bound source-note writer; absent during verification or when memory is disabled. */
+  rememberCodebase?: (note: {
+    title: string;
+    summary: string;
+    paths: string[];
+    tags?: string[];
+  }) => { id: string };
   /**
    * Current console autonomy mode, re-read by the scoped-source-audit gate on
    * every `execute()` so switching mode mid-session takes effect immediately

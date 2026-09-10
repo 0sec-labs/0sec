@@ -28,12 +28,12 @@ const previousRegistry = process.env["0SEC_APPSEC_LENS_REGISTRY"];
 process.env["0SEC_APPSEC_LENS_REGISTRY"] = registry;
 const cleanup = () => rmSync(root, { recursive: true, force: true });
 process.on("exit", cleanup);
-// Twelve probes execute eighteen serial finder runs; measured baseline runs
-// take 43–77s each. Keep the independent turn and dollar ceilings below.
+// Two trials cover development and held-out lanes, each with clean controls:
+// sixteen probes execute twenty-four serial finder runs.
 const deadline = setTimeout(() => {
-  console.error("Lens evolution E2E exceeded its thirty-minute deadline");
+  console.error("Lens evolution E2E exceeded its forty-minute deadline");
   process.exit(1);
-}, 1800000);
+}, 2400000);
 let claim;
 try {
   const modelId = process.env["0SEC_MODEL"] || "gpt-5.6-luna";
@@ -53,6 +53,8 @@ try {
   const heldOut = fixture("held-out", "proxy.py", 'import requests\nfrom flask import Flask, request\napp = Flask(__name__)\n@app.get("/proxy")\ndef proxy():\n    return requests.get(request.args["url"]).text\n', [5, 6]);
   const clean = fixture("negative-control", "status.js", 'export async function status() {\n  const response = await fetch("https://example.com/status");\n  return response.status;\n}\n');
   const corpus = { positives: [positive], heldOut: [heldOut], negativeControls: [clean] };
+  const trials = 2;
+  const maxProbeCalls = trials * 2 * (corpus.positives.length + corpus.heldOut.length + 2 * corpus.negativeControls.length);
   const observation = captureObservation({
     classHint: "CWE-918 server-side request forgery", sinkPattern: "HTTP request URL reaches fetch without an allow-list",
     exampleFileLine: `${positive.path}:4`, whyMissed: "The seed lens only examines OS command execution, not HTTP clients.",
@@ -69,8 +71,8 @@ try {
   let probeCalls = 0;
   let validationCostUsd = 0;
   const probe = Object.assign(async (...args) => {
-    assert(++probeCalls <= 12, "bounded fixture/variant/trial count exceeded");
-    assert(validationCostUsd < 6, "validation spend ceiling reached");
+    assert(++probeCalls <= maxProbeCalls, "bounded fixture/variant/trial count exceeded");
+    assert(validationCostUsd + 0.5 <= 6, "validation spend ceiling reached");
     const started = performance.now();
     console.error(JSON.stringify({ phase: "probe-start", probe: probeCalls, variant: args[0]?.id ?? "baseline", fixture: args[1].id }));
     const outcome = await realProbe(...args);
@@ -93,7 +95,7 @@ try {
   const result = await runLensSynthesisInput({
     misses: { curatedCandidates: [{ classHint: claim.classHint, sinkPattern: claim.sinkPattern, exampleFileLine: claim.exampleFileLine, whyMissed: claim.whyMissed, source: claim.source }] },
     corpus: claim.approvedShape,
-  }, { registry, promote: true, trials: 2, maxRegister: 1, model: modelId }, { model, probe, log: (message) => console.error(message) });
+  }, { registry, promote: true, trials, maxRegister: 1, model: modelId }, { model, probe, log: (message) => console.error(message) });
   console.log(JSON.stringify({ phase: "validation", validations: result.validations, rejected: result.rejected, warnings: result.warnings }));
   assert.equal(result.registered.length, 1, "real candidate must pass every validation gate and register");
   const promoted = result.registered[0];
