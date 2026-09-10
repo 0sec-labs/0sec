@@ -31,6 +31,18 @@ import { ScanCostLedger } from "../agent/cost-ledger.js";
 
 const analysisAgentMock = vi.fn();
 vi.mock("../agent-runner.js", () => ({ runAnalysisAgent: (...args: unknown[]) => analysisAgentMock(...args) }));
+// Exercise real SQLite without making finder deadlines depend on disk fsync.
+vi.mock("@0sec/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@0sec/db")>();
+  return {
+    ...actual,
+    osecDB: class extends actual.osecDB {
+      constructor() {
+        super(":memory:");
+      }
+    },
+  };
+});
 
 const { runHuntScan, makeMultiLensVerifier, AimdState } = await import("./hunt-scan.js");
 
