@@ -42,6 +42,7 @@ try {
   console.log(`Docker server: ${docker("info", "--format", "{{.ServerVersion}}")}`);
   const shellImage = provision(process.env.DOCKER_REPLAY_SHELL_IMAGE ?? "alpine:3.20");
   const httpImage = provision(process.env.DOCKER_REPLAY_HTTP_IMAGE ?? "curlimages/curl:8.12.1");
+  const fixtureImage = provision("busybox:1.37.0");
   const runner = new DockerRunner({ shellImage });
 
   await check("real container hardening and writable workspace", async () => {
@@ -90,6 +91,16 @@ try {
     assert.equal(result.status, "reproduced", JSON.stringify(result));
   });
 
+  await check("shell cwd cannot escape the mounted workspace", async () => {
+    const runDir = join(root, "cwd-escape");
+    mkdirSync(runDir);
+    for (const cwd of ["../outside", "/etc", "C:\\Windows"]) {
+      const result = await runner.exec(shellStep("printf VULNERABLE_MARKER", { cwd }), { runDir, stepTimeoutMs: 5_000 });
+      assert.ok(result.launchError, `Unsafe cwd was accepted: ${cwd}`);
+      assert.equal(result.exitCode, null);
+    }
+  });
+
   await check("explicit Docker action executes the pinned image", async () => {
     const step = { ...shellStep(""), action: { type: "docker", image: shellImage, args: ["sh", "-c", "printf VULNERABLE_MARKER"] } };
     const { result } = await runDeterministicReplay(finding([step]), { runner, runDir: join(root, "docker-action") });
@@ -110,20 +121,21 @@ try {
     const network = `0sec-replay-${process.pid}-${Date.now()}`;
     docker("network", "create", "--internal", network);
     resources.push(["network", "rm", network]);
-    const id = docker("run", "--detach", "--rm", "--network", network, "--network-alias", "replay-fixture",
-      shellImage, "sh", "-c", "mkdir /www; printf VULNERABLE_MARKER > /www/index.html; exec httpd -f -p 8080 -h /www");
+    const id = docker("run", "--detach", "--network", network, "--network-alias", "replay-fixture",
+      fixtureImage, "sh", "-c", "mkdir /www; printf VULNERABLE_MARKER > /www/index.html; exec busybox httpd -f -p 8080 -h /www");
     resources.push(["rm", "--force", id]);
     // Wait for the fixture through its own container, not the host network.
     let ready = false;
     for (let attempt = 0; attempt < 30; attempt++) {
-      try { docker("exec", id, "wget", "-qO-", "http://127.0.0.1:8080"); ready = true; break; }
+      try { docker("exec", id, "busybox", "wget", "-qO-", "http://127.0.0.1:8080"); ready = true; break; }
       catch { await new Promise((resolve) => setTimeout(resolve, 100)); }
     }
-    assert.ok(ready, "HTTP fixture never became ready");
+    assert.ok(ready, `HTTP fixture never became ready: ${docker("logs", id)}`);
     const httpRunner = new DockerRunner({ httpImage, network });
     const scope = ScopePolicy.fromJson({ in_scope: ["replay-fixture"] });
     const step = { ...shellStep(""), action: { type: "http", method: "GET", url: "http://replay-fixture:8080" } };
-    const { result } = await runDeterministicReplay(finding([step]), { runner: httpRunner, scope, runDir: join(root, "http") });
+    const statusStep = { ...step, id: "status", expect: { type: "http-status", status: 200 } };
+    const { result } = await runDeterministicReplay(finding([step, statusStep]), { runner: httpRunner, scope, runDir: join(root, "http") });
     assert.equal(result.status, "reproduced", JSON.stringify(result));
     const denied = await httpRunner.exec({ ...step, action: { ...step.action, url: "http://outside.invalid" } },
       { runDir: join(root, "http"), stepTimeoutMs: 5_000, scope });

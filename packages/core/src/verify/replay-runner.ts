@@ -44,7 +44,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, isAbsolute } from "node:path";
+import { join, resolve, isAbsolute, posix, win32 } from "node:path";
 import { arch as nodeArch, platform as nodePlatform } from "node:process";
 import { gzipSync } from "node:zlib";
 import type { Finding, PocStep, PocStepExpect } from "@0sec/shared";
@@ -338,6 +338,8 @@ interface DockerStepCommand {
   /** Container argv, always placed after the image reference. */
   command: string[];
   parseHttpStatus: boolean;
+  /** Container-side cwd, constrained to the bind-mounted workspace. */
+  workdir?: string;
 }
 
 export class DockerRunner implements ReplayRunner {
@@ -447,12 +449,20 @@ export class DockerRunner implements ReplayRunner {
 
   private commandForStep(step: PocStep, stepTimeoutMs: number): DockerStepCommand | string {
     switch (step.action.type) {
-      case "shell":
+      case "shell": {
+        const cwd = step.action.cwd ?? ".";
+        const workdir = posix.resolve("/work", cwd);
+        if (isAbsolute(cwd) || win32.isAbsolute(cwd) || /[\\\0]/.test(cwd) ||
+            (workdir !== "/work" && !workdir.startsWith("/work/"))) {
+          return "Docker shell cwd must be relative and remain inside the replay workspace";
+        }
         return {
           image: this.shellImage,
           command: ["/bin/sh", "-lc", step.action.cmd],
           parseHttpStatus: false,
+          workdir,
         };
+      }
       case "docker":
         if (!step.action.image.trim()) return "Docker action is missing an image";
         return {
@@ -539,7 +549,7 @@ export class DockerRunner implements ReplayRunner {
       "--network",
       this.network,
       "--workdir",
-      "/work",
+      command.workdir ?? "/work",
       "--tmpfs",
       "/tmp:rw,noexec,nosuid,size=64m",
       "--mount",
