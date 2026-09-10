@@ -25,12 +25,13 @@ sealed candidate artifacts
 
 ## Engagement boundary
 
-Every live run stays pinned to its own code, model, policy, scope, and
-model-visible tool set; resume and replay reuse that identity. A candidate can be
-evaluated while an engagement is active, but it cannot change the active worker.
-Provider model identifiers are not attestations of immutable model weights.
-An upstream alias or serving change can alter behavior without changing that
-identifier; re-evaluate observed outcomes before assuming equivalent performance.
+An improvement-plane promotion cannot replace the code, model configuration,
+policy, scope, or tools of an active worker. Resume and replay retain the
+recorded worker identity; evaluating a candidate does not replace that worker.
+This is not an attestation of immutable model weights: upstream aliases,
+serving changes, or configured runtime fallbacks can change model behavior.
+A requested model name alone is insufficient provenance; re-evaluate observed
+outcomes before assuming equivalent performance.
 
 Non-negotiable:
 
