@@ -8,6 +8,7 @@ import {
   createHerdrEventSink,
   eventBus,
   maybeSubscribeCloudEventSink,
+  maybeSubscribeOperationalEventSink,
   presentationEventSink,
 } from "@0sec/core";
 import { maybeLoadCodexAuth } from "./codex-auth.js";
@@ -38,6 +39,13 @@ maybeLoadCodexAuth();
 // the sink module is dead code and the cloud's live-trace UI stays
 // dark for every scan.
 maybeSubscribeCloudEventSink();
+
+// Operational NDJSON stderr sink (0SEC_LOG_FORMAT=json). Opt-in metadata-
+// only logging — writes one NDJSON line per allowlisted lifecycle / cost
+// event to stderr. Strips all sensitive fields (prompts, responses,
+// reasoning, tool args, finding evidence, token deltas, auth material,
+// raw error text). No effect unless the env var is set.
+maybeSubscribeOperationalEventSink();
 
 // Every core event also enters the process-local canonical presentation stream.
 // Legacy cloud/stdout and Herdr projections remain independent adapters.

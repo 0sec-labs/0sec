@@ -178,6 +178,25 @@ the whole codebase on every PR:
 0sec scan --target https://api.example.com/chat --scope ./scope.json --verbose
 ```
 
+## Operational logs
+
+Enable metadata-only operational records on stderr:
+
+```bash
+env 0SEC_LOG_FORMAT=json 0sec review ./my-repo
+```
+
+Each NDJSON record contains `timestamp`, `level`, `service`, `event`, and
+allowlisted lifecycle or cost metadata. Prompts, responses, reasoning, tool
+arguments/results, finding evidence, summaries and raw error text are excluded
+from these records. Credential-like values in retained identifiers are redacted.
+
+This adds records alongside existing stderr diagnostics; it does not make all
+stderr output JSON or replace `--format`. Stdout and the `0SEC_EVENT_*` cloud
+relay protocol are unchanged. Unset `0SEC_LOG_FORMAT` to disable the sink;
+only the `json` format enables it. Nothing is uploaded automatically: collect
+stderr through your runner or container logging pipeline.
+
 ## Feedback delivery
 
 `/feedback <message>` is local-only and appends to

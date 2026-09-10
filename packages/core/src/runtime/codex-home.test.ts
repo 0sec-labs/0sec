@@ -90,8 +90,22 @@ describe("isEphemeralScope", () => {
     expect(isEphemeralScope(pkgDir)).toBe(true);
   });
 
-  it("is false for a real checkout", () => {
-    expect(isEphemeralScope(process.cwd())).toBe(false);
+  it("does not classify a sibling sharing the temp-root prefix as temporary", () => {
+    const root = mkdtempSync(join(tmpdir(), "0sec-scope-boundary-"));
+    dirs.push(root);
+    const tempRoot = join(root, "tmp");
+    const checkout = join(root, "tmp-checkout");
+    mkdirSync(tempRoot);
+    mkdirSync(checkout);
+    vi.stubEnv("TMPDIR", tempRoot);
+    vi.stubEnv("TMP", tempRoot);
+    vi.stubEnv("TEMP", tempRoot);
+    try {
+      expect(isEphemeralScope(tempRoot)).toBe(true);
+      expect(isEphemeralScope(checkout)).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("fails closed on a path that does not exist", () => {

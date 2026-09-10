@@ -1777,6 +1777,14 @@ export {
   isCloudEventSinkActive,
   presentationEventSink,
 } from "./events/bus.js";
+// Operational NDJSON stderr sink (0SEC_LOG_FORMAT=json). Writes one
+// NDJSON line per allowlisted lifecycle/cost event to stderr, stripped
+// of all sensitive fields (prompts, responses, reasoning, tool args,
+// finding evidence, token deltas, auth material, raw error text).
+export {
+  createOperationalEventSink,
+  maybeSubscribeOperationalEventSink,
+} from "./events/operational-sink.js";
 // herdr pane-state sink. Reports only 0sec's coarse working/idle state and
 // non-identifying counters to the local herdr socket, so a 0sec pane stops
 // showing as "unknown" in herdr's sidebar. Inert unless HERDR_ENV=1 with a
