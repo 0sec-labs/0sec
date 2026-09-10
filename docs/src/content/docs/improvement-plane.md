@@ -241,6 +241,16 @@ via `LlmApiRuntime` (the standard API runtime). When omitted, the configured
 provider default is used. Model identity is used to price actual usage — the
 `maxModelCostUsd` ceiling tracks real token spend.
 
+Proposal generation can inspect up to eight recent retained versions of the
+same artifact kind through `read_source(versionId)`. Archives are reference
+material: reads are restricted to paths still present in the current snapshot,
+and edits must match the current baseline's file digests. Archived source does
+not grant access to evaluation receipts or hidden fixtures.
+
+Within an evolution pass, the next attempt receives the previous proposal and
+bounded development-lane stdout/stderr. Held-out inputs, expected answers, and
+negative-control observations are not supplied to the proposal model.
+
 ## Research basis and remaining limits
 
 Self-rewriting is a search mechanism, not evidence that the resulting scanner
@@ -257,11 +267,26 @@ is better. The relevant research supports evaluator-driven iteration:
   combines generated programs with automated evaluators. This supports a
   propose → execute → measure → select loop, not transferring its reported
   mathematical or compute gains to cybersecurity without separate evidence.
+- [GEPA (Agrawal et al., 2025)](https://arxiv.org/abs/2507.19457) uses natural
+  language reflection on execution trajectories and combines complementary
+  candidates. Development-only execution feedback and readable source history
+  support reflection in 0sec; they do not implement GEPA's Pareto search or
+  establish equivalent performance.
 - [The reusable holdout (Dwork et al., 2015)](https://doi.org/10.1126/science.aaa9375)
   addresses invalid inference from adaptive reuse of evaluation data. 0sec's
   repeated trials and canaries reuse the configured corpus: they measure
   repeatability, not independent generalization. 0sec does not implement that
   paper's privacy-based reusable-holdout mechanism.
+- [Hierarchical Self-Improvement (Zhou, 2026)](https://arxiv.org/abs/2608.08466)
+  evolves task harnesses and evolver strategies under a frozen outer anchor,
+  with a DeepSeek model as the backbone. It reports limits from feedback
+  quality and model capability. This is distinct from the
+  [DeepSeek Harness runtime](https://github.com/deepseek-ai/deepseek-harness):
+  a plugin architecture or MCP connection alone is not an improvement loop.
+- [EVOHARNESSBENCH (Ke et al., 2026)](https://arxiv.org/abs/2609.04280)
+  reports harness-induced forgetting and inconsistent adaptation gains.
+  Expanding tools, skills, or agents therefore requires retention evaluation;
+  a larger harness is not inherently a better one.
 
 The implemented boundary is fixed acceptance criteria, independently labelled
 controls, restricted candidate execution, and versioned rollout. There is no

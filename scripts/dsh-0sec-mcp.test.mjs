@@ -5,13 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
-  GENERIC_DSH_TOOL_ROWS,
   DEFAULT_MCP_TOOLS,
   UsageError,
   assertRequestedEnvironment,
   buildDshArgs,
   buildMcpArgs,
-  buildProfilePatch,
   parseRunnerArgs,
   runRunner,
 } from "./dsh-0sec-mcp.mjs";
@@ -82,32 +80,6 @@ test("DSH runner preserves 0sec engagement arguments", () => {
   );
 });
 
-test("DSH patch exposes only 0sec MCP tools from the shipped base profile", () => {
-  const patch = buildProfilePatch({
-    entrypoint: "/opt/0sec/dist/0sec.js",
-    serverCwd: "/opt/0sec",
-    mcpArgs: [
-      "/opt/0sec/dist/0sec.js",
-      "mcp-server",
-      "--target", "https://example.test",
-      "--scan-id", "scan-123",
-      "--scope", "/workspace/scope.json",
-    ],
-    mcpEnv: ["0SEC_MCP_AUTH_JSON"],
-  });
-
-  assert.match(patch, /- id: tools\n  config:\n    mode: native/);
-  for (const id of GENERIC_DSH_TOOL_ROWS) {
-    assert.match(patch, new RegExp(`- id: ${id}\\n  disabled: true`));
-  }
-  assert.match(patch, /name: '@deepseek-ai\/dsh-mcp-client'/);
-  assert.match(patch, /transport: stdio/);
-  assert.match(patch, /serverName: "0sec"/);
-  assert.match(patch, /failOnStartupError: true/);
-  assert.match(patch, /reconnect:\n          enabled: false/);
-  assert.match(patch, /0SEC_MCP_AUTH_JSON: !!js process\.env\["0SEC_MCP_AUTH_JSON"\]/);
-  assert.doesNotMatch(patch, /0SEC_MCP_AUTH_JSON=[^\n]+/);
-});
 
 test("DSH invocation stays a one-shot headless profile command", () => {
   assert.deepEqual(

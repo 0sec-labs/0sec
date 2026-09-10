@@ -14,6 +14,8 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Source proposals can inspect recent retained worker versions without
+  reopening removed source paths or applying edits against stale digests.
 - Stateful `access_control_workflow` verification with isolated identities,
   explicit mutation consent, scoped multi-step requests, and owner-observed
   state transitions rather than HTTP-status-only claims.
@@ -78,6 +80,8 @@ on the published npm package and the GitHub Release tag.
 
 ### Fixed
 
+- The DeepSeek MCP profile now disables the web-fetch provider alongside its
+  web service, preventing headless startup from waiting on a disabled service.
 - Source enumeration no longer follows repository symlinks or includes
   multiply linked files. Deep-review also checks resolved subsystem paths
   against the prepared source tree before exposing source to a finder.

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseEvolutionConfig } from "./config.js";
-import { createEvolutionCandidate, snapshotEvolutionSource } from "./registry.js";
+import { createEvolutionCandidate, evolutionDigest, recordEvolutionVersion, snapshotEvolutionSource } from "./registry.js";
 import { EvolutionGenerationError, proposeEvolutionEdits } from "./rewrite.js";
 import { createDockerEvolutionSandbox } from "./sandbox.js";
 import type { EvolutionModel } from "./types.js";
@@ -37,7 +37,13 @@ async function fixture() {
       expected: { result: group !== 2 },
     }))),
   });
-  return { config, snapshot: await snapshotEvolutionSource(config) };
+  const snapshot = await snapshotEvolutionSource(config);
+  await recordEvolutionVersion(config.storePath, {
+    schemaVersion: 1, id: snapshot.id, kind: config.kind, snapshot, parentId: null,
+    createdAt: new Date().toISOString(), configDigest: evolutionDigest(config),
+    receiptDigest: null, status: "baseline",
+  }, config);
+  return { config, snapshot };
 }
 function response(name: string, input: Record<string, unknown>, id = "call"): NativeRuntimeResult {
   return { content: [{ type: "tool_use", id, name, input }], stopReason: "tool_use", durationMs: 1, usage: { inputTokens: 100, outputTokens: 100 } };
@@ -71,6 +77,57 @@ describe("source generation trust boundary", () => {
     expect(readFileSync(join(candidate.root, "src/z.cjs"), "utf8")).toBe("module.exports = 2;\n");
     expect(readFileSync(join(snapshot.root, "src/z.cjs"), "utf8")).toContain("selected-source-marker");
     expect(proposal.modelCostUsd).toBeGreaterThan(0);
+  });
+
+  it("learns from archived source but applies edits only against the current baseline", async () => {
+    const { config, snapshot } = await fixture();
+    const original = snapshot.files.find((file) => file.path === "src/z.cjs")!;
+    const current = await createEvolutionCandidate(snapshot, {
+      rationale: "Current implementation", modelCostUsd: 0,
+      edits: [{ path: original.path, beforeDigest: original.digest, content: "module.exports = 1;\n" }],
+    }, config);
+    const currentFile = current.files.find((file) => file.path === original.path)!;
+    let turn = 0;
+    let reference = "";
+    const model: EvolutionModel = async (system, messages) => {
+      expect(JSON.stringify([system, messages])).not.toContain("hidden-oracle-input-891");
+      if (turn++ === 0) return response("read_source", { path: original.path, versionId: snapshot.id });
+      const reply = messages.at(-1)!.content.find((block) => block.type === "tool_result");
+      if (turn === 2) {
+        expect(reply?.type === "tool_result" && reply.is_error).not.toBe(true);
+        reference = JSON.parse(reply!.content).content;
+        expect(reference).toContain("selected-source-marker");
+        return response("propose_edits", { rationale: "Reuse an earlier approach", edits: [
+          { path: original.path, beforeDigest: original.digest, content: reference },
+        ] });
+      }
+      expect(reply?.type === "tool_result" && reply.is_error).toBe(true);
+      return response("propose_edits", { rationale: "Apply the idea to the current baseline", edits: [
+        { path: original.path, beforeDigest: currentFile.digest, content: reference },
+      ] });
+    };
+    const proposal = await proposeEvolutionEdits(current, { ...config, maxModelTurns: 3 }, "", { model });
+    const candidate = await createEvolutionCandidate(current, proposal, config);
+    expect(readFileSync(join(candidate.root, original.path), "utf8")).toBe(reference);
+    expect(readFileSync(join(current.root, original.path), "utf8")).toBe("module.exports = 1;\n");
+  });
+
+  it("does not reopen a source path removed from the current snapshot through the archive", async () => {
+    const { config, snapshot } = await fixture();
+    const removed = snapshot.files.find((file) => file.path === "src/z.cjs")!;
+    const current = await createEvolutionCandidate(snapshot, {
+      rationale: "Remove source from the current worker", modelCostUsd: 0,
+      edits: [{ path: removed.path, beforeDigest: removed.digest, content: null }],
+    }, config);
+    let turn = 0;
+    const model: EvolutionModel = async (_system, messages) => {
+      if (turn++ === 0) return response("read_source", { path: removed.path, versionId: snapshot.id });
+      const reply = messages.at(-1)!.content.find((block) => block.type === "tool_result");
+      expect(reply?.type === "tool_result" && reply.is_error).toBe(true);
+      expect(JSON.stringify(messages)).not.toContain("selected-source-marker");
+      return response("propose_edits", { rationale: "No permitted change", edits: [] });
+    };
+    await proposeEvolutionEdits(current, config, "", { model });
   });
 
   it("retains known charges and marks incomplete metering when a later response omits usage", async () => {

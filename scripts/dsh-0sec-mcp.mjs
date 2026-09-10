@@ -30,6 +30,7 @@ export const GENERIC_DSH_TOOL_ROWS = [
   "tool-web",
   "web",
   "web-search-deepseek",
+  "web-fetch-http",
 ];
 
 export const DEFAULT_MCP_TOOLS = "http_request,crawl,submit_form,send_prompt";
