@@ -83,6 +83,8 @@ on the published npm package and the GitHub Release tag.
 - Source-evolution confidence intervals no longer treat repeated executions of
   the same fixtures as independent evidence; unstable repeats cannot produce
   an informative interval.
+- Empty model refutations remain unresolved in the hunt ledger instead of
+  becoming disproven claims that bias later runs' known-negative context.
 - Target-history inference rejects repository metadata symlinks that resolve
   outside the authorized root, including intermediate `.git` directory links.
 - Codebase-memory evidence uses bounded descriptor reads and rechecks canonical
