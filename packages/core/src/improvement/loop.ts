@@ -4,16 +4,18 @@ import { canonicalEvolutionJson, parseEvolutionConfig } from "./config.js";
 import { publishEvolutionArtifact, readEvolutionArtifact } from "./artifacts.js";
 import { evaluateEvolutionCandidate } from "./evaluation.js";
 import {
-  createEvolutionCandidate, evolutionDigest, loadEvolutionRegistry, pinEvolutionVersion,
-  promoteEvolutionVersion, recordEvolutionVersion, rollbackEvolutionVersion,
-  snapshotEvolutionSource, startEvolutionCanary, verifyEvolutionSnapshot,
+  configsDir, createEvolutionCandidate, evolutionDigest, loadEvolutionRegistry,
+  loadEvolutionReceipt, pinEvolutionVersion, promoteEvolutionVersion, receiptsDir,
+  recordEvolutionVersion, rollbackEvolutionVersion, snapshotEvolutionSource,
+  startEvolutionCanary, verifyEvolutionSnapshot,
 } from "./registry.js";
 import { EvolutionGenerationError, proposeEvolutionEdits } from "./rewrite.js";
 import { createDockerEvolutionSandbox, resolveEvolutionImage } from "./sandbox.js";
 import { acquireEvolutionController } from "./controller-lock.js";
 import type {
   EvolutionAttempt, EvolutionConfig, EvolutionDependencies, EvolutionEvaluation,
-  EvolutionExecution, EvolutionProposal, EvolutionRunResult, EvolutionVersion,
+  EvolutionExecution, EvolutionProposal, EvolutionRegistry, EvolutionRunResult,
+  EvolutionVersion,
 } from "./types.js";
 
 /** Autonomous iterations learn only from development observations, never held-out answers. */
@@ -31,6 +33,109 @@ function developmentFeedback(evaluation: EvolutionEvaluation, proposal: Evolutio
     baseline: evaluation.attempts.baseline.filter((entry) => entry.lane === "development").map(summarize),
     candidate: evaluation.attempts.candidate.filter((entry) => entry.lane === "development").map(summarize),
   });
+}
+
+/** Evaluation compatibility excludes the proposal model and accounting budgets. */
+function feedbackContractDigest(config: EvolutionConfig): string {
+  return evolutionDigest({
+    objective: config.objective,
+    sourcePaths: [...config.sourcePaths].sort(),
+    editablePaths: [...config.editablePaths].sort(),
+    kind: config.kind,
+    command: config.command,
+    image: config.image,
+    timeoutMs: config.timeoutMs,
+    memoryMb: config.memoryMb,
+    cpus: config.cpus,
+    buildCommand: config.buildCommand ?? null,
+    cases: config.cases.map((c) => ({ id: c.id, lane: c.lane, input: c.input, expected: c.expected })),
+    maxOutputBytes: config.maxOutputBytes,
+    maxSourceBytes: config.maxSourceBytes,
+    repeats: config.repeats,
+  });
+}
+
+/** Recover only development observations from compatible, integrity-checked history. */
+export function tryRecoverPreviousFeedback(
+  config: EvolutionConfig,
+  registry: EvolutionRegistry,
+  storePath: string,
+  log?: (message: string) => void,
+): string | null {
+  const active = registry.versions.find((v) => v.id === registry.activeId);
+  if (!active) return null;
+
+  // Build the set of version IDs in the active lineage (active + ancestors)
+  const lineageIds = new Set<string>();
+  const addLineage = (vId: string | null): void => {
+    for (let cursor = vId; cursor !== null; ) {
+      if (lineageIds.has(cursor)) break; // stop at cycle (shouldn't happen, but defensive)
+      lineageIds.add(cursor);
+      const v = registry.versions.find((entry) => entry.id === cursor);
+      cursor = v?.parentId ?? null;
+    }
+  };
+  addLineage(active.id);
+
+  const currentContractDigest = feedbackContractDigest(config);
+
+  // Iterate backwards (most recent first) through registry versions
+  for (let i = registry.versions.length - 1; i >= 0; i--) {
+    const version = registry.versions[i]!;
+    if (version.status === "baseline" || version.status === "canary") continue;
+    if (!version.parentId || !lineageIds.has(version.parentId)) continue;
+    if (!version.receiptDigest || !version.proposalDigest) continue;
+
+    // Load and verify the stored proposal
+    const proposalPath = join(receiptsDir(storePath), `${version.id}.proposal.json`);
+    let proposal: EvolutionProposal;
+    try {
+      proposal = readEvolutionArtifact(proposalPath) as EvolutionProposal;
+    } catch {
+      continue; // No valid stored proposal
+    }
+    if (!proposal || typeof proposal.rationale !== "string" || !Array.isArray(proposal.edits)
+      || evolutionDigest(proposal) !== version.proposalDigest) continue;
+
+    // Load and verify the evaluation receipt using existing helpers
+    let receipt: EvolutionEvaluation | null;
+    try {
+      receipt = loadEvolutionReceipt(storePath, version.id);
+      const parent = registry.versions.find((entry) => entry.id === version.parentId);
+      if (!receipt || receipt.receiptDigest !== version.receiptDigest
+        || receipt.configDigest !== version.configDigest || receipt.candidateId !== version.id
+        || receipt.candidateDigest !== version.snapshot.digest
+        || receipt.baselineDigest !== parent?.snapshot.digest) continue;
+    } catch {
+      continue; // Tampered or missing receipt
+    }
+
+    // Verify candidate snapshot integrity
+    try {
+      verifyEvolutionSnapshot(version.snapshot);
+    } catch {
+      continue;
+    }
+
+    // Load the stored config from configs artifact to check contract compatibility
+    const configDigestHex = version.configDigest.replace(/^sha256:/, "");
+    const storedConfigPath = join(configsDir(storePath), `${configDigestHex}.json`);
+    let storedConfig: EvolutionConfig;
+    try {
+      storedConfig = readEvolutionArtifact(storedConfigPath) as EvolutionConfig;
+    } catch {
+      continue;
+    }
+    if (evolutionDigest(storedConfig) !== version.configDigest) continue;
+    if (feedbackContractDigest(storedConfig) !== currentContractDigest) continue;
+
+    // Compatible! Reconstruct the same feedback format that developmentFeedback produces,
+    // limited to development lane only, from the stored receipt and proposal.
+    log?.("[evolve] recovered previous candidate feedback");
+    return developmentFeedback(receipt, proposal);
+  }
+
+  return null;
 }
 
 export async function runEvolution(rawConfig: EvolutionConfig, deps: EvolutionDependencies = {}): Promise<EvolutionRunResult> {
@@ -76,7 +181,13 @@ async function runEvolutionPass(config: EvolutionConfig, deps: EvolutionDependen
   const result: EvolutionRunResult = {
     iterations: [], activeVersionId: active.id, modelCostUsd: 0, evaluationCostUsd: 0,
   };
-  let feedback = "No previous candidate. Improve the stated objective using development inputs; hidden evaluation is independent.";
+  let feedback: string;
+  try {
+    const recovered = tryRecoverPreviousFeedback(config, registry, config.storePath, deps.log);
+    feedback = recovered ?? "No previous candidate. Improve the stated objective using development inputs; hidden evaluation is independent.";
+  } catch {
+    feedback = "No previous candidate. Improve the stated objective using development inputs; hidden evaluation is independent.";
+  }
   const runId = randomUUID();
   const sandbox = deps.sandbox ?? createDockerEvolutionSandbox();
   const budgetedSandbox: NonNullable<EvolutionDependencies["sandbox"]> = async (request) => {
@@ -108,6 +219,11 @@ async function runEvolutionPass(config: EvolutionConfig, deps: EvolutionDependen
       feedback = developmentFeedback(evaluation, proposal);
       const receiptPath = join(config.storePath, "receipts", `${candidate.id}.json`);
       publishEvolutionArtifact(receiptPath, evaluation);
+      // Persist the proposal alongside the receipt for cross-invocation feedback recovery.
+      const proposalRecord = {
+        rationale: proposal.rationale, edits: proposal.edits, modelCostUsd: proposal.modelCostUsd,
+      };
+      publishEvolutionArtifact(join(config.storePath, "receipts", `${candidate.id}.proposal.json`), proposalRecord);
       const version: EvolutionVersion = {
         schemaVersion: 1,
         id: candidate.id,
@@ -117,6 +233,7 @@ async function runEvolutionPass(config: EvolutionConfig, deps: EvolutionDependen
         createdAt: new Date().toISOString(),
         configDigest,
         receiptDigest: evaluation.receiptDigest,
+        proposalDigest: evolutionDigest(proposalRecord),
         status: "candidate",
       };
       await recordEvolutionVersion(config.storePath, version);

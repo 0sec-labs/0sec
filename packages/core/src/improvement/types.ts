@@ -129,6 +129,8 @@ export interface EvolutionVersion {
   createdAt: string;
   configDigest: string;
   receiptDigest: string | null;
+  /** Digest of the optional persisted proposal used for development feedback. */
+  proposalDigest?: string;
   status: "baseline" | "candidate" | "canary" | "active" | "retired";
 }
 

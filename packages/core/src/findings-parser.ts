@@ -62,10 +62,13 @@ export function probeFileRefTarget(absPath: string): FileRefProbe {
     const stat = statSync(absPath);
     if (!stat.isFile()) return { exists: true }; // directory etc. — no lines to count
     if (stat.size > MAX_LINE_COUNT_FILE_BYTES) return { exists: true };
-    return {
-      exists: true,
-      lineCount: readFileSync(absPath, "utf8").split(/\r?\n/).length,
-    };
+    const raw = readFileSync(absPath, "utf8");
+    // A terminal newline ends a line; it does not create another source line.
+    let lineCount = raw.length === 0 || raw.endsWith("\n") ? 0 : 1;
+    for (let index = raw.indexOf("\n"); index !== -1; index = raw.indexOf("\n", index + 1)) {
+      lineCount++;
+    }
+    return { exists: true, lineCount };
   } catch {
     return { exists: true };
   }

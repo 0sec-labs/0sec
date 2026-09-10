@@ -99,6 +99,24 @@ selection is not a secret-redaction mechanism.
   selected source, the CLI config loader rejects it before generation.
   Programmatic callers must keep private answers outside selected source too.
 
+### Feedback across evolution passes
+
+Each evaluated proposal is retained beside its execution receipt. A later pass
+can recover development observations from the most recent compatible evaluated
+version in the active lineage, including an active version after promotion.
+Recovery checks proposal, receipt, configuration, and snapshot integrity; missing,
+incompatible, or damaged history does not enter the model context.
+
+The objective, selected/editable paths, execution contract, and fixture corpus
+must remain compatible. Changing the proposal model or remaining spending
+budgets does not erase otherwise compatible observations. Held-out and
+negative-control attempts, scores, and expected answers are not recovery feedback.
+
+This is durable learning context, **not durable campaign accounting**.
+`evolve run --watch` accumulates spend within one process; restarting it does not
+resume a campaign-wide budget ledger. It also stops after a no-change pass.
+Do not supervise restarts as an unlimited, unattended improvement service.
+
 ### Trust boundary
 
 The improvement plane isolates evolved sandbox workers from the operator-owned
@@ -337,9 +355,17 @@ is better. The relevant research supports evaluator-driven iteration:
 The implemented boundary is fixed acceptance criteria, independently labelled
 controls, restricted candidate execution, and versioned rollout. There is no
 automatic oracle for curating fresh security ground truth, no automatic held-out
-rotation, and no demonstrated end-to-end security-quality gain from this local
+rotation, and no demonstrated general security-quality gain from this local
 implementation. Supply fresh independently curated evaluation cases before
 treating successive benchmark wins as evidence of general improvement.
+
+Tracked implementation work:
+
+- [Crash-safe campaigns and feedback-driven resume (#41)](https://github.com/0sec-labs/0sec/issues/41)
+- [Longitudinal capability retention (#37)](https://github.com/0sec-labs/0sec/issues/37)
+- [Adaptive holdout exposure and rotation (#40)](https://github.com/0sec-labs/0sec/issues/40)
+- [Measured, development-only archive search (#39)](https://github.com/0sec-labs/0sec/issues/39)
+- [Evidence provenance and incompatible comparisons (#38)](https://github.com/0sec-labs/0sec/issues/38)
 
 ## Autonomy and hot-reload boundaries
 
@@ -802,6 +828,7 @@ After building the CLI and its dependencies, run the real provider-backed checks
 node scripts/smoke-source-evolution.mjs
 node scripts/smoke-lens-evolution.mjs
 node scripts/smoke-codebase-learning.mjs
+node scripts/smoke-source-citation.mjs
 ```
 
 The source check requires a non-root account with Docker access and the
@@ -814,6 +841,14 @@ disable cross-run hunt memory, and fail rather than reporting skipped work as su
 The codebase-learning check uses a separate temporary memory store and real model
 runs to learn a source-grounded note, recall it in a later run, and invalidate it
 after a cited file changes. It tests the lifecycle, not a measured accuracy gain.
+The citation check deliberately submits an out-of-range source annotation,
+verifies rejection before database persistence, and lets the real model read the
+file and submit a valid source-only finding. Interactive `save_finding` returns
+repairable validation errors instead of saving invalid references as false
+positives. `read_file` and annotation validation agree on actual source lines:
+a terminal newline does not create another line, and an empty file has zero.
+Post-hoc CLI parsing still retains invalid claims as downgraded findings.
 
 The trusted-main **Live evolution E2E** workflow accepts `lane=source`,
-`lane=lens`, `lane=codebase`, or `lane=all` and retains measured outcomes and failure logs.
+`lane=lens`, `lane=codebase`, `lane=citation`, or `lane=all` and retains measured
+outcomes and failure logs. `pnpm test:evolution:e2e` runs all four local checks.

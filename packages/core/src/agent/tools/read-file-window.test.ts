@@ -42,14 +42,6 @@ describe("windowFileContent — backwards compatibility", () => {
     expect(result.content).not.toContain(READ_FILE_NOTE_PREFIX);
   });
 
-  it("keeps totalLines counting the trailing element of a newline-terminated file", () => {
-    // Pre-existing contract: split("\n") on "a\nb\n" yields ["a","b",""].
-    // Pinned so a future refactor cannot silently redefine totalLines.
-    const result = windowFileContent("a\nb\n", {});
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.totalLines).toBe(3);
-  });
 
   it("honours max_lines exactly as before when no offset is given", () => {
     const result = windowFileContent(numberedFile(100), { maxLines: 7 });
@@ -90,6 +82,30 @@ describe("windowFileContent — offset windows", () => {
     expect(result.startLine).toBe(42);
     expect(result.endLine).toBe(42);
     expect(result.truncated).toBe(false);
+  });
+
+  it("ends pagination at the last real line of a newline-terminated file", () => {
+    const result = windowFileContent("a\nb\n", { offset: 2, maxLines: 1 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(bodyLines(result.content)).toEqual(["b"]);
+    expect(result.totalLines).toBe(2);
+    expect(result.endLine).toBe(2);
+    expect(result.truncated).toBe(false);
+    expect(result.nextOffset).toBeUndefined();
+    const pastEnd = windowFileContent("a\nb\n", { offset: 3 });
+    expect(pastEnd.ok).toBe(true);
+    if (pastEnd.ok) expect(bodyLines(pastEnd.content)).toEqual([]);
+  });
+
+  it("preserves real blank lines before the terminal newline", () => {
+    const result = windowFileContent("a\n\n", { offset: 2, maxLines: 1 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(bodyLines(result.content)).toEqual([""]);
+    expect(result.totalLines).toBe(2);
+    expect(result.endLine).toBe(2);
+    expect(result.nextOffset).toBeUndefined();
   });
 
   it("paging with nextOffset walks the whole file with no gaps or repeats", () => {
@@ -207,8 +223,9 @@ describe("windowFileContent — out-of-range and invalid arguments", () => {
     const result = windowFileContent("", {});
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.totalLines).toBe(1);
-    expect(result.content).toBe("");
+    expect(result.totalLines).toBe(0);
+    expect(bodyLines(result.content)).toEqual([]);
+    expect(result.endLine).toBe(0);
     expect(result.truncated).toBe(false);
   });
 });

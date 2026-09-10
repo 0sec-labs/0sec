@@ -102,6 +102,16 @@ console.log(JSON.stringify({schemaVersion:'0sec.finder.output/v1', findings}));
   assert.equal(after.findings.length, 1);
   assert.equal(after.findings[0].status, "discovered");
   assert.equal(after.findings[0].reviewAnnotation.startLine, 1);
+  console.error("[source-evolution] resuming with the promoted version and retained development history");
+  const resumed = await runEvolution({
+    ...config, maxIterations: 1,
+    maxModelCostUsd: config.maxModelCostUsd - result.modelCostUsd,
+    maxEvaluationCostUsd: config.maxEvaluationCostUsd - result.evaluationCostUsd - approval.evaluationCostUsd,
+  }, { signal: controller.signal, log: (message) => console.error(message) });
+  assert(Number.isFinite(resumed.modelCostUsd) && resumed.modelCostUsd > 0, "the resumed pass must exercise the real provider");
+  assert.equal(resumed.activeVersionId, newFinder.versionId, "an unapproved resumed proposal must not replace the active version");
+  assert(result.modelCostUsd + resumed.modelCostUsd <= config.maxModelCostUsd, "both passes must share the model budget");
+  console.log(JSON.stringify({ phase: "resumed-evaluation", ...resumed }));
   await rollbackEvolutionVersion(storePath, newFinder.versionId, "E2E operator rollback");
   const restored = await createEvolvedFinder(config, "after-rollback");
   assert.equal(restored.versionId, oldFinder.versionId);
@@ -109,7 +119,7 @@ console.log(JSON.stringify({schemaVersion:'0sec.finder.output/v1', findings}));
   assert.equal((await newFinder.find(target, input)).findings.length, 1, "captured engagements retain their exact version after rollback");
   assert.equal(readFileSync(join(sourceRoot, "finder.mjs"), "utf8"), worker, "active source checkout must remain unchanged");
   assert.equal(loadEvolutionRegistry(storePath).activeId, oldFinder.versionId);
-  console.log(JSON.stringify({ outcome: "passed", model: config.model, image, cases: cases.length, repeats: config.repeats, canaryTrials: config.canaryTrials, modelCostUsd: result.modelCostUsd, evaluationCostUsd: result.evaluationCostUsd + approval.evaluationCostUsd, baselineVersion: oldFinder.versionId, evolvedVersion: newFinder.versionId, deployedFindings: after.findings.length, engagementPinning: true, rollback: true }));
+  console.log(JSON.stringify({ outcome: "passed", model: config.model, image, cases: cases.length, repeats: config.repeats, canaryTrials: config.canaryTrials, modelCostUsd: result.modelCostUsd + resumed.modelCostUsd, evaluationCostUsd: result.evaluationCostUsd + approval.evaluationCostUsd + resumed.evaluationCostUsd, baselineVersion: oldFinder.versionId, evolvedVersion: newFinder.versionId, deployedFindings: after.findings.length, resumedPass: true, engagementPinning: true, rollback: true }));
 } catch (error) {
   console.error(JSON.stringify({ outcome: "failed", error: error instanceof Error ? error.message : String(error) }));
   process.exitCode = 1;

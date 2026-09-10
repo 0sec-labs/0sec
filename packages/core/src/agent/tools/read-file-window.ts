@@ -123,12 +123,9 @@ function parsePositiveIntArg(
 /**
  * Select a line window out of already-read file content.
  *
- * `totalLines` is `content.split("\n").length`, which counts a trailing empty
- * element for files that end in a newline (so it reads one higher than
- * `wc -l`). That is the pre-existing contract of this tool's `totalLines`
- * field and is left alone on purpose: `split("\n")` indices ARE the 1-based
- * line numbers every other tool in the chain reports, and changing the count
- * now would silently move the meaning of a field callers already log.
+ * A terminal newline ends the last source line rather than adding a phantom
+ * empty line. Empty files have no source lines. These bounds agree with source
+ * citation validation, including files containing actual blank lines.
  *
  * An `offset` past EOF is NOT an error. It returns an empty window with a note
  * saying so — the agent asked a well-formed question about a file that is
@@ -149,6 +146,7 @@ export function windowFileContent(
   const maxLines = maxLinesArg.value ?? READ_FILE_DEFAULT_MAX_LINES;
 
   const lines = fileContent.split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
   const totalLines = lines.length;
 
   // Past EOF: empty window, explicit note, still a success.

@@ -6616,49 +6616,59 @@ export class ToolExecutor {
       }
       // Existence + line-range probe — the SAME check the CLI findings
       // parser runs (findings-parser.ts validateFileRef via
-      // probeFileRefTarget). A fabricated location does NOT reject the tool
-      // call: the finding is kept but downgraded exactly like a CLI-parsed
-      // finding (severity info / status false-positive / triageNote) and the
-      // unverifiable annotation is dropped. The probe never throws and
-      // yields no lineCount for directories/oversized/unreadable files, in
-      // which case the line-range check is skipped (conservative).
+      // probeFileRefTarget). Unlike the CLI-parsed path, which downgrades
+      // and keeps the finding (severity info / status false-positive /
+      // triageNote), the interactive tool call REJECTS with a structured
+      // validation error so the model can self-correct and re-submit on the
+      // same turn without evaluating a false-positive finding. The probe
+      // never throws and yields no lineCount for
+      // directories/oversized/unreadable files, in which case the line-range
+      // check is skipped (conservative).
       // `this.ctx.scopePath` is guaranteed set by the workspace guard above.
       const sourceAbsolute = resolve(this.ctx.scopePath!, sourcePath);
       const probe = probeFileRefTarget(sourceAbsolute);
       const lastLine =
         endLine !== undefined ? (endLine as number) : (startLine as number);
-      if (
-        !probe.exists ||
-        (probe.lineCount !== undefined && lastLine > probe.lineCount)
-      ) {
-        finding.severity = "info";
-        finding.status = "false-positive";
-        finding.triageNote = !probe.exists
-          ? `fabricated path: ${sourcePath}`
-          : `fabricated line: ${sourcePath}:${lastLine}`;
-      } else {
-        // Oversized / fenced / unified-diff suggestions are dropped (never
-        // truncated), keeping the location — same gate as the CLI parser and
-        // the cloud sink (findings-parser.ts isSuggestionAcceptable).
-        const suggestion = args.suggested_replacement;
-        finding.reviewAnnotation = {
-          path: sourcePath,
-          startLine: startLine as number,
-          ...(endLine !== undefined ? { endLine: endLine as number } : {}),
-          ...(typeof suggestion === "string" &&
-          suggestion.length > 0 &&
-          isSuggestionAcceptable(suggestion)
-            ? { suggestion }
-            : {}),
-          ...(citedSourceHasKnownMarker(
-            sourceAbsolute,
-            startLine as number,
-            lastLine,
-          )
-            ? { knownMarker: true }
-            : {}),
-        };
+      if (!probe.exists) {
+        return buildValidationFailureResult([
+          {
+            field: "source_path",
+            reason: `file not found: ${sourcePath}`,
+          },
+        ]);
       }
+      if (
+        probe.lineCount !== undefined &&
+        lastLine > probe.lineCount
+      ) {
+        return buildValidationFailureResult([
+          {
+            field: "source_start_line",
+            reason: `line ${lastLine} exceeds file length (${probe.lineCount} lines) in ${sourcePath}`,
+          },
+        ]);
+      }
+      // Oversized / fenced / unified-diff suggestions are dropped (never
+      // truncated), keeping the location — same gate as the CLI parser and
+      // the cloud sink (findings-parser.ts isSuggestionAcceptable).
+      const suggestion = args.suggested_replacement;
+      finding.reviewAnnotation = {
+        path: sourcePath,
+        startLine: startLine as number,
+        ...(endLine !== undefined ? { endLine: endLine as number } : {}),
+        ...(typeof suggestion === "string" &&
+        suggestion.length > 0 &&
+        isSuggestionAcceptable(suggestion)
+          ? { suggestion }
+          : {}),
+        ...(citedSourceHasKnownMarker(
+          sourceAbsolute,
+          startLine as number,
+          lastLine,
+        )
+          ? { knownMarker: true }
+          : {}),
+      };
     } else if (
       args.source_start_line !== undefined ||
       args.source_end_line !== undefined ||
@@ -7127,9 +7137,6 @@ export class ToolExecutor {
       return { success: false, output: null, error: window.error };
     }
 
-    // `content` / `totalLines` / `truncated` keep their pre-offset meaning so
-    // existing consumers and transcripts are unaffected; `startLine` /
-    // `endLine` / `nextOffset` are additive.
     return {
       success: true,
       output: {

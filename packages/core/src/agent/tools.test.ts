@@ -542,7 +542,7 @@ describe("ToolExecutor", () => {
     }
   });
 
-  it("save_finding keeps but downgrades a finding whose source_path does not exist", async () => {
+  it("save_finding rejects a non-existent source_path (interactive path — repairable error)", async () => {
     const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       ctx.scopePath = root;
@@ -559,25 +559,23 @@ describe("ToolExecutor", () => {
           source_start_line: 43,
         },
       });
-      // Not a hard rejection: the finding is kept, downgraded exactly like a
-      // CLI-parsed finding citing a fabricated path, and the unverifiable
-      // annotation is dropped.
-      expect(result.success).toBe(true);
-      expect(ctx.findings).toHaveLength(1);
-      expect(ctx.findings[0].severity).toBe("info");
-      expect(ctx.findings[0].status).toBe("false-positive");
-      expect(ctx.findings[0].triageNote).toContain("fabricated path");
-      expect(ctx.findings[0].triageNote).toContain("app/users.php");
-      expect(ctx.findings[0].reviewAnnotation).toBeUndefined();
+      // Interactive path rejects with a structured validation error so the
+      // model can self-correct and re-submit (contrasts with CLI-parsed
+      // findings which downgrade to false-positive).
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("file not found");
+      expect(result.error).toContain("app/users.php");
+      expect(result.output?.kind).toBe("validation_failed");
+      expect(ctx.findings).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("save_finding keeps but downgrades a finding whose start line is out of range", async () => {
+  it("save_finding rejects an out-of-range source_start_line (interactive path — repairable error)", async () => {
     const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
-      writeFileSync(join(root, "parser.ts"), "unsafe(input)\n"); // 1 line
+      writeFileSync(join(root, "parser.ts"), "unsafe(input)\n"); // 1 line + terminal newline
       ctx.scopePath = root;
       const result = await executor.execute({
         name: "save_finding",
@@ -592,19 +590,17 @@ describe("ToolExecutor", () => {
           source_start_line: 42,
         },
       });
-      expect(result.success).toBe(true);
-      expect(ctx.findings).toHaveLength(1);
-      expect(ctx.findings[0].severity).toBe("info");
-      expect(ctx.findings[0].status).toBe("false-positive");
-      expect(ctx.findings[0].triageNote).toContain("fabricated line");
-      expect(ctx.findings[0].triageNote).toContain("parser.ts:42");
-      expect(ctx.findings[0].reviewAnnotation).toBeUndefined();
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("exceeds file length");
+      expect(result.error).toContain("parser.ts");
+      expect(result.output?.kind).toBe("validation_failed");
+      expect(ctx.findings).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("save_finding downgrades on an out-of-range end line but keeps an in-range one", async () => {
+  it("save_finding rejects an out-of-range end_line but keeps an in-range one", async () => {
     const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       writeFileSync(join(root, "parser.ts"), "// 1\n// 2\n// 3\n// 4\n// 5\n");
@@ -624,10 +620,10 @@ describe("ToolExecutor", () => {
           source_end_line: 42,
         },
       });
-      expect(bad.success).toBe(true);
-      expect(ctx.findings[0].status).toBe("false-positive");
-      expect(ctx.findings[0].triageNote).toContain("fabricated line");
-      expect(ctx.findings[0].reviewAnnotation).toBeUndefined();
+      expect(bad.success).toBe(false);
+      expect(bad.error).toContain("exceeds file length");
+      expect(bad.output?.kind).toBe("validation_failed");
+      expect(ctx.findings).toHaveLength(0);
 
       const good = await executor.execute({
         name: "save_finding",
@@ -644,9 +640,9 @@ describe("ToolExecutor", () => {
         },
       });
       expect(good.success).toBe(true);
-      expect(ctx.findings[1].severity).toBe("high");
-      expect(ctx.findings[1].status).toBe("discovered");
-      expect(ctx.findings[1].reviewAnnotation).toEqual({
+      expect(ctx.findings[0].severity).toBe("high");
+      expect(ctx.findings[0].status).toBe("discovered");
+      expect(ctx.findings[0].reviewAnnotation).toEqual({
         path: "parser.ts",
         startLine: 2,
         endLine: 4,
@@ -758,10 +754,12 @@ describe("ToolExecutor", () => {
     }
   });
 
-  it("native save_finding and CLI parsing agree on the same malicious locations", async () => {
-    // Dual-path parity: a fabricated location must produce the same outcome
-    // whether the finding arrives via the save_finding tool or via CLI
-    // output parsing (findings-parser.validateFileRef).
+  it("CLI parsing still downgrades fabricated source refs (non-interactive path unchanged)", async () => {
+    // Dual-path reference: the CLI parser still downgrades (info /
+    // false-positive / triageNote) because the output is post-hoc and has
+    // no way to ask the agent for a correction. The interactive tool path
+    // (save_finding) rejects the call instead — verified in the preceding
+    // tests.
     const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       writeFileSync(join(root, "parser.ts"), "unsafe(input)\n"); // 1 line
@@ -784,41 +782,130 @@ describe("ToolExecutor", () => {
       }
       expect(cli[0].triageNote).toContain("fabricated path");
       expect(cli[1].triageNote).toContain("fabricated line");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
-      for (const args of [
-        {
-          title: "No such file",
-          severity: "critical",
-          source_path: "nope.ts",
-          source_start_line: 1,
-        },
-        {
-          title: "Line out of range",
+  // ── save_finding terminal-newline citation boundary regressions ──
+  // A real lens CI run found the correct SSRF in a six-source-line Python
+  // fixture but submitted source_start_line=7 — the empty split slot after
+  // the terminal newline. save_finding accepted it; evaluation correctly
+  // rejected it. These tests verify the fix.
+
+  it("save_finding rejects a terminal-newline boundary — line 7 in 6-line proxy.py", async () => {
+    const root = mkdtempSync(join(tmpdir(), "0sec-tn-boundary-"));
+    try {
+      // Six source lines with a terminal newline (the common git checkout case).
+      const lines = [
+        "#!/usr/bin/env python3",
+        "import http.server",
+        "",
+        "class Handler(http.server.BaseHTTPRequestHandler):",
+        '    def do_GET(self):',
+        "        self.send_response(200)",
+      ];
+      writeFileSync(join(root, "proxy.py"), lines.join("\n") + "\n");
+      ctx.scopePath = root;
+
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "SSRF in proxy.py",
           severity: "high",
-          source_path: "parser.ts",
-          source_start_line: 42,
+          category: "ssrf",
+          description: "Server-side request forgery in the proxy handler.",
+          evidence_request: "GET /fetch?url=http://attacker.com",
+          evidence_response: "200 OK (forwarded response)",
+          source_path: "proxy.py",
+          source_start_line: 7,
         },
-      ]) {
-        const result = await executor.execute({
-          name: "save_finding",
-          arguments: {
-            ...args,
-            category: "missing-validation",
-            description: "d",
-            evidence_request: "test",
-            evidence_response: "test",
-          },
-        });
-        expect(result.success).toBe(true);
-      }
-      expect(ctx.findings).toHaveLength(2);
-      for (const f of ctx.findings) {
-        expect(f.severity).toBe("info");
-        expect(f.status).toBe("false-positive");
-        expect(f.reviewAnnotation).toBeUndefined();
-      }
-      expect(ctx.findings[0].triageNote).toContain("fabricated path");
-      expect(ctx.findings[1].triageNote).toContain("fabricated line");
+      });
+
+      // Line 7 is the empty slot after the terminal newline — not a real
+      // source line. Must reject so the model can re-read and correct.
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("exceeds file length (6 lines)");
+      expect(result.output?.kind).toBe("validation_failed");
+      expect(ctx.findings).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding rejects a terminal-newline boundary — end_line 7 when file has 5 lines with terminal newline", async () => {
+    const root = mkdtempSync(join(tmpdir(), "0sec-tn-boundary-"));
+    try {
+      writeFileSync(
+        join(root, "fixture.py"),
+        "first\nsecond\nthird\nfourth\nfifth\n",
+      );
+      ctx.scopePath = root;
+
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "End line past EOF",
+          severity: "high",
+          category: "ssrf",
+          description: "The end line reference is beyond the last content line.",
+          evidence_request: "test",
+          evidence_response: "test",
+          source_path: "fixture.py",
+          source_start_line: 4,
+          source_end_line: 7,
+        },
+      });
+
+      // Line 7 exceeds the 5 content lines (terminal newline doesn't add a
+      // real source line). Rejected — the model must correct the range.
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("exceeds file length (5 lines)");
+      expect(result.output?.kind).toBe("validation_failed");
+      expect(ctx.findings).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding accepts the last real line in a file with terminal newline", async () => {
+    // The same fixture with the correct line = 6 (the last content line).
+    // Verifies that the fix did not reject valid citations.
+    const root = mkdtempSync(join(tmpdir(), "0sec-tn-boundary-"));
+    try {
+      const lines = [
+        "#!/usr/bin/env python3",
+        "import http.server",
+        "",
+        "class Handler(http.server.BaseHTTPRequestHandler):",
+        '    def do_GET(self):',
+        "        self.send_response(200)",
+      ];
+      writeFileSync(join(root, "proxy.py"), lines.join("\n") + "\n");
+      ctx.scopePath = root;
+
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "SSRF in proxy.py",
+          severity: "high",
+          category: "ssrf",
+          description: "Server-side request forgery in the proxy handler.",
+          evidence_request: "GET /fetch?url=http://attacker.com",
+          evidence_response: "200 OK (forwarded response)",
+          source_path: "proxy.py",
+          source_start_line: 6,
+        },
+      });
+
+      // Line 6 is the last content line — must be accepted.
+      expect(result.success).toBe(true);
+      expect(ctx.findings).toHaveLength(1);
+      expect(ctx.findings[0].status).toBe("discovered");
+      expect(ctx.findings[0].reviewAnnotation).toEqual({
+        path: "proxy.py",
+        startLine: 6,
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

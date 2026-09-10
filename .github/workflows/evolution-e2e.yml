@@ -7,7 +7,7 @@ on:
       lane:
         description: Lifecycle to exercise
         type: choice
-        options: [all, source, lens, codebase]
+        options: [all, source, lens, codebase, citation]
         default: all
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: ${{ fromJSON(inputs.lane == 'source' && '["source"]' || inputs.lane == 'lens' && '["lens"]' || inputs.lane == 'codebase' && '["codebase"]' || '["source","lens","codebase"]') }}
+        lane: ${{ fromJSON(inputs.lane == 'source' && '["source"]' || inputs.lane == 'lens' && '["lens"]' || inputs.lane == 'codebase' && '["codebase"]' || inputs.lane == 'citation' && '["citation"]' || '["source","lens","codebase","citation"]') }}
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
@@ -62,6 +62,8 @@ jobs:
           script="scripts/smoke-${{ matrix.lane }}-evolution.mjs"
           if [ "${{ matrix.lane }}" = "codebase" ]; then
             script="scripts/smoke-codebase-learning.mjs"
+          elif [ "${{ matrix.lane }}" = "citation" ]; then
+            script="scripts/smoke-source-citation.mjs"
           fi
           node "$script" 2>&1 | tee evolution-${{ matrix.lane }}.jsonl
       - name: Retain measured lifecycle outcomes

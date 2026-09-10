@@ -14,6 +14,14 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Evolution passes recover compatible development feedback from retained
+  proposals and evaluation receipts, including after promotion. Proposal and
+  receipt digests are checked; held-out and negative-control feedback stays
+  sealed. This does not add restart-safe campaign budget accounting.
+- Interactive source findings with missing or out-of-range citations return
+  repairable validation errors before persistence. Source reads and citation
+  checks no longer count a terminal newline as an additional source line.
+  A real-model citation-repair lane joins the trusted-main evolution E2E checks.
 - Scoped native-API research can retain source-hashed codebase notes and reuse
   current notes in later runs. Verification stays cold, and changed or unsafe
   evidence is excluded. A real-model learning lifecycle check is available in
