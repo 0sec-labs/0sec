@@ -22,6 +22,12 @@ jobs:
           node-version: 24
       - name: Bootstrap runner
         run: bash "$GITHUB_WORKSPACE/scripts/ci-runner-bootstrap.sh"
+      - name: Provision FoxGuard binary
+        env:
+          INSTALL_DIR: ${{ runner.temp }}/0sec-tools/bin
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/provision-foxguard.sh"
+          echo "$INSTALL_DIR" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build CLI

@@ -1,4 +1,5 @@
 import type { AttackCategory } from "@0sec/shared";
+import { fileURLToPath } from "node:url";
 
 export interface FoxguardFinding {
   ruleId: string;
@@ -52,10 +53,16 @@ export function parseFoxguardSarif(sarifText: string): FoxguardFinding[] {
       for (const loc of result.locations ?? []) {
         const uri = loc.physicalLocation?.artifactLocation?.uri;
         if (!uri) continue;
+        let file: string;
+        try {
+          file = uri.startsWith("file:") ? fileURLToPath(uri) : decodeURIComponent(uri);
+        } catch {
+          continue;
+        }
         out.push({
           ruleId,
           message,
-          file: uri,
+          file,
           startLine: loc.physicalLocation?.region?.startLine,
           endLine: loc.physicalLocation?.region?.endLine,
           level: result.level,

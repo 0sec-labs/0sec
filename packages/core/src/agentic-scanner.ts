@@ -2556,9 +2556,11 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       // ── Multi-modal agreement (foxguard cross-validation) ──
       // Opt-in via 0SEC_FEATURE_MULTIMODAL. Only runs when we have source
       // code (white-box mode). Cross-checks every finding against the
-      // foxguard Rust pattern scanner — if both agents agree, the finding is
-      // almost certainly real; if foxguard disagrees and the evidence is
-      // thin, we auto-reject.
+      // foxguard Rust pattern scanner. When both scanners flag the same file
+      // and the rules cite a common weakness class, confidence increases.
+      // NOTE: foxguard absence of a finding on the same file is NOT refutation
+      // (different rule sets / coverage), and same-file hits may be unrelated
+      // rules — agreement is probative but not dispositive.
       if (features.multiModalAgreement && config.repoPath && routerAllowsLayer("multi_modal")) {
         const mmStartedAt = Date.now();
         try {

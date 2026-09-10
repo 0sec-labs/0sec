@@ -147,7 +147,7 @@ function severityForVariant(finding: FoxguardFinding, subsystem: string): Severi
 }
 
 function commandSummary(tree: string, rules?: string): string {
-  const parts = ["foxguard", "scan", tree];
+  const parts = ["foxguard", tree];
   if (rules) parts.push("--rules", rules);
   parts.push("--format", "sarif");
   return parts.join(" ");
@@ -271,7 +271,7 @@ async function runFoxguardSarifScan(args: {
     tmpdir(),
     `0sec-kernel-variant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.sarif`,
   );
-  const cmdArgs = ["scan", args.tree];
+  const cmdArgs = [args.tree];
   if (args.rules) cmdArgs.push("--rules", args.rules);
   cmdArgs.push("--format", "sarif", "--output", outPath);
 

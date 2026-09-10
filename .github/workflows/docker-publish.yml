@@ -219,6 +219,10 @@ jobs:
             echo "=== certipy ==="        && command -v certipy && certipy --help 2>&1 | head -3
             echo "=== bloodhound-ce ==="  && command -v bloodhound-ce-python && bloodhound-ce-python --help 2>&1 | head -3
             echo "=== azurehound ==="     && command -v azurehound && azurehound --help 2>&1 | head -3
+            # FoxGuard — the default static scanner. `detectFoxguard()` in
+            # multi-modal.ts first finds it via `which`, then checks fallback
+            # paths; /usr/local/bin/foxguard must be on PATH.
+            echo "=== foxguard ==="       && command -v foxguard && foxguard --version 2>&1 | head -1
             # The AD venv must NOT shadow the system interpreter: the agent
             # helper scripts import the apt-managed requests/bs4 via plain
             # `python3`, and a venv on PATH would silently hide them.

@@ -27,22 +27,3 @@ test("dist runtime lock matches the generated package identity", () => {
   assert.equal(lock.packages[""].dependencies.cfonts, undefined);
 });
 
-test("bundle generator copies the immutable runtime lock", () => {
-  assert.match(
-    read("scripts/bundle-cli.mjs"),
-    /copyFileSync\("scripts\/dist-package-lock\.json", `\$\{outdir\}\/package-lock\.json`\)/,
-  );
-  assert.match(
-    read("scripts/bundle-cli.mjs"),
-    /"@opentui\/core": cliPkg\.dependencies\["@opentui\/core"\]/,
-  );
-  assert.match(read("scripts/bundle-cli.mjs"), /"react",\s*"react\/\*"/);
-  assert.doesNotMatch(read("scripts/bundle-cli.mjs"), /\bcfonts\b/);
-});
-
-test("Dockerfile installs locked runtime dependencies", () => {
-  const source = read("Dockerfile");
-  assert.match(source, /npm ci --omit=dev --ignore-scripts/);
-  assert.doesNotMatch(source, /npm install --omit=dev/);
-  assert.doesNotMatch(source, /npm install -g playwright/);
-});

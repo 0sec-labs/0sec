@@ -32,6 +32,8 @@ check_binary_install() {
     export PATH="$HOME/.0sec/bin:$PATH"
     0 --help >/dev/null
     0sec --help >/dev/null
+    foxguard --version
+    ! command -v node
   '
 }
 
