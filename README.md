@@ -1,4 +1,10 @@
 <p align="center">
+  <a href="https://0.security/harness/">
+    <img src="assets/readme-cover.png" alt="Security research. Under your control. An ivory paper sculpture with a crimson edge." width="100%">
+  </a>
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/0sec-aperture-white.svg">
     <img src="assets/0sec-aperture-ink.svg" alt="0sec" width="176">
@@ -16,10 +22,14 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3fb950" alt="license" />
-  <img src="https://img.shields.io/github/v/release/0sec-labs/0sec?color=2563eb" alt="release" />
-  <img src="https://img.shields.io/badge/docs-0.security-6366f1" alt="docs" />
-  <img src="https://img.shields.io/badge/status-research%20preview-f0883e" alt="status: research preview" />
+  <a href="https://docs.0.security/"><img src="https://img.shields.io/badge/Documentation-DC2626?style=for-the-badge&amp;logo=gitbook&amp;logoColor=white" alt="Documentation" height="28"></a>
+  <a href="https://0.security/harness/"><img src="https://img.shields.io/badge/Website-1A1815?style=for-the-badge" alt="Website" height="28"></a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-1A1815?style=flat-square&amp;labelColor=1A1815" alt="License: MIT OR Apache-2.0"></a>
+  <a href="https://github.com/0sec-labs/0sec/releases/latest"><img src="https://img.shields.io/github/v/release/0sec-labs/0sec?style=flat-square&amp;labelColor=1A1815&amp;color=1A1815" alt="Latest release"></a>
+  <a href="#honest-limitations"><img src="https://img.shields.io/badge/status-research%20preview-DC2626?style=flat-square&amp;labelColor=1A1815" alt="Status: research preview"></a>
 </p>
 
 <p align="center">
