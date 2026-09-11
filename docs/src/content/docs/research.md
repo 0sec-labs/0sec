@@ -42,6 +42,36 @@ False-positive reduction stack, measured effects per benchmark slice, layer orde
 
 Why 0sec uses TypeScript for orchestration while moving deterministic engines such as FoxGuard into Rust behind stable contracts.
 
+## Self-evolving harnesses
+
+The engineering target is not merely a growing tool list. It is an agent that
+can author and select alternative implementations, activate them during a task,
+retain useful learned skills, and recover when an experiment fails. See
+[Improvement Plane](/improvement-plane/) for implementation status and
+[Architecture](/architecture/#plugin-first-self-evolution) for runtime boundaries.
+
+These sources address complementary mechanisms; they are not interchangeable
+proofs that 0sec improves autonomously:
+
+| Source | What informs the design | What it does not establish |
+| --- | --- | --- |
+| [A Programming Paradigm for Spatiotemporal Composability](https://arxiv.org/abs/2608.25512) and [Cordis](https://github.com/cordiverse/cordis) | Reversible component effects, reactive dependencies, configuration reconciliation, and hot replacement | A security-quality benchmark, automatic compensation for external effects, or durable campaign recovery |
+| [Self-Harness, v3](https://arxiv.org/abs/2606.09498v3) | Same-model weakness mining, diverse targeted code proposals, and held-in/held-out regression-gated selection | Open-ended self-improvement, live hot swapping, multi-day recovery, or security-quality gains in 0sec |
+| [DeepSeek Harness architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md) | Replaceable agent-loop, tool, model, and session services rather than only fixed tool extension points | Live reload in its shipped headless/SDK profiles or first-class Python plugin hosting |
+| [Hermes Python plugins](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins) | Python-native tools, hooks, commands, bundled skills, and memory/context provider interfaces | A language-neutral live-generation implementation for 0sec |
+| [Voyager's skill manager](https://github.com/MineDojo/Voyager/blob/main/voyager/agents/skill.py) | Retaining executable skill code and retrieving reusable programs by description | General-purpose harness replacement or evidence of cybersecurity effectiveness |
+| [Darwin Gödel Machine](https://arxiv.org/abs/2505.22954) | Evaluated agent-code changes and alternative implementations | Guaranteed monotonic improvement or a substitute for independent evaluation |
+| [Chord's lifecycle plan](https://github.com/earendil-works/pi/blob/main/packages/chord/PLANNING.md) | Explicit dependency ordering, stable service handles, and resource ownership | Graph-transactional reload or post-cutover rollback; its plan explicitly excludes both for shape-preserving replacement |
+
+**Cordis and Chord are different projects.** Cordis's formal context discipline
+and Chord's application-neutral service host should not be cited as the same
+implementation. Upstream implementation plans and APIs can change.
+
+For a long-horizon experiment, report the task and harness versions, measured
+outcomes, model/tool cost, generation transitions, retained capabilities, and
+recovery behavior. A successful import or one lifecycle smoke is not evidence
+that a self-evolving agent performed better across an extended task.
+
 ## Triage ML
 
 Learned triage pipeline design and reference material.

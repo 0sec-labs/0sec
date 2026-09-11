@@ -1,17 +1,26 @@
-# 0sec plugin system — design
+# 0sec plugin system — original design rationale
 
-Status: **stage 1 (manifest + capability model) implemented.** Loading,
-isolation and dispatch are designed here but deferred. This document is the
-authority on *why* the manifest looks the way it does; the code in
-`manifest.ts` is the stage-1 slice.
+Status: **historical design, not the current implementation inventory.**
+`manifest.ts`, `loader.ts`, `protocol.ts`, `enablement.ts`, and
+`self-extension.ts` now implement more than the original stages below.
+`executable.ts` supplies versioned, sandboxed model-authored execution,
+composition, source evolution, next-call activation, and rollback.
+
+For current behavior and the live engine/UI generation contract, use
+[Improvement Plane](../../../../docs/src/content/docs/improvement-plane.md)
+and [Architecture](../../../../docs/src/content/docs/architecture.md).
+The shared live wire types are in `packages/shared/src/live-harness.ts`;
+integration and qualification status are documented separately. The historical
+"deferred" and "no runtime registration" statements below describe the starting
+point, not a prohibition on agent-authored code or live self-evolution.
 
 ---
 
-## 1. What exists today (the three seams)
+## 1. Original baseline (the three seams)
 
-0sec has exactly one runtime-pluggable seam and two compile-time extension
-points. Being honest about which is which is the whole reason the plugin system
-is non-trivial.
+At the time of this design, 0sec had one runtime-pluggable seam and two
+compile-time extension points. The following analysis explains why new
+registrations needed to join the existing authorization path.
 
 ### 1a. `EventSink` — the one runtime-pluggable seam
 
@@ -245,9 +254,10 @@ enablement is a deliberate, informed action:
 
 ---
 
-## 5. Staged plan
+## 5. Original staged plan
 
-Each stage is independently shippable and independently useful.
+This is the original decomposition, retained as design history. Use the current
+modules and public documentation above to determine implemented behavior.
 
 - **Stage 1 — manifest + capability model (this PR).** Pure schema + validation
   in `manifest.ts`, no I/O. `validatePluginManifest` (total, actionable errors,

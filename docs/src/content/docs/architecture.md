@@ -262,6 +262,44 @@ not assume every row has the same proof grade. Formats vary by command and
 include terminal, HTML, PDF, SARIF, Markdown, and JSON. A local report is not
 automatically published or assigned a public share URL.
 
+## Plugin-first self-evolution
+
+The goal is a harness that works out of the box **and can change its own
+implementation**: learn from failures, write executable skills, and replace
+agent behavior and presentation while keeping a task alive. Updating a prompt,
+installing another tool, and replacing the live agent driver are distinct
+capabilities.
+
+Today, executable plugins provide versioned guest execution, composition,
+next-call activation, source evolution, and rollback. The live-harness
+integration adds `agent.driver` and `ui.view` providers through the shared
+`packages/shared/src/live-harness.ts` contract. The wire types exist; runtime
+and frontend qualification are in progress, not a released-product claim.
+
+One complete generation graph declares providers and their dependencies.
+Preparation, state migration, boundary activation, and owned-resource disposal
+belong to the runtime. The browser, TUI, and desktop consume the same generation
+snapshot, views, commands, settings, and events. Desktop-specific loading or
+an app updater must not become a second plugin infrastructure.
+
+The chosen design supports two execution tiers:
+
+- **Sandboxed components:** retained executable versions use the existing
+  authorized tool/model broker. Structured UI output remains data.
+- **Workspace-trusted components:** an explicit, separate operator grant allows
+  host ESM engine/UI code. This grants host authority, not sandbox safety;
+  model self-extension alone does not imply that grant.
+
+The lifecycle is inspired by
+[Cordis's reversible effects and dependency management](https://arxiv.org/abs/2608.25512)
+and [DSH's service composition](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md).
+Its guarantees depend on tracking component-owned effects; replacing code does
+not undo requests already sent or make an unmeasured candidate better.
+
+See [Improvement Plane](/improvement-plane/#live-harness-component-contract)
+for the exact current/planned distinction, Python support, autonomy settings,
+and long-horizon recovery requirements.
+
 ## Presentation contract
 
 Every UI and output surface consumes a renderer-neutral document or event rather

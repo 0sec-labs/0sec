@@ -1,35 +1,40 @@
-# Model-authored self-extension
+# Model-authored self-extension registry
 
-Status: **registration, validation and policy implemented. Execution is NOT.**
+Status: **the session registry is implemented; executable plugin dispatch also
+exists in a separate module.** This page describes `self-extension.ts`, not the
+complete plugin host.
 
-This document covers `self-extension.ts` — the session-scoped registry that lets
-the model author a plugin and register it into the running session, behind an
-operator setting that is **off by default**.
+The registry validates declarations and applies registration policy. It remains
+inert unless constructed with `enabled: true`; the shared session policy defaults
+to self-extension enabled and supplies that choice to the registry. Do not
+confuse a low-level constructor default with the product's YOLO/self-extension
+defaults. `ExecutablePluginManager` in `executable.ts` supplies runnable
+model-authored TypeScript tools, executable skills, composition, source
+evolution, next-call activation, and rollback in configured guests.
 
-> **Read this first.** Registering a model-authored tool here does **not** make
-> it runnable. This module never compiles, `eval`s, imports, spawns or invokes a
-> tool body. It decides *what may be registered* and *how it is gated*; nothing
-> in it dispatches a call. Making a model-authored tool actually execute needs
-> the subprocess-over-stdio dispatcher from `DESIGN.md` §3 option B (stage 3),
-> which does not exist yet. A reader who comes away thinking this module ships
-> runnable model-authored tools has misread it.
+The registry itself does not compile, evaluate, import, or invoke source code.
+That separation is not a ban on live self-writing: see the
+[live harness contract](../../../../docs/src/content/docs/improvement-plane.md#live-harness-component-contract)
+for agent-driver and UI replacement, shared frontend contributions, and the
+separate workspace-trusted execution tier.
 
 ---
 
-## 1. Why this exists, and what it deliberately does not copy
+## 1. Registry policy versus component composition
 
-The operator wants the DeepSeek harness's self-extension capability. The
-security objection was raised and overridden; this is the implementation that
-takes the capability without taking the flaw.
+[DSH](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cordis-primer.md)
+uses Cordis services, reversible registrations, and around-middleware to compose
+the agent itself. Its waterfall listeners can delegate with `next()` or replace
+the result. That flexibility is useful for behavior composition, but is not an
+authorization boundary against code running with host permissions.
 
-In `dsh`, a plugin can register a `tools/pre-execute` listener, and a listener
-that returns without calling `next()` **short-circuits the chain**. A
-model-written plugin can therefore silently switch off the entire authorization
-pipeline. Their own README is explicit that the toolset is "not a security
-boundary… treat it like bash access."
+0sec separates those responsibilities. Live component composition can replace
+agent behavior; this particular registry's guard interface remains deny-only.
+Sandboxed components use brokered capabilities. Separately trusted host
+components require an explicit workspace grant and are not made safe merely
+by passing through a JavaScript API.
 
-0sec's guard layer (`guards.ts`) has a different shape, and that difference is
-the whole reason this is buildable:
+The registry's `guards.ts` interface is:
 
 ```ts
 type ToolGuard = (ctx: GuardContext) => string | null | undefined;
@@ -40,12 +45,12 @@ value in that codomain that means "allow."** A contributed guard cannot vote to
 allow, cannot cancel another guard's denial, and cannot stop the chain —
 `evaluateGuards` runs every guard and only ever appends reasons.
 
-**This is the property `dsh` lacks.** Its waterfall gives a plugin a return
-value meaning "stop authorizing." Ours has none to return.
+This is a property of the registry's authorization interface, not a reason to
+restrict the entire harness to tool declarations and guards.
 
 ---
 
-## 2. The contribution surface — exactly two things
+## 2. This registry's contribution payload
 
 ```ts
 interface ExtensionSubmission {
@@ -55,10 +60,10 @@ interface ExtensionSubmission {
 }
 ```
 
-That is the entire surface. No hooks, no interceptors, no middleware, no
-`next()`, no event listeners, no config mutation, no handle on the session, the
-event bus, settings, or the gate maps. These are not "discouraged" — there is no
-field that can carry them, so they are **not expressible**. A submission that
+Within this registry payload, there are no hooks, interceptors, middleware,
+`next()`, event listeners, or mutable handles to the session and its settings.
+Those are not implicit powers of a tool declaration: no field in this payload
+can carry them. A submission that
 carries `hooks`, `preExecute` or `middleware` keys registers its tools and
 guards and ignores the rest entirely; there is a test asserting such a callback
 is never invoked.
@@ -160,11 +165,15 @@ Limits are overridable by the operator-side wiring, never by a submission, and a
 garbage override (`NaN`, `Infinity`) falls back to the default rather than
 becoming unbounded.
 
-### 3.6 Gated by an explicit setting, default OFF
+### 3.6 Gated by an explicit construction flag
 
 The registry is inert unless constructed with `enabled: true`, and there is no
 setter — nothing reachable from a tool call can flip it mid-session. Anything
 other than the boolean `true` fails closed.
+
+Shared session defaults are declared in `packages/shared/src/desktop-console.ts`.
+Workspace-trusted code execution requires a separate operator grant and is not
+enabled by this registry flag.
 
 ### 3.7 Auditable
 
@@ -180,15 +189,15 @@ a registration decision.
 
 ## 4. Known limits — read before enabling
 
-1. **This does not make tools runnable.** Repeating §0 because it is the most
-   likely misreading.
+1. **Registration alone does not make a tool runnable.** Use
+   `ExecutablePluginManager` for the implemented generated-code execution path.
 2. **A contributed guard is code.** The registry only ever accepts an
    *already-constructed function*; it never turns model-authored *text* into
    one. The wiring **must not** hand it `new Function(modelSource)` evaluated
    in-process — that reintroduces arbitrary in-process execution and the
    frozen-context hardening would be the least of the problems. Model-authored
-   guard *source* must go through the stage-3 isolated dispatcher, exactly like
-   tool bodies.
+   guard source must not be evaluated as a host callback by this registry.
+   Guest execution and explicitly trusted host execution are separate contracts.
 3. **Guards are synchronous and untimed.** A contributed guard that loops
    forever hangs the authorization path. It cannot *widen* anything — denial of
    service, not privilege — but it is a real availability risk, and the guard
@@ -196,28 +205,24 @@ a registration decision.
 4. **The prompt surface still grows.** Even ungated, a registered tool's name and
    description reach the model's prompt. That is attacker-influenceable text if
    the model was injected. The audit stream exists so the operator can see it.
-5. **The honest summary:** this module makes model-authored *policy and
-   declarations* safe to accept. It does not, and cannot, make model-authored
-   *execution* safe — that is a separate boundary, and it is not built.
+5. **Scope of this module:** it accepts bounded declarations and deny-only
+   guards, not arbitrary source. Executable dispatch exists in `executable.ts`;
+   a registry result alone is not proof of sandboxing or measured improvement.
 
 ---
 
-## 5. Wiring required (not done here — this module is standalone)
+## 5. Integration responsibilities
 
-1. **Barrel export** from `packages/core/src/index.ts`.
-2. **Reserved names**: construct the registry with the keys of `TOOL_DISPATCH` ∪
-   `NETWORK_CAPABLE_TOOLS` ∪ `READ_ONLY_TOOLS` ∪ `LOCAL_SCOPE_TOOLS`.
-3. **Gate consultation**: `turn-engine.ts` must consult
-   `registry.gateFlagsForTool(name)` for a name absent from the built-in maps —
-   and treat `undefined` as "not a contributed tool", never as "ungated". This
-   is the gate-bypass hole from `DESIGN.md` §2; the flags exist precisely so a
-   contributed tool joins the *same* authorization path.
-4. **Guard evaluation**: `registry.evaluate(ctx)` alongside the existing gates.
-5. **Setting**: add `SELF_EXTENSION_SETTING_DEF` to `DEFS` in
-   `packages/cli/src/tui/settings.ts`, plus the matching `TuiSettings` key and
-   `DEFAULT_SETTINGS` entry (`allowModelSelfExtension: false`), then thread the
-   value into the registry's `enabled`.
-6. **Console display**: subscribe `onEvent` so registrations and rejections
-   surface in the transcript.
-7. **A tool for the model to call** (`register_extension` or similar) — a
-   deliberate, separate decision. Nothing here creates it.
+- Construct the registry with the operator's self-extension setting and reserved
+  built-in tool names. A model submission cannot enable itself.
+- Resolve contributed tool capabilities through `gateFlagsForTool` and the
+  existing authorization path; an unknown tool is not an ungated tool.
+- Register and dispatch executable bodies through `ExecutablePluginManager`,
+  not an in-process `eval` in the declaration registry.
+- Use the typed registry audit events for registration/rejection/revocation.
+  Executable version activation and live harness generations have distinct
+  identities and lifecycle events; do not substitute an audit entry for the
+  active frontend catalog.
+- Keep workspace-trusted code authorization separate from model registration.
+- For current controls, defaults, and qualification commands, use
+  [Improvement Plane](../../../../docs/src/content/docs/improvement-plane.md).

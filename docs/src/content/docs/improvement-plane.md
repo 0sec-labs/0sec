@@ -1,45 +1,68 @@
 ---
 title: Improvement Plane
-description: Evaluate and promote future 0sec worker artifacts without mutating a live engagement.
+description: Source evolution, executable plugins, and the live self-evolving harness contract.
 ---
 
-0sec never rewrites its source, dependencies, scope, verifier, or tool
-permissions during a live engagement. A target-facing worker consumes untrusted
-source, HTTP, MCP, and model output; letting any of that alter the running worker
-would break scope control, replay, and evidence provenance.
+0sec's goal is **self-evolution, not only self-improvement**. An agent should
+learn a codebase and its failures, write reusable executable skills, and create
+or replace its own reasoning and presentation components while continuing a
+long-running task. The built-in harness remains useful without requiring the
+agent to build its own environment first.
 
-The improvement plane evaluates a candidate for a **future immutable worker**.
-It proposes bounded edits to copies of a source snapshot, never the active
-checkout. Candidate code executes in fresh Docker containers or opt-in local
-smolvm guests, without network access or engagement credentials and with bounded
-resources. Promotion is authorized per candidate or by explicit `autoPromote`.
+These mechanisms have different activation boundaries:
+
+- **Learning** retains revision-aware notes and execution feedback.
+- **Source evolution** proposes edits to copies of source snapshots, evaluates
+  them, and selects immutable worker versions.
+- **Executable plugins** let an enabled agent submit, run, compose, evolve, and
+  roll back its own TypeScript tools, skills, and agent-like programs. New calls
+  can use a new version without restarting the session.
+- **Live harness generations** extend this to the active `agent.driver` and
+  `ui.view`, including view, command, and settings contributions. The shared
+  contract exists; runtime and frontend integration are under implementation
+  and are not yet an end-to-end qualification claim. See
+  [Live harness component contract](#live-harness-component-contract).
+
+Writing code, loading a plugin, and proving an improvement are separate events.
+Source candidates execute in fresh Docker containers or local smolvm guests
+with bounded resources. An accepted generation changes subsequent work at a
+defined boundary; it does not overwrite the provenance of work already done.
 
 ```text
-sealed candidate artifacts
-  -> three-lane evaluation receipt
-  -> promotion assessment
-  -> immutable ledger snapshot
-  -> canary rollout or explicit approval
-  -> future worker version pin
+task observations and development feedback
+  -> authored source or component candidate
+  -> isolated execution and evaluation
+  -> retained version and evidence
+  -> explicit or configured automatic selection
+  -> activation at the consuming runtime's boundary
+  -> continued work, further feedback, or rollback
 ```
 
 ## Engagement boundary
 
-An improvement-plane promotion cannot replace the code, model configuration,
-policy, scope, or tools of an active worker. Resume and replay retain the
-recorded worker identity; evaluating a candidate does not replace that worker.
-This is not an attestation of immutable model weights: upstream aliases,
-serving changes, or configured runtime fallbacks can change model behavior.
-A requested model name alone is insufficient provenance; re-evaluate observed
-outcomes before assuming equivalent performance.
+An ordinary source-evolution promotion does not by itself replace a running
+0sec process. Existing worker pins retain their snapshot and configuration.
+Executable-plugin activation is a separate, already implemented next-call
+boundary; live driver and UI replacement use the generation contract below.
+Neither should be described as an app updater or a mandatory process restart.
 
-Non-negotiable:
+The boundary is between **mutable agent behavior** and **authority over the
+environment and evidence**, not between "rules may change" and "code may not."
+Sandboxed components use host-mediated services. Workspace-trusted ESM
+components are a separately authorized, more powerful execution tier; their
+host permissions are not sandbox guarantees.
 
-- no source or dependency installs from target-facing agent output;
-- no scope, credential, budget, verifier, or tool-permission expansion mid-run;
-- no candidate execution with engagement credentials or production target egress;
-- no overwrite of retained evidence;
-- no candidate with network access during evaluation.
+- Retain version identities, observations, and receipts across changes.
+- Keep evaluation answers and credentials out of candidate source snapshots.
+- Do not treat a candidate's own success claim as an independent verifier.
+- Do not automatically replay already-issued tool effects after a driver fails.
+- An automatic-promotion policy or self-extension setting is not a grant of
+  trusted host execution.
+
+Version pinning is not an attestation of immutable model weights: upstream
+aliases, serving changes, or runtime fallbacks can change behavior. Record
+observed outcomes and re-evaluate rather than treating a requested model name
+as sufficient provenance.
 
 ### Model output is not verification
 
@@ -119,20 +142,24 @@ Do not supervise restarts as an unlimited, unattended improvement service.
 
 ### Trust boundary
 
-The improvement plane isolates evolved sandbox workers from the operator-owned
-controller and evolution store. A compromised sandbox process (e.g. a malicious
-candidate) cannot:
+The offline source-evaluation path isolates candidate workers from the
+operator-owned controller and evolution store. Within that configured sandbox
+boundary, a candidate process is not granted access to:
 
-- reach the operator's network, credentials, or engagement workspace;
-- write to the evolution store (snapshots and receipts are published by the
-  controller process, never by the sandbox);
-- persist outside the disposable worker.
+- the operator's network, credentials, or engagement workspace;
+- writes to the evolution store (the controller publishes snapshots and receipts);
+- persistence outside the disposable worker.
 
 This trust boundary does **not** protect against a compromised host or operator
 account. An attacker with root access to the host or write access to the
 evolution store can tamper with snapshots, receipts, or the registry. The
 hash-chained ledger detects inconsistent edits, not an attacker rewriting the
 entire history. It is not an external signature or a trusted transparency log.
+
+This describes offline evaluation, not every plugin execution tier. Operational
+executable plugins can request authorized tool/model services through the host
+broker. Separately granted workspace-trusted ESM plugins run with host
+permissions; do not apply the offline worker's confinement claims to them.
 
 ### Automatic promotion
 
@@ -384,9 +411,52 @@ negative-control observations are not supplied to the proposal model.
 
 ## Research basis and remaining limits
 
+[A Programming Paradigm for Spatiotemporal Composability
+(Shi, Zhang, and Cui, 2026)](https://arxiv.org/abs/2608.25512) supplies the
+component-lifecycle rationale. Its **temporal composability** tracks reversible
+effects so removing a component removes its registrations and owned resources.
+Its **spatial composability** makes dependencies explicit and reacts when
+providers appear, disappear, or change. [Cordis](https://github.com/cordiverse/cordis)
+implements the model with a component loader and hot module replacement;
+[DSH's architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)
+uses services for the agent loop, tools, model adapters, and session log.
+
+The qualifications matter:
+
+- The paper's sections 6.1 and 6.3 distinguish reversible, context-owned effects
+  from external emissions and from sandboxing. Removing a listener can be
+  reversed; sending a network request cannot simply be undone. Untrusted code
+  still needs an execution boundary.
+- The paradigm is language-independent (section 6.4); upstream Cordis is
+  TypeScript and its API is explicitly unstable. A Python SDK client or Python
+  code-execution tool is not automatically a Python component host.
+- DSH's custom/web profiles support live patch reload, but its shipped
+  headless, SDK, and ACP profiles apply composition at startup. Do not infer
+  same-session CLI replacement merely from DSH's plugin architecture.
+- This is a composability paper, not a benchmark demonstrating autonomous
+  security-quality improvement or crash-safe, multi-day agent operation.
+
+The live runtime integration pins `@deepseek-ai/cordis@4.0.2`: this is an actual
+framework dependency, not only an analogy. 0sec adds its generation, guest
+bridge, accounting, and frontend contracts around explicit dependencies and
+owned cleanup. Integration is still being qualified; using Cordis does not
+prove that every component supplies correct inverses or that external effects
+can be rolled back.
+
 Self-rewriting is a search mechanism, not evidence that the resulting scanner
 is better. The relevant research supports evaluator-driven iteration:
 
+- [Self-Harness (Zhang et al., 2026, v3)](https://arxiv.org/abs/2606.09498v3)
+  connects three stages: verifier-grounded weakness mining, diverse minimal
+  harness-code proposals by the same fixed model, and regression validation.
+  A candidate must not reduce held-in or held-out aggregate pass counts and
+  must improve at least one split. The authors report improvements for all nine
+  tested model/benchmark pairs; their largest relative gain, 132%, is not a
+  percentage-point gain or a cybersecurity result. The study uses bounded edits
+  to a minimal harness definition, fixed benchmark subsets, and fresh task
+  environments. It explicitly does not establish open-ended self-improvement.
+  For 0sec, it motivates a failure-driven optimizer around the live component
+  runtime, not replacing the evaluator with the candidate's self-assessment.
 - [Darwin Gödel Machine (Zhang et al., 2025)](https://arxiv.org/abs/2505.22954)
   empirically improves coding agents through code changes and an archive of
   alternative agents. Its authors also report
@@ -459,6 +529,8 @@ replacement for the stock target-facing 0sec process.
 | Source evolution | `evolve run --watch --auto-promote` can select a new accepted snapshot for subsequent `evolve exec` runs. | Existing run IDs retain their original snapshot, stored configuration, and input identity. |
 | Source finder deployment | `deep-review --evolution-config` selects the active source snapshot for each new review. | Every finder call in that review inherits the parent pin; verification and host policy are not rewritten. |
 | Skill/router installation | Training loops install exact authorized artifact bytes. | Authorization does not hot-swap a model already loaded by another process. |
+| Executable plugin | An enabled agent submits or evolves actual code; later calls select the active retained version. | An invocation pins its version and declared capabilities; structural admission is not measured improvement. |
+| Live harness generation (integration in progress) | Replace `agent.driver` and `ui.view`, including namespaced UI commands/settings, in the same session. | Session history and accounting survive; generation changes wait for a defined checkpoint. |
 
 Observation capture is not independent truth: source consent and operator-curated
 positive, held-out, and clean-control fixtures still gate automatic synthesis.
@@ -468,6 +540,128 @@ compiled Rust engine or rules.
 Offline lifecycle checks demonstrate orchestration, not better security
 coverage. Live provider runs, actual sandbox execution, and independently
 verified detection outcomes are separate validation requirements.
+
+## Live harness component contract
+
+**Integration status:** `packages/shared/src/live-harness.ts` defines the shared
+wire types. This section describes the agreed runtime contract, not a claim
+that every CLI, browser, and desktop path has passed live integration checks.
+Desktop remains unreleased. An HTTP/event adapter and the TUI must consume the
+same runtime catalog rather than maintain separate plugin registries.
+
+### Composition and language support
+
+`HarnessGenerationSpec` contains a label and the **complete desired provider
+graph**. Each `HarnessProviderSpec` declares an `id`, required provider IDs,
+services, and one execution source:
+
+| Source | Contract | Authority |
+| --- | --- | --- |
+| `sandboxed` | Retained executable `pluginId`, `versionId`, and `toolName` | Guest execution; operational effects use the existing authorized SDK broker |
+| `trusted` | Self-contained ESM `entry` and `files`, with optional `ui.tui` / `ui.web` entries | Explicit workspace grant; code executes with host permissions |
+
+The current service names are `agent.driver` and `ui.view`. They are actual
+implementation replacement points, not only prompt templates or static rule
+lists. A shared catalog may evolve to expose more services; unimplemented
+service names must not be advertised as available.
+
+Python already works through MCP and the language-neutral source-worker
+command protocol when the selected image contains Python. The current
+executable-plugin admission accepts `.ts` / `.mts`, not `.py`. First-class Python
+components still need a runner/SDK implementing the same lifecycle and broker
+protocol; they should not get a second registry or a Python-specific harness.
+Backend selection and language selection are separate from plugin composition.
+
+### Activation, state, and UI interaction
+
+The lifecycle contract is:
+
+1. Submit a complete candidate graph and retain its immutable source identity.
+2. Validate dependencies, services, trust, and source provenance before use.
+3. At a checkpoint, wait for old-generation invocations and prepare/migrate
+   candidate state in dependency order.
+4. Publish one active generation only after preparation succeeds. Failed
+   preparation leaves the old generation available.
+5. Remove retired registrations and dispose owned resources in reverse
+   dependency order. Rollback selects a retained implementation and migrates
+   **current** state; it does not erase task history or undo external effects.
+
+`HarnessControl` carries `submit`, `rollback`, `disable`, and `list`. A submitted
+generation can be **pending** before it becomes active; consumers must display
+that distinction. `HarnessSnapshot` carries active/previous/pending generation
+IDs, status, providers, views, namespaced commands/settings, and trust state.
+It is the common frontend catalog, not an alternate source of authority.
+
+`HarnessView` supplies bounded text, Markdown, table, progress, and action
+blocks. Commands and settings carry provider identity. An explicit interaction
+names its generation, provider, and contribution; a stale generation must not
+dispatch against a replacement provider. Returned `requestedPrompt` content is
+for an explicit interaction, **never automatic submission while rendering**.
+Sandboxed view data is not host JavaScript. Trusted UI modules require the
+separate workspace grant and must not remove the host-owned recovery controls.
+
+### Autonomy without a second permission system
+
+The intended operator experience is a capable built-in agent plus unattended
+iteration within the chosen authority and spending envelope. Agents can author
+code, compose executable skills, compare alternatives, and replace admitted
+components; the operator need not approve every ordinary iteration when an
+automatic policy already authorizes it.
+
+The shared session defaults are **YOLO autonomy** and **model self-extension
+enabled**: `DEFAULT_AUTONOMY_MODE = "yolo"` and
+`DEFAULT_ALLOW_MODEL_SELF_EXTENSION = true` in
+`packages/shared/src/desktop-console.ts`. Explicit session choices still
+matter. The lower-level `SelfExtensionRegistry` requires its caller to pass
+`enabled: true`; that constructor contract is not the product default.
+
+Source evaluation has separate controls: `allowModelSourceAccess` admits selected
+snapshot text into proposal generation, and `autoPromote` authorizes candidates
+that pass the configured gates. Those remain explicit opt-ins. Model
+self-extension does not silently enable either one.
+
+Workspace-trusted execution defaults **off** until the operator persists a
+grant for the canonical launch workspace. It is not inferred from YOLO,
+self-extension, a model-submitted manifest, or project-controlled configuration.
+Trusted code can access host resources, including credentials, and can crash
+its process; component lifecycle management is not an OS sandbox.
+
+### Long-horizon self-evolution
+
+Hot replacement addresses continuity **within a live process**. Long-running
+tasks additionally need:
+
+- **Durable recovery:** checkpoints bind task progress, active generation,
+  component state, pending work, and evidence. Restart must restore or
+  explicitly reject incompatible state, not quietly restart with a new harness.
+- **Durable accounting:** campaign budgets, usage, and evaluation exposure must
+  survive restart rather than reset with an in-memory watch loop.
+- **Useful learning:** revision-aware codebase notes, development feedback, and
+  executable skills are retrieved when relevant and invalidated when stale.
+- **Retention:** proposed changes face old capabilities as well as new tasks;
+  archive search and repeated holdout reuse do not prove generalization.
+- **Long-session qualification:** repeated upgrades, failed preparation,
+  dependency changes, rollback, stale UI input, cancellation, and cleanup must
+  preserve task state and must not duplicate model/tool effects.
+
+Self-Harness suggests a concrete optimizer contract around this lifecycle:
+group recurring development failures by verifier outcome, causal status, and
+reusable mechanism; retain examples of passing behavior; then ask for distinct,
+targeted candidate changes. Record the model, harness generation, environment,
+targeted failure, changed surface, and expected regression risk for each
+proposal. Compare candidate and baseline under compatible conditions and retain
+rejected attempts. Re-evaluate the **combined** generation before publishing
+multiple individually successful edits. Keep held-out traces and answers out of
+proposal context; repeated acceptance still exposes information about the
+holdout and needs separate exposure management. These are optimizer
+requirements, not features supplied automatically by Cordis or by the current
+generation wire types.
+
+These are acceptance requirements, not claims of completed multi-day operation.
+The existing source watcher is not a crash-safe campaign service; see
+[feedback across passes](#feedback-across-evolution-passes) and the tracked
+[campaign work](https://github.com/0sec-labs/0sec/issues/41). Live generation
+types alone do not establish persistent state recovery or Python plugin parity.
 
 ## CLI reference
 
@@ -925,7 +1119,7 @@ Key differences from standalone evolution:
   "structural"`; an evolved and promoted version has `evidenceStatus:
   "measured"` with its evolution receipt digest recorded in the version record.
 - **Evolution store**: each plugin gets a dedicated evolution store under
-  `<manager-root>/evolution/<pluginId>/<lineageId>/<profileId>`.
+  `<manager-root>/evolution/<pluginId>/<evolutionEpoch>/<profileId>`.
 - **Rollback**: a promoted evolution version can be rolled back via
   `manager.rollback()` like any other version; the evolved snapshot and receipt
   are retained.
@@ -969,6 +1163,23 @@ persisted failure counters, cold manager restore, rollback, nested call-budget
 termination, and malformed-source rejection. An optional
 `0SEC_EVOLVE_REAL=1` flag enables a real provider evolution stage using the
 configured model.
+
+This smoke does not yet qualify live root-driver replacement, browser/desktop
+registration, workspace-trusted ESM execution, or long-horizon crash recovery.
+Those need their own real integration scenarios, including a task that
+continues across generation changes without reconstructing its session.
+
+If the account already has approved Docker group membership but a persistent
+agent process predates it, restart the session and its broker. A single check
+can use the existing group without changing socket permissions:
+
+```bash
+sg docker -c 'node scripts/smoke-executable-plugins.mjs'
+```
+
+This is not Docker provisioning or a grant of group membership. Do not make the
+Docker socket or `/dev/kvm` world-writable, and do not store sudo credentials in
+the repository.
 
 To exercise that same source lifecycle with smolvm, use `env` (the setting names
 start with a digit and therefore are not POSIX shell variable identifiers):
