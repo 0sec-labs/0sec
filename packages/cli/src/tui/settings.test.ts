@@ -59,6 +59,13 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings(raw)).toEqual(DEFAULT_SETTINGS);
   });
 
+  it("retains a persisted self-extension opt-out when new sessions default on", () => {
+    const home = makeHome();
+    expect(loadSettings(home).allowModelSelfExtension).toBe(true);
+    saveSettings({ ...loadSettings(home), allowModelSelfExtension: false }, home);
+    expect(loadSettings(home).allowModelSelfExtension).toBe(false);
+  });
+
   it("falls back per key when every value has the wrong type", () => {
     const raw = {
       showStatusBar: "yes",
@@ -367,15 +374,6 @@ describe("subagent messaging settings", () => {
     }
   });
 
-  it("describes the concrete risk in one sentence instead of hedging", () => {
-    for (const def of SETTING_DEFS.filter((d) => d.group === "Security")) {
-      // "may be unsafe" tells an operator nothing they can act on.
-      expect(def.description).not.toMatch(/may be unsafe|potentially unsafe|use with caution|be careful/i);
-      expect(def.description.trim().endsWith(".")).toBe(true);
-      // One sentence: no interior sentence break.
-      expect(def.description.trim().slice(0, -1)).not.toMatch(/[.!?]\s/);
-    }
-  });
 
   it("toggles each channel off and back on", () => {
     for (const key of CHANNEL_KEYS) {

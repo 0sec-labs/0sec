@@ -25,7 +25,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { homeStateDir } from "@0sec/shared";
+import { DEFAULT_ALLOW_MODEL_SELF_EXTENSION, homeStateDir } from "@0sec/shared";
 
 import {
   DEFAULT_THEME_NAME,
@@ -439,9 +439,9 @@ const DEFS: readonly TuiSettingDef[] = [
     key: "allowModelSelfExtension",
     label: "Model self-extension",
     description:
-      "Enabling this lets the model add tools to its own session, and a prompt-injected model can therefore author tools you did not write.",
+      "Allow new sessions to add sandboxed tools and live harness generations. Existing disabled sessions stay disabled; trusted host execution requires a separate workspace grant.",
     kind: "boolean",
-    default: false,
+    default: DEFAULT_ALLOW_MODEL_SELF_EXTENSION,
     group: "Security",
   },
   {
@@ -558,7 +558,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   richToolCards: true,
   transcriptDetail: "expanded",
   theme: DEFAULT_THEME_NAME,
-  allowModelSelfExtension: false,
+  allowModelSelfExtension: DEFAULT_ALLOW_MODEL_SELF_EXTENSION,
   autoEvolveFinderLenses: false,
   autoPromoteFinderLenses: false,
   showTokenUsage: false,

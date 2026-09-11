@@ -13,6 +13,26 @@ export function connectionRecoveryForError(error: string): ConnectionRecovery | 
   const detail = error.trim();
   if (!detail) return null;
 
+  // First launch lists several supported providers in one diagnostic. None of
+  // them has failed authentication; keep chat open and let /connect choose.
+  if (/no provider credential found/i.test(detail)) return null;
+
+  // Cloud credentials are not upstream provider keys. In particular, scope,
+  // credit, catalog and service failures must never open a vendor's key form.
+  if (/0sec[- ]cloud|0sec hosted models|RuntimeConfig\.provider\s*=\s*hosted/i.test(detail)) {
+    if (/\b(?:HTTP|API error)\s*:?\s*401\b/i.test(detail)
+      || /RuntimeConfig\.provider\s*=\s*hosted has no configured credentials/i.test(detail)) {
+      return { providerId: "hosted", title: "Sign in to 0sec Cloud", detail };
+    }
+    return null;
+  }
+
+  // A provider name alone is not an authentication failure. Keep model,
+  // balance, rate-limit and transport errors visible in the conversation.
+  const status = detail.match(/\b(?:API error|HTTP)\s*:?\s*(\d{3})\b/i)?.[1];
+  if (status && status !== "401" && status !== "403") return null;
+  if (!/\b(?:401|403|unauthori[sz]ed|forbidden|authentication|credentials?|api[_ ]?key|invalid (?:key|token)|token refresh|refresh[_ ]token)\b/i.test(detail)) return null;
+
   if (/chatgpt.*codex|codex.*(?:token|auth|login|backend)|0sec_chatgpt/i.test(detail)) {
     return {
       providerId: "chatgpt-codex",
@@ -83,7 +103,7 @@ export function connectionRecoveryForError(error: string): ConnectionRecovery | 
       detail,
     };
   }
-  if (/openai|api key|api_key/i.test(detail)) {
+  if (/openai/i.test(detail)) {
     return {
       providerId: "openai",
       title: "OpenAI credentials need attention",

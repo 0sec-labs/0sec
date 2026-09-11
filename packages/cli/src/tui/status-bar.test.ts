@@ -244,6 +244,18 @@ describe("buildStatusSegments", () => {
     expect(textOf(buildStatusSegments({}), "tokens")).toBeUndefined();
   });
 
+  it("hides raw token totals without disabling an explicitly enabled cost estimate", () => {
+    const segments = buildStatusSegments({
+      model: "claude-sonnet-4-6",
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      showTokenUsage: false,
+      showCost: true,
+    });
+    expect(textOf(segments, "tokens")).toBeUndefined();
+    expect(textOf(segments, "cost")).toBe("$3.00");
+  });
+
   it("parenthesizes the plan and abbreviates the cwd", () => {
     const segments = buildStatusSegments(RICH_INPUT);
     expect(textOf(segments, "plan")).toBe("(sub)");

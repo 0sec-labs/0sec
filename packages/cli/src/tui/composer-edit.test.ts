@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { deletePreviousWord, deleteToLineStart } from "./composer-edit.js";
+import { deletePreviousCharacter, deletePreviousWord, deleteToLineStart } from "./composer-edit.js";
+
+describe("deletePreviousCharacter", () => {
+  it("removes a whole joined emoji without corrupting the preceding draft", () => {
+    expect(deletePreviousCharacter("draft 👩‍💻")).toBe("draft ");
+  });
+
+  it("removes a combining sequence as one visible character", () => {
+    expect(deletePreviousCharacter("caf" + "e\u0301")).toBe("caf");
+  });
+});
 
 describe("deleteToLineStart", () => {
   it("empties a line", () => {

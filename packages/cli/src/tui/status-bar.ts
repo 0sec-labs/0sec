@@ -108,6 +108,8 @@ export interface StatusBarInput {
   outputTokens?: number;
   /** Cumulative cached-input tokens, for a more accurate cost estimate. */
   cachedInputTokens?: number;
+  /** Show raw token totals; independent of the optional cost estimate. */
+  showTokenUsage?: boolean;
   /**
    * Total context window in tokens. When omitted, NO context segment is
    * produced — the percentage must never be invented.
@@ -192,24 +194,22 @@ const ORDER: StatusSegmentKind[] = [
 ];
 
 /**
- * The pill glyph for each segment, one cell each (measured as one column by
- * `fitTuiText`, which counts JS characters — the whole TUI's width model). "" is
- * a segment the renderer draws with no leading glyph. Kept beside `ORDER` so a
- * new kind is a compile error until it has both an icon and a colour role.
+ * Recognizable Unicode glyphs with no Nerd Font requirement. Their width is
+ * included in the status-row budget alongside the label.
  */
 const ICON: Record<StatusSegmentKind, string> = {
-  model: "◆",
+  model: "◉",
   effort: "◇",
   mode: "●",
   evolution: "",
-  cwd: "▸",
+  cwd: "⌂",
   branch: "⎇",
   dirty: "±",
-  tokens: "◈",
+  tokens: "↔",
   cost: "$",
-  context: "◔",
-  meter: "◔",
-  plan: "◦",
+  context: "◫",
+  meter: "◫",
+  plan: "☷",
 };
 
 /** Semantic colour role per kind; the meter shares the plain percent's role. */
@@ -410,7 +410,7 @@ export function buildStatusSegments(input: StatusBarInput): StatusSegment[] {
   // arrive as zero and both mean the same thing on screen: show nothing.
   const inputTokens = positiveCount(input.inputTokens);
   const outputTokens = positiveCount(input.outputTokens);
-  if (inputTokens + outputTokens > 0) {
+  if (input.showTokenUsage !== false && inputTokens + outputTokens > 0) {
     // "in/out", matching the counter the sidebar already renders.
     texts.set("tokens", `${formatTokenCount(inputTokens)}/${formatTokenCount(outputTokens)}`);
   }

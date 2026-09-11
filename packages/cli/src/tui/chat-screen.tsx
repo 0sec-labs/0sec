@@ -7,8 +7,10 @@ import React, {
   useState,
 } from "react";
 import { createLocalConsoleSession } from "../console-session.js";
+import { HarnessPresentation, useHarness } from "./harness-context.js";
 import {
   useKeyboard,
+  usePaste,
   useRenderer,
   useTerminalDimensions,
 } from "@opentui/react";
@@ -25,6 +27,7 @@ import {
   type ConsoleLocalScopeResolution,
   type ScopedAuditEscalationRequest,
   type ConsoleSession,
+  type RuntimeConfig,
   type NativeMessage,
   type OperatorQuestionRequest,
   type OperatorQuestionAnswer,
@@ -39,7 +42,7 @@ import {
   type MessagingRuntime,
   type McpHost,
 } from "@0sec/core";
-import type { ScrollBoxRenderable } from "@opentui/core";
+import { decodePasteBytes, type ScrollBoxRenderable } from "@opentui/core";
 import {
   useSettings,
   updateSetting,
@@ -62,7 +65,6 @@ import {
   fitStatusSegments,
   fitStatusPills,
   pillText,
-  type StatusSegment,
   type StatusColorRole,
 } from "./status-bar.js";
 import { SHIMMER_TEXT_INTERVAL_MS } from "./animations.js";
@@ -91,9 +93,7 @@ import {
 } from "./tool-format.js";
 import {
   listSessions,
-  loadSession,
   pruneSessions,
-  relativeAge,
   saveSession,
   type StoredSessionMeta,
 } from "./session-store.js";
@@ -107,7 +107,6 @@ import {
 } from "./animation.js";
 import {
   PROVIDERS,
-  providerStates,
 } from "./provider-status.js";
 import {
   credentialEnvPatch,
@@ -136,8 +135,8 @@ import {
   buildToolsPanel,
 } from "./panels.js";
 import { getAllCapabilities } from "./capability-registry.js";
-import { fitTuiText } from "./text.js";
-import { severityToneFor, THEME_NAMES, getThemeEntry, isThemeName } from "./themes.js";
+import { fitTuiText, sanitizeComposerText } from "./text.js";
+import { THEME_NAMES, getThemeEntry, isThemeName } from "./themes.js";
 import {
   parseSubagentCard,
   reduceActiveSubagents,
@@ -166,7 +165,6 @@ import {
 import {
   applySubagentLifecycle,
   applySubagentProgress,
-  chatFocusFooterHint,
   clipDetailLines,
   computeHerdFocusLayout,
   focusHeaderLines,
@@ -204,6 +202,7 @@ import {
   type SlashCommand,
 } from "./slash-commands.js";
 import {
+  deletePreviousCharacter,
   deletePreviousWord,
   deleteToLineStart,
 } from "./composer-edit.js";
@@ -280,7 +279,7 @@ import {
 } from "./chat/AgentRow.js";
 import { agentAccentFor } from "./agent-color.js";
 
-export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market" | "usage" | "connect" | "herd" | "finding" | "resume";
+export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "harness" | "new-chat" | "models" | "market" | "usage" | "connect" | "herd" | "finding" | "resume";
 
 /**
  * Map a status pill's semantic colour role onto the live palette. Kept theme-
@@ -443,7 +442,7 @@ function statusRoleColor(
 
 function startupRecoveryText(detail: string): string {
   if (/no provider credential found/i.test(detail)) {
-    return "No provider connected. Use /connect: ChatGPT Codex uses device OAuth; OpenAI uses an API key.";
+    return "Use /connect to sign in to 0sec Cloud, or use your own API key or provider subscription.";
   }
   const recovery = connectionRecoveryForError(detail);
   if (recovery?.providerId === "chatgpt-codex") {
@@ -458,6 +457,8 @@ export interface ChatScreenOptions {
   dbPath?: string;
   scope?: ScopePolicy;
   model?: string;
+  /** Explicit provider choice, applied only when constructing a new runtime. */
+  providerId?: RuntimeConfig["provider"];
   role?: "discovery" | "attack" | "verify" | "report" | "audit" | "review";
   maxToolIterations?: number;
   allowScanners?: boolean;
@@ -501,17 +502,19 @@ export interface ChatScreenProps {
    * evidence, approval gates, and transcript stay in one session.
    */
   submitHandle?: React.MutableRefObject<((text: string) => void) | null>;
-  /** Rebuild the live session after Connect saves a selected provider. */
+  /** Generated prompts are drafts for review, never automatic turns. */
+  stagePromptHandle?: React.MutableRefObject<((text: string) => void) | null>;
+  /** Save a future connection choice, or retry when no session was constructed. */
   reconnectHandle?: React.MutableRefObject<((providerId: string) => void) | null>;
-  /** Switch the live runtime without replacing the conversation or composer. */
+  /** Select a model for the next chat; a live runtime remains immutable. */
   modelHandle?: React.MutableRefObject<{ model: string | undefined; select: (id: string) => void } | null>;
+  /** Share the existing session host with contextual controls; never create another. */
+  onSessionChange?: (session: ConsoleSession | null) => void;
+  onWorkingChange?: (busy: boolean) => void;
+  onNextChatOptions?: (selection: Pick<ChatScreenOptions, "model" | "providerId">) => void;
   /**
-   * The shell-level plugin-host manager, if the shell wired one. Its `current()`
-   * host is handed to the console session so ENABLED marketplace plugins'
-   * tools are available in chat. This screen subscribes to the manager's
-   * onChanged and rebuilds its session IN PLACE — carrying the transcript, like
-   * /model — so a plugin enabled in the market takes effect WITHOUT wiping the
-   * live engagement. Absent → no plugin tools (the default).
+   * The shell-level marketplace host manager. A session leases its initial
+   * host until cleanup; changed enablement applies to the next explicit chat.
    */
   pluginHostManager?: SessionPluginHostManager;
   /** Compact status of the configured self-evolving finder-lens worker. */
@@ -706,6 +709,8 @@ const STREAM_PRESENTATION_INTERVAL_MS = 33;
  * view can show anyway, and it bounds memory across a large child fleet. */
 const SUBAGENT_TRANSCRIPT_MAX = 300;
 
+const EMPTY_EXPANDED_TURNS: ReadonlySet<number> = new Set();
+
 export function ChatScreen({
   options,
   onGoBack,
@@ -713,11 +718,16 @@ export function ChatScreen({
   onExit,
   onConnectionFailure,
   submitHandle,
+  stagePromptHandle,
   reconnectHandle,
   modelHandle,
+  onSessionChange,
+  onWorkingChange,
+  onNextChatOptions,
   pluginHostManager,
   evolutionStatus,
 }: ChatScreenProps) {
+  const harness = useHarness();
   const connectionFailureRef = useRef(onConnectionFailure);
   connectionFailureRef.current = onConnectionFailure;
   const [entries, setEntries] = useState<ChatEntry[]>([]);
@@ -803,7 +813,6 @@ export function ChatScreen({
     TEXT,
     ERROR,
     WARNING,
-    SUCCESS,
     INFO,
     ACCENT,
     BRAND,
@@ -867,9 +876,8 @@ export function ChatScreen({
    * affordance whose click removes it again). Independent of the global Ctrl+R
    * detail toggle, which flips every turn at once via the settings store.
    */
-  const [expandedTurns, setExpandedTurns] = useState<Set<number>>(() => new Set());
+  const [expandedTurnsByAgent, setExpandedTurnsByAgent] = useState<ReadonlyMap<string | null, ReadonlySet<number>>>(() => new Map());
   const [reviewOpen, setReviewOpen] = useState(false);
-  const transcriptDocument = useMemo(() => createTranscriptDocument(entries), [entries]);
   const reviewRenderableRef = useRef<TranscriptReviewRenderable | null>(null);
   const reviewEventOpenRef = useRef(false);
   useEffect(() => {
@@ -913,14 +921,6 @@ export function ChatScreen({
   }, [reviewOpen, session?.scanId]);
   /** The turn currently under the mouse, for the subtle hover highlight. */
   const [hoveredTurn, setHoveredTurn] = useState<number | null>(null);
-  const toggleTurnExpanded = useCallback((turn: number) => {
-    setExpandedTurns((prev) => {
-      const next = new Set(prev);
-      if (next.has(turn)) next.delete(turn);
-      else next.add(turn);
-      return next;
-    });
-  }, []);
   // The output-guard subscription is registered once; a ref lets it read
   // the live setting without tearing down and re-adding the listener.
   const settingsRef = useRef(settings);
@@ -961,9 +961,17 @@ export function ChatScreen({
    */
   const modeRef = useRef<ConsoleAutonomyMode>(options?.autonomyMode ?? DEFAULT_AUTONOMY_MODE);
   modeRef.current = mode;
-  const [target, setTarget] = useState(options?.target ?? "");
+  const target = session?.target ?? options?.target ?? "";
   const [scopeRules, setScopeRules] = useState<string[]>(options?.scope?.raw.in_scope ?? []);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    onSessionChange?.(session);
+    return () => onSessionChange?.(null);
+  }, [onSessionChange, session]);
+  useEffect(() => {
+    onWorkingChange?.(busy);
+    return () => onWorkingChange?.(false);
+  }, [onWorkingChange, busy]);
   /**
    * Messages typed while a turn was in flight, delivered FIFO once it ends.
    * A ref rather than state because the keyboard handler writes it
@@ -1003,7 +1011,6 @@ export function ChatScreen({
   const [subagentTranscripts, setSubagentTranscripts] = useState<Record<string, ChatEntry[]>>({});
   const [workerTelemetry, setWorkerTelemetry] = useState<Record<string, SubagentMessagePayload>>({});
   const [workerOutcomes, setWorkerOutcomes] = useState<Record<string, SubagentLifecyclePayload>>({});
-  const [workerDetails, setWorkerDetails] = useState(false);
   const [lastContext, setLastContext] = useState<number>();
   /**
    * Two-press quit. Ctrl+C used to exit immediately; now the first press ARMS
@@ -1076,6 +1083,27 @@ export function ChatScreen({
    * live meta + activity panes the herd screen's focus mode renders).
    */
   const [focusAgentId, setFocusAgentId] = useState<string | null>(null);
+  const expandedTurns = expandedTurnsByAgent.get(focusAgentId) ?? EMPTY_EXPANDED_TURNS;
+  const toggleTurnExpanded = useCallback((turn: number) => {
+    setExpandedTurnsByAgent((previous) => {
+      const turns = new Set(previous.get(focusAgentId));
+      if (turns.has(turn)) turns.delete(turn);
+      else turns.add(turn);
+      const next = new Map(previous);
+      next.set(focusAgentId, turns);
+      return next;
+    });
+  }, [focusAgentId]);
+  const focusEntries = focusAgentId ? subagentTranscripts[focusAgentId] : undefined;
+  const focusTask = focusAgentId ? herdAgents[focusAgentId]?.task : undefined;
+  const focusedTranscript = useMemo<ChatEntry[]>(() => [
+    ...(focusTask ? [{ id: `${focusAgentId}-task`, kind: "user" as const, text: focusTask, turn: 0 }] : []),
+    ...(focusEntries ?? []),
+  ], [focusAgentId, focusTask, focusEntries]);
+  const transcriptDocument = useMemo(
+    () => createTranscriptDocument(focusAgentId ? focusedTranscript : entries),
+    [focusAgentId, focusedTranscript, entries],
+  );
   /** How far the inline focus transcript is scrolled back from its tail. */
   const [focusScrollOffset, setFocusScrollOffset] = useState(0);
   const { width, height } = useTerminalDimensions();
@@ -1088,7 +1116,6 @@ export function ChatScreen({
   busyRef.current = busy;
   const modelIdRef = useRef(modelId);
   modelIdRef.current = modelId;
-  const pendingHostRebuild = useRef(false);
   const turn = useRef(0);
   // The bottom bar's right cell (a "N turns · M tools" counter + sidebar toggle
   // glyphs) was removed: the counter was noise and the closed-state toggle
@@ -1101,14 +1128,9 @@ export function ChatScreen({
   const {
     compact,
     contentWidth,
-    headerTargetWidth,
-    headerScopeWidth,
-    headerGap,
     composerTextWidth,
     approvalWidth,
     controlsWidth,
-    statusWidth,
-    statusGap,
   } = layout;
   const composerRef = useRef("");
   const composingRef = useRef(false);
@@ -1199,6 +1221,19 @@ export function ChatScreen({
     return true;
   }, [setComposerText]);
 
+  useEffect(() => {
+    if (!stagePromptHandle) return;
+    stagePromptHandle.current = (text) => {
+      if (!text.trim()) return;
+      restorePaletteDraft();
+      const draft = composerRef.current;
+      setComposerText(draft ? `${draft}\n\n${text}` : text);
+      composingRef.current = true;
+      setComposing(true);
+    };
+    return () => { stagePromptHandle.current = null; };
+  }, [stagePromptHandle, restorePaletteDraft, setComposerText]);
+
   /**
    * Recall a previously submitted message into the composer. Up walks toward
    * older entries (saving the live draft on the first step), Down walks back
@@ -1231,26 +1266,23 @@ export function ChatScreen({
     }));
   }, [flushStreamPatches]);
 
-  /**
-   * Build a console session.
-   *
-   * Extracted from the mount effect because `/model` rebuilds the session
-   * against a different runtime: the model is fixed when the runtime is
-   * constructed, so switching means a new runtime, and the engagement
-   * context has to be carried across via `initialMessages` rather than
-   * silently discarded mid-engagement.
-   */
+  /** Construct only at initial startup, explicit new chat, or failed-start recovery. */
   const buildSession = useCallback((
-    opts: { model?: string; initialMessages?: NativeMessage[] } = {},
+    opts: { model?: string; providerId?: RuntimeConfig["provider"]; initialMessages?: NativeMessage[] } = {},
   ): { session: ConsoleSession; model: string } => {
-    // Apply stored provider credentials before the runtime resolves any.
-    // credentialEnvPatch never overrides a variable the shell already set,
-    // so an explicit export always beats the file.
-    const patch = credentialEnvPatch(loadCredentials(), process.env);
-    for (const [key, value] of Object.entries(patch)) process.env[key] = value;
-    const runtime = createConsoleRuntime({ model: opts.model ?? options?.model });
+    // Resolve credentials into this construction only. Explicit shell exports
+    // win, and changing a connection never mutates a live runtime's environment.
+    const env = credentialEnvPatch(loadCredentials(), process.env);
+    const runtime = createConsoleRuntime({
+      model: opts.model ?? options?.model,
+      provider: opts.providerId ?? options?.providerId,
+      env,
+    });
     const resolvedModel = runtime.resolvedModel();
-    const created = createLocalConsoleSession({
+    const pluginLease = pluginHostManager?.acquire();
+    let created: ConsoleSession;
+    try {
+    created = createLocalConsoleSession({
       runtime,
       costModel: resolvedModel,
       target: options?.target,
@@ -1258,25 +1290,16 @@ export function ChatScreen({
       role: options?.role,
       maxToolIterations: options?.maxToolIterations,
       allowScanners: options?.allowScanners,
-      // Self-evolving: when the operator has opted in, the interactive console
-      // turn loop builds the gated self-extension registry and offers self_extend
-      // (default OFF). Read from the live settings ref so a /settings toggle
-      // applies on the next session build. (pluginHost — the other injectable
-      // ConsoleSessionConfig field — is a documented follow-up: it needs a
-      // shell-level host whose lifecycle spans the chat↔market screen swap.)
+      // New sessions use the shared default; an existing disabled session is
+      // never reconstructed merely because its preference changes.
       allowModelSelfExtension: settingsRef.current.allowModelSelfExtension,
-      // Marketplace → live console: the shell's plugin-host manager hands its
-      // current host so ENABLED plugins' tools are in the console's tool set.
-      // Undefined when the shell wired no manager (the default) — no plugin
-      // tools, exactly as before. The console reads the host at turn boundaries.
-      pluginHost: pluginHostManager?.current(),
+      // The session's approved marketplace host remains pinned through cleanup.
+      pluginHost: pluginLease?.host,
       // Configured MCP servers (connected by the CLI before the TUI launched).
       // Their tools are network-gated + fenced as untrusted; the session closes
       // the host on cleanup.
       ...(options?.mcpHost ? { mcpHost: options.mcpHost } : {}),
-      // The LAUNCH mode is only the seed. Rebuilds trigger on /model and on
-      // resume, and reseeding from options there would drop the operator back
-      // to standard while the header kept showing the mode they chose.
+      // Capture the operator's current mode when a session is first constructed.
       autonomyMode: modeRef.current,
       initialMessages: opts.initialMessages,
       // The parent messaging runtime. WITHOUT this, no subagent gets the
@@ -1344,6 +1367,14 @@ export function ChatScreen({
         return deferred.promise;
       },
     }, options?.dbPath);
+    } catch (error) {
+      pluginLease?.release();
+      throw error;
+    }
+    const cleanup = created.cleanup;
+    created.cleanup = async () => {
+      try { await cleanup(); } finally { pluginLease?.release(); }
+    };
     // resolvedModel() is the id the runtime actually settled on after
     // provider detection — not necessarily what was requested — so it is
     // the only value honest enough to display.
@@ -1403,88 +1434,57 @@ export function ChatScreen({
     };
   }, []);
 
-  // ── Marketplace → live console ────────────────────────────────────────────
-  // Enabling/disabling a plugin in the market RECONSTRUCTS the shared host (a
-  // new object) and fires onChanged; a session that captured the old host is
-  // stale. Rebuild the session IN PLACE carrying the transcript — exactly as
-  // /model does — rather than remounting the chat, which would wipe the
-  // engagement. Deferred while a turn is running and flushed at the boundary.
-  const rebuildForHost = useCallback(() => {
-    const previous = sessionRef.current;
-    if (!previous) return; // the mount effect will build with the current host
-    if (busyRef.current) {
-      pendingHostRebuild.current = true;
-      return;
-    }
-    let built: { session: ConsoleSession; model: string };
-    try {
-      built = buildSession({
-        model: modelIdRef.current ?? undefined,
-        initialMessages: previous.messages,
-      });
-    } catch {
-      return; // a failed rebuild leaves the operator exactly where they were
-    }
-    setSession(built.session);
-    setModelId(built.model);
-    void previous.cleanup();
-  }, [buildSession]);
-
-  const reconnectProvider = useCallback((providerId: string) => {
-    const provider = PROVIDERS.find((candidate) => candidate.id === providerId);
-    if (!provider) {
-      appendEntry({
-        kind: "error",
-        text: "provider reconnect failed",
-        detail: `Unknown provider '${providerId}'.`,
-        turn: turn.current,
-      });
-      return;
-    }
-    if (busyRef.current) {
+  // Marketplace changes never replace this session's runtime or live harness.
+  // Its leased host remains usable until cleanup; new chats acquire the new set.
+  useEffect(() => {
+    if (!pluginHostManager) return;
+    return pluginHostManager.onChanged(() => {
       appendEntry({
         kind: "notice",
-        text: "provider saved; reconnect after the active turn finishes",
+        text: "Marketplace updated for new chats",
+        detail: "Use /new-chat to load the changed plugins. This chat keeps its current tools and live harness.",
+        turn: turn.current,
+      });
+    });
+  }, [pluginHostManager, appendEntry]);
+
+  const reconnectProvider = useCallback((providerId: string) => {
+    const knownProvider = PROVIDERS.find((candidate) => candidate.id === providerId);
+    if (providerId !== "hosted" && !knownProvider) {
+      appendEntry({ kind: "error", text: "Unknown connection", detail: providerId, turn: turn.current });
+      return;
+    }
+    const provider = providerId as NonNullable<RuntimeConfig["provider"]>;
+    const providerLabel = providerId === "hosted"
+      ? "0sec Cloud"
+      : knownProvider?.label ?? providerId;
+    onNextChatOptions?.({ providerId: provider });
+    if (sessionRef.current) {
+      appendEntry({
+        kind: "notice",
+        text: `${providerLabel} saved for new chats`,
+        detail: "Use /new-chat to use this connection. The current runtime, conversation and live harness are unchanged.",
         turn: turn.current,
       });
       return;
     }
-
-    if (provider.auth === "api-key") {
-      for (const envVar of provider.envVars) delete process.env[envVar];
-    }
-    process.env["0SEC_SELECTED_PROVIDER"] = provider.id;
-
-    const previous = sessionRef.current;
-    let built: { session: ConsoleSession; model: string };
     try {
-      built = buildSession({
-        model: modelIdRef.current ?? options?.model ?? process.env["0SEC_MODEL"],
-        ...(previous ? { initialMessages: previous.messages } : {}),
-      });
+      const built = buildSession({ providerId: provider, model: options?.model, initialMessages: options?.initialMessages });
+      sessionRef.current = built.session;
+      modelIdRef.current = built.model;
+      setSession(built.session);
+      setModelId(built.model);
+      setStartupError(null);
+      appendEntry({ kind: "notice", text: `${providerLabel} configured`, turn: turn.current });
     } catch (error) {
       appendEntry({
         kind: "error",
-        text: `${provider.label} is not connected yet`,
+        text: `${providerLabel} is not connected yet`,
         detail: error instanceof Error ? error.message : String(error),
         turn: turn.current,
       });
-      return;
     }
-
-    setSession(built.session);
-    setModelId(built.model);
-    setStartupError(null);
-    void previous?.cleanup();
-    appendEntry({
-      kind: "notice",
-      text: `Reconnected with ${provider.label}`,
-      detail: previous
-        ? `${previous.messages.length} prior message(s) carried into the new runtime.`
-        : "The provider is ready for a new conversation.",
-      turn: turn.current,
-    });
-  }, [appendEntry, buildSession, options?.model]);
+  }, [appendEntry, buildSession, options?.model, options?.initialMessages, onNextChatOptions]);
 
   useEffect(() => {
     if (!reconnectHandle) return;
@@ -1495,43 +1495,33 @@ export function ChatScreen({
   }, [reconnectHandle, reconnectProvider]);
 
   const selectModel = useCallback((requested: string) => {
-    if (busyRef.current) {
-      appendEntry({ kind: "notice", text: "wait for the active turn before switching model", turn: turn.current });
-      return;
-    }
-    const previous = sessionRef.current;
-    if (previous && requested === modelIdRef.current) {
-      appendEntry({ kind: "notice", text: `Model is already ${requested}`, turn: turn.current });
-      return;
-    }
-    let built: { session: ConsoleSession; model: string };
-    try {
-      built = buildSession({
-        model: requested,
-        initialMessages: previous?.messages ?? options?.initialMessages,
-      });
-    } catch (error) {
+    onNextChatOptions?.({ model: requested });
+    if (sessionRef.current) {
       appendEntry({
         kind: "notice",
-        text: `could not switch to ${requested}; model is unchanged`,
-        detail: error instanceof Error ? error.message : String(error),
+        text: `New-chat model: ${requested}`,
+        detail: "Use /new-chat to start with this model. This chat keeps its runtime, accounting and live harness.",
         turn: turn.current,
       });
       return;
     }
-    sessionRef.current = built.session;
-    modelIdRef.current = built.model;
-    setSession(built.session);
-    setModelId(built.model);
-    setStartupError(null);
-    void previous?.cleanup();
-    appendEntry({
-      kind: "notice",
-      text: `Model: ${built.model} (${modelProvider(built.model)})`,
-      detail: `${previous?.messages.length ?? options?.initialMessages?.length ?? 0} prior message(s) carried over.`,
-      turn: turn.current,
-    });
-  }, [appendEntry, buildSession, options?.initialMessages]);
+    try {
+      const built = buildSession({ model: requested, initialMessages: options?.initialMessages });
+      sessionRef.current = built.session;
+      modelIdRef.current = built.model;
+      setSession(built.session);
+      setModelId(built.model);
+      setStartupError(null);
+      appendEntry({ kind: "notice", text: `Model: ${built.model} (${modelProvider(built.model)})`, turn: turn.current });
+    } catch (error) {
+      appendEntry({
+        kind: "notice",
+        text: `Could not start ${requested}`,
+        detail: error instanceof Error ? error.message : String(error),
+        turn: turn.current,
+      });
+    }
+  }, [appendEntry, buildSession, options?.initialMessages, onNextChatOptions]);
 
   useEffect(() => {
     if (!modelHandle) return;
@@ -1539,23 +1529,6 @@ export function ChatScreen({
     return () => { modelHandle.current = null; };
   }, [modelHandle, modelId, selectModel]);
 
-  useEffect(() => {
-    const mgr = pluginHostManager;
-    if (!mgr) return;
-    // Cold start: the manager may have primed its host AFTER this chat mounted,
-    // and priming does not fire onChanged — so adopt the current host once now
-    // (this effect re-runs when the async manager first becomes available).
-    rebuildForHost();
-    return mgr.onChanged(rebuildForHost);
-  }, [pluginHostManager, rebuildForHost]);
-
-  // Flush a rebuild that was deferred because a turn was in flight.
-  useEffect(() => {
-    if (!busy && pendingHostRebuild.current) {
-      pendingHostRebuild.current = false;
-      rebuildForHost();
-    }
-  }, [busy, rebuildForHost]);
 
   /**
    * Claim the structured diagnostics channel while the console is mounted.
@@ -1702,10 +1675,9 @@ export function ChatScreen({
           const p = payload as unknown as SubagentMessagePayload;
           if (p.parent_scan_id !== scanId) return;
           setWorkerTelemetry((prev) => ({ ...prev, [p.agent_id]: p }));
-          // Turn the child's per-turn message into transcript entries in the SAME
-          // shape the main turn produces (assistant answer + one tool card each,
-          // formatted by the same formatToolArgs/formatToolResult), so the focus
-          // view renders them through planTranscript/renderEntry identically.
+          // Use the main conversation's argument formatting and rich cards,
+          // retaining the complete bounded public result rather than reducing
+          // tools without rich metadata to a one-line summary.
           const fresh: ChatEntry[] = [];
           if (p.assistant) {
             fresh.push({
@@ -1721,7 +1693,13 @@ export function ChatScreen({
               id: `${p.agent_id}-t${p.turn}-x${i}`,
               kind: "tool",
               text: t.call.name,
-              detail: t.running ? undefined : typeof t.result.output === "string" ? t.result.output : formatToolResult(t.call, t.result),
+              detail: t.running
+                ? undefined
+                : t.result.success
+                  ? typeof t.result.output === "string"
+                    ? t.result.output
+                    : JSON.stringify(t.result.output)
+                  : t.result.error ?? "failed",
               toolArgs: formatToolArgs(t.call),
               success: t.running ? undefined : t.result.success,
               ...toolCardFieldsFromMeta(t.result.meta),
@@ -1883,7 +1861,6 @@ export function ChatScreen({
     }
 
     pending.resolve(resolution);
-    setTarget(resolution.target);
     setScopeRules(resolution.scope.raw.in_scope ?? []);
     appendEntry({ kind: "notice", text: `session scope approved: ${(resolution.scope.raw.in_scope ?? []).join(", ")}`, turn: turn.current });
   }, [appendEntry, pendingScope]);
@@ -2140,28 +2117,14 @@ export function ChatScreen({
    */
   const abortRef = useRef<AbortController | null>(null);
 
-  /**
-   * Operator interrupt (Esc while a turn is running).
-   *
-   * The engine honours the signal at checkpoints — before the next model
-   * call and before dispatching each tool — so a tool or a request already
-   * in flight still runs to completion. The notice says exactly that rather
-   * than claiming the turn stopped dead; the definitive entry, with the
-   * tokens actually spent, is written when the turn returns with
-   * `stopReason: "cancelled"`.
-   */
+  // Cancellation is checkpoint-based. Keep its feedback out of the transcript.
   const interruptTurn = useCallback(() => {
     const controller = abortRef.current;
     if (!controller || controller.signal.aborted) return false;
     controller.abort();
-    appendEntry({
-      kind: "notice",
-      text: "interrupting the current turn…",
-      detail: "Stops before the next tool call or model request. Anything already in flight finishes first.",
-      turn: turn.current,
-    });
+    showToast("Stopping…");
     return true;
-  }, [appendEntry]);
+  }, [showToast]);
 
   const routeSlashCommand = useCallback((raw: string): boolean => {
     const parsed = findCommand(raw);
@@ -2198,24 +2161,30 @@ export function ChatScreen({
           turn: turn.current,
         });
         return true;
-      case "status":
-        appendEntry({
-          kind: "panel",
-          text: "status",
-          panel: buildStatusPanel({
-            model: modelId ?? undefined,
-            provider: modelId ? modelProvider(modelId) : undefined,
-            mode: modeLabel(mode),
-            target: target || undefined,
-            scopeRules,
-            toolCount: session?.tools.length ?? 0,
-            turns: turn.current,
-            inputTokens: sessionTokens.input,
-            outputTokens: sessionTokens.output,
-          }),
-          turn: turn.current,
+      case "status": {
+        const panel = buildStatusPanel({
+          model: modelId ?? undefined,
+          provider: modelId ? modelProvider(modelId) : undefined,
+          mode: modeLabel(mode),
+          target: target || undefined,
+          scopeRules,
+          toolCount: session?.tools.length ?? 0,
+          turns: turn.current,
+          inputTokens: sessionTokens.input,
+          outputTokens: sessionTokens.output,
         });
+        if (lastContext !== undefined) {
+          panel.rows.push({ label: "context", value: `${lastContext} tokens` });
+        }
+        if (turnBudget) {
+          panel.rows.push({
+            label: "turn usage",
+            value: `${turnBudget.used} reported tokens${turnBudget.limit > 0 ? ` / ${turnBudget.limit} limit` : ""}`,
+          });
+        }
+        appendEntry({ kind: "panel", text: "status", panel, turn: turn.current });
         return true;
+      }
       case "scope":
         appendEntry({
           kind: "panel",
@@ -2227,6 +2196,13 @@ export function ChatScreen({
           }),
           turn: turn.current,
         });
+        return true;
+      case "new-chat":
+        if (busy) {
+          appendEntry({ kind: "notice", text: "Finish or cancel the active turn before starting a new chat.", turn: turn.current });
+        } else {
+          onNavigate("new-chat");
+        }
         return true;
       // `/clear` (and its `/new` alias) was in the registry and in the
       // palette but had no handler, so it fell through to `default:` and
@@ -2475,6 +2451,9 @@ export function ChatScreen({
         void submitRef.current?.(prompt);
         return true;
       }
+      case "harness":
+        onNavigate("harness");
+        return true;
       case "settings":
         // The full screen, not the composer picker: settings want grouping,
         // real descriptions and reset affordances, none of which fit in a
@@ -2670,8 +2649,6 @@ export function ChatScreen({
         onNavigate("connect");
         return true;
       case "transcript":
-        setFocusAgentId(null);
-        setAgentNavIndex(-1);
         setReviewOpen(true);
         return true;
       case "history":
@@ -2712,6 +2689,7 @@ export function ChatScreen({
     busy,
     commandCatalog,
     discardStreamPatches,
+    lastContext,
     mode,
     modelId,
     onExit,
@@ -2722,8 +2700,10 @@ export function ChatScreen({
     scopeRules,
     selectModel,
     session,
+    sessionTokens,
     setPendingFeedback,
     target,
+    turnBudget,
   ]);
 
   const send = useCallback(async (raw: string) => {
@@ -2859,7 +2839,10 @@ export function ChatScreen({
           setTurnBudget({ used: usage.turnTokensUsed, limit: usage.turnTokenBudget });
           setLastContext(usage.inputTokens > 0 ? usage.inputTokens : undefined);
         },
-        onNotice: (notice) => appendEntry({ kind: "notice", text: notice, turn: currentTurn }),
+        onNotice: (notice) => {
+          setScopeRules(session.scope?.raw.in_scope ?? []);
+          appendEntry({ kind: "notice", text: notice, turn: currentTurn });
+        },
       }, { signal: controller.signal });
 
       if (!assistantText && outcome.assistantText) {
@@ -2876,19 +2859,7 @@ export function ChatScreen({
       // rejection rendered as "0 tool calls · 0→0 tok" and nothing else,
       // which reads as the agent having simply ignored the operator.
       const producedText = Boolean(assistantText || outcome.assistantText);
-      if (outcome.stopReason === "cancelled") {
-        // The operator stopped this turn. Report what it cost before it
-        // stopped: an interrupt that hides the spend is an interrupt the
-        // operator cannot reason about.
-        const used = Math.round(outcome.budget.tokensUsed / 1000);
-        const limit = Math.round(outcome.budget.tokenBudget / 1000);
-        appendEntry({
-          kind: "error",
-          text: "turn interrupted by the operator",
-          detail: `Ran ${outcome.budget.iterations} tool call${outcome.budget.iterations === 1 ? "" : "s"} · ${used}k of ${limit}k tokens spent. The conversation is kept; send another message to continue.`,
-          turn: currentTurn,
-        });
-      } else if (outcome.stopReason === "error") {
+      if (outcome.stopReason === "error") {
         const detail = outcome.error ?? "The runtime reported an error but gave no message.";
         appendEntry({
           kind: "error",
@@ -2917,7 +2888,7 @@ export function ChatScreen({
             ?? "This guard only trips when calls report no token cost. Send another message to continue from here.",
           turn: currentTurn,
         });
-      } else if (!producedText && outcome.toolCalls.length === 0) {
+      } else if (outcome.stopReason !== "cancelled" && !producedText && outcome.toolCalls.length === 0) {
         // Not an error, but silence is never a useful answer.
         appendEntry({
           kind: "error",
@@ -2929,7 +2900,7 @@ export function ChatScreen({
         });
       }
 
-      if (settings.showTurnSummary) {
+      if (settings.showTurnSummary && outcome.stopReason !== "cancelled") {
         appendEntry({
           kind: "notice",
           text: `${outcome.toolCalls.length} tool call${outcome.toolCalls.length === 1 ? "" : "s"} · ${outcome.usage.inputTokens}→${outcome.usage.outputTokens} tok`,
@@ -3114,8 +3085,7 @@ export function ChatScreen({
           turn: turn.current,
         });
       }
-      // When interrupting, interruptTurn() already posts an "interrupting…"
-      // notice; the message then drains on the next idle transition.
+      // The transient stopping status covers the wait until the idle drain.
     } else if (disposition === "send") {
       void send(input);
     }
@@ -3149,6 +3119,25 @@ export function ChatScreen({
     setQueuedMessages(rest);
     void submitRef.current?.(next);
   }, [busy, session]);
+
+  // usePaste shares AppContext.keyHandler with useKeyboard, so an overlay
+  // owns the paste exclusively while the persistent chat remains mounted.
+  usePaste((event) => {
+    const text = sanitizeComposerText(decodePasteBytes(event.bytes).replace(/\r\n?/g, "\n"));
+    if (!text) return;
+    if (secretPrompt) {
+      setSecretPrompt((prompt) => prompt ? { ...prompt, value: prompt.value + text } : prompt);
+      return;
+    }
+    if (pendingOperatorQuestion) {
+      setOperatorState((state) => state ? operatorAppend(state, text) : state);
+      return;
+    }
+    if (approvalPrompt || picker || reviewOpen) return;
+    composingRef.current = true;
+    setComposing(true);
+    setComposerText(composerRef.current + text);
+  });
 
   useKeyboard((key) => {
     // The `ask_operator` modal takes precedence exactly like an approval prompt,
@@ -3335,12 +3324,6 @@ export function ChatScreen({
       return;
     }
     if (key.ctrl && key.name === "o") {
-      if (focusAgentId) {
-        setWorkerDetails((value) => !value);
-        return;
-      }
-      setFocusAgentId(null);
-      setAgentNavIndex(-1);
       setReviewOpen(true);
       return;
     }
@@ -3659,8 +3642,7 @@ export function ChatScreen({
               turn: turn.current,
             });
           }
-          // When interrupting, interruptTurn() already posts an "interrupting…"
-          // notice; the message then drains on the next idle transition.
+          // The transient stopping status covers the wait until the idle drain.
         } else if (disposition === "send") {
           void send(input);
         }
@@ -3696,10 +3678,10 @@ export function ChatScreen({
         return;
       }
       if (key.name === "backspace") {
-        setComposerText(composerRef.current.slice(0, -1));
+        setComposerText(deletePreviousCharacter(composerRef.current));
         return;
       }
-      if (key.sequence && !key.ctrl && !key.meta) {
+      if (key.sequence && !key.ctrl && !key.meta && !/[\x00-\x1f\x7f]/.test(key.sequence)) {
         setComposerText(`${composerRef.current}${key.sequence}`);
       }
       return;
@@ -3722,22 +3704,25 @@ export function ChatScreen({
       recallComposerHistory("down");
       return;
     }
-    if (key.sequence && !key.ctrl && !key.meta && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
+    if (key.sequence && !key.ctrl && !key.meta && !/[\x00-\x1f\x7f]/.test(key.sequence)) {
       composingRef.current = true;
       setComposing(true);
       setComposerText(key.sequence);
     }
   });
 
-  const empty = entries.length === 0 && Object.keys(herdAgents).length === 0;
+  const hasHarnessPresentation = !harness.showConversation && harness.workspaceTrusted &&
+    harness.snapshot?.trusted === true && harness.snapshot.trustedUi.some((entry) => entry.tui);
+  const empty = entries.length === 0 && Object.keys(herdAgents).length === 0 && !hasHarnessPresentation;
   // Parked messages are surfaced next to the working indicator, because that is
   // exactly where the operator is looking while they wait.
   const queueLabel = composerQueueLabel(queuedCount);
   // The header owns engagement posture: target, scope, session state, and the
   // optional objective. Autonomy mode belongs beside model and workspace state
   // in the bottom bar, where it is available without competing with the target.
+  const focusedTelemetry = focusAgentId ? workerTelemetry[focusAgentId] : undefined;
   const statusSegments = buildStatusSegments({
-    model: modelId ?? undefined,
+    model: focusAgentId ? focusedTelemetry?.model : modelId ?? undefined,
     mode: modeLabel(mode),
     evolution: evolutionStatus,
     cwd: process.cwd(),
@@ -3745,8 +3730,10 @@ export function ChatScreen({
     branch: git?.isRepo ? git.branch ?? git.detachedSha : undefined,
     modified: git?.modified,
     untracked: git?.untracked,
-    inputTokens: sessionTokens.input,
-    outputTokens: sessionTokens.output,
+    inputTokens: focusAgentId ? focusedTelemetry?.usage?.inputTokens : sessionTokens.input,
+    outputTokens: focusAgentId ? focusedTelemetry?.usage?.outputTokens : sessionTokens.output,
+    cachedInputTokens: focusAgentId ? focusedTelemetry?.usage?.cachedInputTokens : undefined,
+    showTokenUsage: settings.showTokenUsage,
     // Telemetry toggles: where the model name is surfaced, whether the
     // context reading renders as a visual meter, and whether an estimated
     // dollar cost is appended. status-bar.ts honours each and invents no
@@ -3756,23 +3743,6 @@ export function ChatScreen({
     showCost: settings.showCost,
   });
   const runningWorkers = Object.values(herdAgents).filter((agent) => agent.status === "running" || agent.status === "queued").length;
-  const focusedTelemetry = focusAgentId ? workerTelemetry[focusAgentId] : undefined;
-  const focusedWorker = focusAgentId ? herdAgents[focusAgentId] : undefined;
-  const telemetryLine = focusAgentId
-    ? [
-        focusedWorker?.status === "completed" || focusedWorker?.status === "failed" ? "follow-up → Main" : `to ${focusedWorker?.name ?? shortAgentName(focusAgentId)}`,
-        focusedTelemetry?.model ?? "model —",
-        focusedTelemetry?.usage ? `${focusedTelemetry.usage.inputTokens} in · ${focusedTelemetry.usage.outputTokens} out · ${focusedTelemetry.usage.cachedInputTokens} cached` : "tokens —",
-        `ctx ${focusedTelemetry?.contextTokens ?? "—"}`,
-        focusedTelemetry?.durationMs !== undefined ? `${(focusedTelemetry.durationMs / 1000).toFixed(1)}s` : "",
-      ].filter(Boolean).join(" · ")
-    : [
-        `${runningWorkers}/${Object.keys(herdAgents).length} workers running`,
-        todos ? `plan ${todos.done}/${todos.total}` : "",
-        `ctx ${lastContext ?? "—"}`,
-        turnBudget ? `turn spend ${turnBudget.used}/${turnBudget.limit} tok` : "",
-        queueLabel,
-      ].filter(Boolean).join(" · ");
   // The OMP-style pill row: the SAME segments, kept/dropped at the bar's real
   // width, each painted as its own coloured glyph+text with a subtle separator
   // between (rendered below via `renderStatusPills`). `statusBarText` remains as
@@ -3982,12 +3952,6 @@ export function ChatScreen({
     : commandMenuBoxHeight(0, commandRowsPerCommand) + 1;
 
   const commandMenuVisible = composing && commandMenuOpen && isSlashComposer;
-  // Every overlay — command menu, picker, approval panel — already prints
-  // its own key hints inside its border. Repeating them down here is the
-  // duplication that made the old two-line composer read as noise. So the
-  // bar yields to contextual keys ONLY while composing plain text, where
-  // "enter send · esc cancel" appears nowhere else on screen.
-  const showContextualKeys = composing && !commandMenuVisible && !picker && !approvalPrompt && !secretPrompt && !operatorQuestionOpen;
 
   // ACTIVE SUBAGENTS. `spawn_agents` fans out up to 8 with 4 running at
   // once, so this block is genuinely multi-row and genuinely unbounded —
@@ -4069,21 +4033,6 @@ export function ChatScreen({
   // Version rides at the far left of the top bar, like the startup masthead.
   const headerEngagement = [`v${VERSION}`, ...headerSegments].join(" · ");
 
-  const controls = approvalPrompt
-    ? "↑↓ choose · enter confirm · esc decline"
-    : commandMenuVisible
-      ? "↑↓ select · tab complete · enter run · esc close"
-      : composing
-        ? "enter send · esc cancel"
-        : "type to chat · / commands · shift+tab mode · ctrl+p / ctrl+k palette · esc back";
-  const commandMenuInnerWidth = menu.innerWidth;
-  const commandRowWidth = menu.rowWidth;
-  const commandNameWidth = menu.nameWidth;
-  const commandMetaWidth = menu.metaWidth;
-  const commandHeaderTitleWidth = menu.headerTitleWidth;
-  const commandHeaderQueryWidth = menu.headerQueryWidth;
-  const commandHeaderGap = menu.headerGap;
-  const modeColor = modeColorFor(mode, theme);
 
   // ── The single working / waiting indicator ────────────────────────────────
   // There must be exactly ONE. It used to render in the composer placeholder
@@ -4147,7 +4096,7 @@ export function ChatScreen({
   // the composer is focused (`composerActive`) and HOLLOW when it is not.
   const composerInput = (textWidth: number) => {
     const placeholder = startupError
-      ? "runtime unavailable"
+      ? "type / for setup and commands"
       : queueLabel
         ? queueLabel
         : busy
@@ -4671,16 +4620,40 @@ export function ChatScreen({
   // SAME planTranscript/renderEntry as the main agent — so a drilled-in child
   // reads identically. Until the first message arrives (or for a peer session
   // with no stream), it falls back to the coarse activity ring below.
-  const focusEntries = focusAgentId ? subagentTranscripts[focusAgentId] ?? [] : [];
   const workerDisplay: EntryDisplay = {
     ...entryDisplay,
     model: focusedTelemetry?.model ?? "",
-    transcriptDetail: workerDetails ? "expanded" : "collapsed",
-    richToolCards: true,
     shimmerFrame: focusRecord?.status === "running" && !settings.reduceMotion ? Math.floor(nowMs / 120) : undefined,
     activeTurn: focusRecord?.status === "running" ? focusedTelemetry?.turn : undefined,
+    activeEntryId: focusRecord?.status === "running" ? focusEntries?.[focusEntries.length - 1]?.id : undefined,
   };
-  const focusHasTranscript = focused && focusEntries.length > 0;
+  const renderTranscriptEntries = (transcript: readonly ChatEntry[], width: number, display: EntryDisplay) =>
+    planTranscript(transcript, display.transcriptDetail, expandedTurns).map((item) => {
+      if (item.type === "fold") {
+        return renderFold(item, width, display, theme, {
+          hovered: hoveredTurn === item.turn,
+          onToggle: () => toggleTurnExpanded(item.turn),
+          onHover: (hovered) => setHoveredTurn(hovered ? item.turn : null),
+        });
+      }
+      const entry = item.entry;
+      const expanded = expandedTurns.has(entry.turn);
+      const interactive = expanded && (
+        entry.kind === "tool" || entry.kind === "subagent" || entry.kind === "reasoning"
+      );
+      return renderEntry(
+        entry,
+        width,
+        expanded ? { ...display, transcriptDetail: "expanded" } : display,
+        theme,
+        interactive ? {
+          hovered: hoveredTurn === entry.turn,
+          onToggle: () => toggleTurnExpanded(entry.turn),
+          onHover: (hovered) => setHoveredTurn(hovered ? entry.turn : null),
+        } : undefined,
+      );
+    });
+  const focusHasTranscript = focused && Boolean(focusEntries?.length);
   // The coarse activity fallback is row-windowed. Rich transcripts use their
   // actual viewport and measured content extent instead of this estimate.
   const focusMetaRows = focusMetaLines.length + 1;
@@ -4705,7 +4678,7 @@ export function ChatScreen({
       paddingY={compact ? 0 : 1}
     >
       <box flexDirection="column" flexShrink={0} minWidth={0}>
-        <text fg={ACCENT}>{fitTuiText(`Main › ${focusRecord?.name ?? shortAgentName(focusAgentId ?? "")} · ${workerOutcomes[focusAgentId ?? ""]?.done === false && focusRecord?.status === "completed" ? "stopped early" : focusRecord?.status ?? "connecting"}`, focusInner)}</text>
+        <text fg={ACCENT}>{fitTuiText(`Main › ${focusRecord?.name ?? shortAgentName(focusAgentId ?? "")}`, focusInner)}</text>
         {focusMetaLines.map((line, index) => (
           <text key={`focus-meta-${index}`} fg={herdToneColor(theme, line.tone)}>
             {fitTuiText(line.text, focusInner)}
@@ -4730,15 +4703,7 @@ export function ChatScreen({
               // Nested tool/markdown rows can reflow after the scroll content was measured.
               if (focusTranscriptRef.current) focusTranscriptRef.current.content.height = this.height;
             }}>
-              {focusRecord?.task ? renderEntry({ id: `${focusAgentId}-task`, kind: "user", text: focusRecord.task, turn: 0 }, focusInner, workerDisplay, theme) : null}
-              {planTranscript(focusEntries, workerDisplay.transcriptDetail).map((item) =>
-                item.type === "fold"
-                  ? renderFold(item, focusInner, workerDisplay, theme, {
-                      onToggle: () => setWorkerDetails(true), hovered: false,
-                    })
-                  : renderEntry(item.entry, focusInner, workerDisplay, theme,
-                      item.entry.kind === "tool" ? { hovered: false, onToggle: () => setWorkerDetails((value) => !value) } : undefined),
-              )}
+              {renderTranscriptEntries(focusedTranscript, focusInner, workerDisplay)}
             </box>
           </scrollbox>
         </box>
@@ -4757,7 +4722,7 @@ export function ChatScreen({
         </box>
       )}
       <text fg={MUTED} marginTop={1}>
-        {fitTuiText(`ctrl+o ${workerDetails ? "collapse" : "expand"} tools · ↑/↓ scroll · esc Main · ${focusRecord?.status === "completed" || focusRecord?.status === "failed" ? "follow-up → Main" : "type to message worker"}`, focusInner)}
+        {fitTuiText(`ctrl+o transcript · ctrl+r ${workerDisplay.transcriptDetail === "expanded" ? "collapse" : "expand"} details · esc Main`, focusInner)}
       </text>
     </box>
   );
@@ -4793,38 +4758,7 @@ export function ChatScreen({
       >
         <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} backgroundColor={PANEL} stickyScroll stickyStart="bottom">
           <box flexDirection="column" width="100%">
-            {planTranscript(entries, entryDisplay.transcriptDetail, expandedTurns).map((item) => {
-              if (item.type === "fold") {
-                // A collapsed fold: click to expand its turn, hover to tint.
-                return renderFold(item, transcriptWidth, entryDisplay, theme, {
-                  hovered: hoveredTurn === item.turn,
-                  onToggle: () => toggleTurnExpanded(item.turn),
-                  onHover: (h) => setHoveredTurn(h ? item.turn : null),
-                });
-              }
-              const entry = item.entry;
-              // Only the collapsible kinds of a turn the operator has expanded
-              // are clickable (to re-collapse) and hoverable; everything else
-              // renders exactly as before, so keyboard-only use is untouched.
-              const collapsible =
-                entry.kind === "tool" ||
-                entry.kind === "subagent" ||
-                entry.kind === "reasoning";
-              const interactive = collapsible && expandedTurns.has(entry.turn);
-              return renderEntry(
-                entry,
-                transcriptWidth,
-                expandedTurns.has(entry.turn) ? { ...entryDisplay, transcriptDetail: "expanded" } : entryDisplay,
-                theme,
-                interactive
-                  ? {
-                      hovered: hoveredTurn === entry.turn,
-                      onToggle: () => toggleTurnExpanded(entry.turn),
-                      onHover: (h) => setHoveredTurn(h ? entry.turn : null),
-                    }
-                  : undefined,
-              );
-            })}
+            {renderTranscriptEntries(entries, transcriptWidth, entryDisplay)}
             {/* The plan lives in the RIGHT sidebar now; this inline card is only
                 a fallback for when that sidebar is hidden, so the todos are
                 always visible somewhere. */}
@@ -4866,30 +4800,18 @@ export function ChatScreen({
     </box>
   ) : null;
 
-  // The compact dim hint under the hero composer — keybind chords only. The
-  // "type to chat · / commands" half is dropped: the composer placeholder above
-  // already says it. Keys render white, labels muted (see KeyHints).
-  // The empty start screen has no transcript, no sessions and no agents yet, so
-  // the sidebar toggles (ctrl+b / ctrl+l) have nothing to reveal — they'd only
-  // read as noise before the first turn. The hero keeps just the two chords that
-  // matter here (switch mode, open the palette); the sidebar affordances live in
-  // the bottom bar once a conversation exists.
+  // Keep first-use actions visible without opening a second navigation surface.
   const heroHintPairs: KeyHint[] = [
-    { key: "shift+tab", label: "mode" },
-    { key: "ctrl+p", label: "palette" },
-  ];
-  // The contextual keys shown in the bottom bar while composing plain text.
-  const composeHintPairs: KeyHint[] = [
-    { key: "enter", label: "send" },
-    { key: "esc", label: "cancel" },
-    { key: "ctrl+o", label: "transcript" },
+    { key: "/connect", label: "connection" },
+    { key: "/resume", label: "sessions" },
+    { key: "ctrl+p", label: "commands" },
   ];
   // Any overlay open in the hero (slash menu, picker, an approval, the secret
   // prompt): the masthead is hidden so the tall menu + logo cannot overflow
   // upward into the header. The composer stays put — it is anchored by the
   // fixed bottom spacer regardless of what the region above it holds.
   const heroOverlayOpen = commandMenuVisible || Boolean(picker) || Boolean(approvalPrompt) || Boolean(secretPrompt) || operatorQuestionOpen;
-  const showMasthead = !heroOverlayOpen;
+  const showMasthead = !heroOverlayOpen && !startupError;
 
   // ── Command-menu selection scroll ──────────────────────────────────────────
   // Keep the highlighted command inside the height-clamped window: the rows live
@@ -5015,7 +4937,12 @@ export function ChatScreen({
               />
             ) : null}
             {workingIndicator}
-            {startupError ? <text fg={ERROR} marginTop={1}>{fitTuiText(startupError, contentWidth)}</text> : null}
+            {startupError && !heroOverlayOpen ? (
+              <box flexDirection="column" width={heroComposerWidth} minWidth={0} flexShrink={0} marginBottom={1}>
+                <text fg={TEXT}>Chat needs setup</text>
+                <text fg={MUTED} wrapMode="word">{startupError}</text>
+              </box>
+            ) : null}
             {heroOverlaysNode}
           </box>
           {/* The composer card — fixed vertical centre; the menu above never shifts it. */}
@@ -5026,7 +4953,7 @@ export function ChatScreen({
             {keyHintsLength(heroHintPairs, " · ") <= contentWidth ? (
               <KeyHints pairs={heroHintPairs} theme={theme} />
             ) : (
-              <text fg={MUTED}>{fitTuiText("shift+tab mode · ctrl+p palette", contentWidth, { mode: "middle" })}</text>
+              <text fg={MUTED}>{fitTuiText("/connect · /resume · ctrl+p", contentWidth)}</text>
             )}
           </box>
           {/* Region B: a FIXED spacer, so the composer's position is constant. */}
@@ -5041,7 +4968,7 @@ export function ChatScreen({
             * transcript column beside the optional agent rail. The transcript
             * flexGrows; the rail is flexShrink={0} and sized by chat-layout.
             */}
-          {conversationRegion}
+          <HarnessPresentation fallback={conversationRegion} />
 
           {overlaysNode}
           {stickyNode}
@@ -5069,15 +4996,8 @@ export function ChatScreen({
         */}
       {settings.showStatusBar ? (
         <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
-          <text fg={MUTED}>{fitTuiText(telemetryLine, controlsWidth)}</text>
           <box width={controlsWidth} flexShrink={0} minWidth={0}>
-            {showContextualKeys ? (
-              keyHintsLength(composeHintPairs, " · ") <= controlsWidth ? (
-                <KeyHints pairs={composeHintPairs} theme={theme} />
-              ) : (
-                <text fg={MUTED}>{fitTuiText(controls, controlsWidth)}</text>
-              )
-            ) : statusPills.length > 0 ? (
+            {statusPills.length > 0 ? (
               // OMP-style coloured pills: each segment its own glyph+text in its
               // role colour, a subtle muted dot between. Widths come from
               // `fitStatusPills`, so the row's children sum to <= controlsWidth
