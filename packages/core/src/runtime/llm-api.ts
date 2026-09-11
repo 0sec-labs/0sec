@@ -1810,6 +1810,16 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    return {
+      provider: "anthropic",
+      apiKey: anthropicKey,
+      baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com",
+      defaultModel: DEFAULT_ANTHROPIC_MODEL,
+      wireApi: "chat_completions",
+    };
+  }
   // 0sec Cloud hosted inference. Detected when cloud credentials are present
   // and no explicit BYOK provider was configured above. The default model is
   // a placeholder; the first async catalog fetch replaces it at invocation
@@ -1830,16 +1840,6 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     // No cloud credentials — continue to BYOK fallbacks.
   }
 
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (anthropicKey) {
-    return {
-      provider: "anthropic",
-      apiKey: anthropicKey,
-      baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com",
-      defaultModel: DEFAULT_ANTHROPIC_MODEL,
-      wireApi: "chat_completions",
-    };
-  }
 
   // No key found — default to Anthropic (will fail at runtime with helpful message)
   return {

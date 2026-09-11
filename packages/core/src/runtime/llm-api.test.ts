@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   LlmApiRuntime,
   probeAzureRegion,
@@ -20,8 +23,13 @@ import type { NativeMessage, NativeContentBlock } from "./types.js";
 
 describe("LlmApiRuntime provider detection", () => {
   const origEnv = { ...process.env };
+  let fixtureHome: string;
 
   beforeEach(() => {
+    fixtureHome = mkdtempSync(join(tmpdir(), "0sec-provider-detection-"));
+    process.env.HOME = fixtureHome;
+    delete process.env["0SEC_CLOUD_TOKEN"];
+    delete process.env["0SEC_CLOUD_HOST"];
     delete process.env.OPENROUTER_API_KEY;
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.DEEPSEEK_BASE_URL;
@@ -60,6 +68,7 @@ describe("LlmApiRuntime provider detection", () => {
     process.env["0SEC_SKIP_PROVIDER_BANNER"] = "1";
   });
   afterEach(() => {
+    rmSync(fixtureHome, { recursive: true, force: true });
     for (const key of Object.keys(process.env)) {
       if (!(key in origEnv)) delete process.env[key];
     }
@@ -186,12 +195,11 @@ describe("LlmApiRuntime provider detection", () => {
     expect(rt.getConfigurationDiagnostics().provider).toBe("anthropic");
   });
 
-  it("selects Anthropic when ANTHROPIC_API_KEY is set", async () => {
+  it("keeps explicit Anthropic credentials ahead of hosted login", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test456";
+    process.env["0SEC_CLOUD_TOKEN"] = "hosted-fixture";
     const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
-    expect((rt as any).provider).toBe("anthropic");
-    // Anthropic uses its own Messages API, wireApi is just a default
-    expect((rt as any).wireApi).toBe("chat_completions");
+    expect(rt.getConfigurationDiagnostics().provider).toBe("anthropic");
   });
 
   it("selects Azure when AZURE_OPENAI_API_KEY is set (before OPENAI_API_KEY)", async () => {
