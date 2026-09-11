@@ -1900,7 +1900,41 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   /** Catalog ceiling, resolved before hosted inference is submitted. */
   private hostedMaxOutputTokens: number | undefined;
 
-  constructor(config: RuntimeConfig) {
+  constructor(config: RuntimeConfig, inherited?: LlmApiRuntime) {
+    // Fork construction must never rediscover an account, endpoint or model.
+    // The inherited runtime is host-internal; no credential snapshot is exported.
+    if (inherited) {
+      const timeout = config.timeout ?? inherited.config.timeout ?? 120_000;
+      if (!Number.isFinite(timeout) || timeout <= 0) {
+        throw new Error("Subagent timeout must be a positive finite number");
+      }
+      if (inherited.provider === "hosted" && inherited.hostedMaxOutputTokens === undefined) {
+        throw new Error("Hosted model catalog must resolve before creating a subagent");
+      }
+      this.config = {
+        type: "api",
+        model: inherited.model,
+        timeout: Math.min(timeout, inherited.config.timeout || 120_000),
+      };
+      this.env = inherited.env;
+      this.provider = inherited.provider;
+      this.apiKey = inherited.apiKey;
+      this.baseUrl = inherited.baseUrl;
+      this.model = inherited.model;
+      this.wireApi = inherited.wireApi;
+      this.reasoningEffort = inherited.reasoningEffort;
+      this.azureConfig = { ...inherited.azureConfig };
+      this.serverCompactionTokens = inherited.serverCompactionTokens;
+      if (inherited.codexAuthState) this.codexAuthState = inherited.codexAuthState;
+      this.fallbackChain = inherited.provider === "hosted" ? [] : inherited.fallbackChain.map((entry) => ({
+        ...entry,
+        ...(entry.credentials ? { credentials: { ...entry.credentials } } : {}),
+      }));
+      this.fallbackIndex = inherited.provider === "hosted" ? 0 : inherited.fallbackIndex;
+      this.hostedMaxOutputTokens = inherited.hostedMaxOutputTokens;
+      this.hostedCatalogPromise = inherited.hostedCatalogPromise;
+      return;
+    }
     this.config = { ...config };
     this.env = Object.freeze({ ...process.env, ...config.env });
     this.azureConfig = parseCodexAzureConfig(this.env);
@@ -1970,6 +2004,15 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         // Swallow — startup logging must never abort runtime init.
       });
     }
+  }
+
+  /** Isolated child inference, bound to this runtime's resolved account and route. */
+  async forkForSubagent(timeoutMs: number): Promise<LlmApiRuntime> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error("Subagent timeout must be a positive finite number");
+    }
+    await this.ensureHostedModel();
+    return new LlmApiRuntime({ type: "api", timeout: timeoutMs }, this);
   }
 
   /** The server catalog is authoritative even when a model was selected explicitly. */
