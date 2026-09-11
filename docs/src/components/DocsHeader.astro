@@ -1,0 +1,29 @@
+---
+import Search from '@astrojs/starlight/components/Search.astro';
+import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
+import SocialIcons from '@astrojs/starlight/components/SocialIcons.astro';
+import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
+
+const links = [
+  { label: 'Overview', href: '/' },
+  { label: 'Guides', href: '/getting-started/' },
+  { label: '0sec Cloud · draft', href: '/getting-started/#hosted-models-draft' },
+  { label: 'Self-evolution', href: '/improvement-plane/' },
+  { label: 'Reference', href: '/commands/' },
+  { label: 'Research', href: '/research/' },
+];
+---
+
+<div class="docs-header">
+  <div class="docs-header-main">
+    <div class="docs-brand"><SiteTitle /><span class="docs-brand-label">Docs</span></div>
+    <div class="docs-header-search"><Search /></div>
+    <div class="docs-header-social"><SocialIcons /></div>
+    <ThemeSelect />
+  </div>
+  <nav class="docs-section-nav" aria-label="Documentation sections">
+    {links.map(({ label, href }) => (
+      <a href={href} aria-current={Astro.url.pathname === href ? 'page' : undefined}>{label}</a>
+    ))}
+  </nav>
+</div>

@@ -3,13 +3,17 @@ title: CLI Getting Started
 description: Install 0sec, configure a provider, define scope, and run your first authorized CLI scan.
 ---
 
-0sec is a **Research Preview**. Install it, configure a model provider, define
-an authorized target, and run your first scan. Bring-your-own-key (BYOK) use
-doesn't require a cloud account.
+0sec is a **Research Preview**. Install the CLI, connect a model, define an
+authorized target, and run your first scan.
 
-Hosted models are a separate, unreleased onboarding path. Installing the CLI
-or signing in doesn't establish a funded inference balance. See the
-[draft hosted setup](#hosted-models-draft) before trying that path.
+**0sec Cloud** is the cloud-first onboarding path for hosted models: one
+account and an organization inference-credit balance, without setting up
+upstream provider accounts. It's still a candidate, not a live hosted service.
+See [0sec Cloud setup](#hosted-models-draft) for its qualification boundary.
+
+Prefer your own provider? **Use my own API key** is the alternative.
+Local/BYOK and supported provider-subscription workflows don't require a
+0sec Cloud account.
 
 ## Install
 
@@ -64,20 +68,10 @@ For a real scan, mount scope and persist any output you need before using
 
 ## Configure a provider
 
-Choose **one** provider to start with. For example:
-
-```bash
-export ANTHROPIC_API_KEY="your-api-key"
-```
-
-Or configure another supported provider in [API Keys](/api-keys/), including
-ChatGPT Codex subscription authentication and Azure. Model credentials are
-different from target credentials passed with `--auth`, and from `0sec auth`
-managed-service authentication.
-
-When multiple credentials are present, select a matching model explicitly with
-`--model` or `0SEC_MODEL`. See [Configuration](/configuration/) for runtime and
-provider resolution. Never commit credentials or paste real keys into an issue.
+Start with **0sec Cloud** for hosted models, or choose
+**Use my own API key** for an independent provider connection. Cloud-first
+describes the onboarding order; it doesn't make cloud login mandatory or
+silently replace an existing provider configuration.
 
 ### Hosted models (draft)
 
@@ -86,11 +80,11 @@ provider resolution. Never commit credentials or paste real keys into an issue.
 > approved test service. They aren't a promise that the installed release or
 > default cloud host supports hosted inference.
 
-The intended experience is one 0sec account, organization-funded model usage,
-and no upstream provider key on your machine. Local tools still run locally.
-Inference credit doesn't include cloud compute, managed testing, or review
-credits. Retail prices, included allowances and subscription terms aren't
-established by this preview.
+0sec Cloud is inference-first. Choose a model and spend organization inference
+credits managed by Autumn; the service handles the upstream provider account.
+Your local tools still run locally. Other hosted services are separate access,
+not included compute or managed testing. Inference credits are separate from
+0review credits and managed 0cloud engagements.
 
 For an approved test deployment:
 
@@ -121,6 +115,26 @@ model call. A positive balance can still be below the required request reserve.
 See [Hosted inference](/api-keys/#hosted-inference-draft) for streaming,
 accounting and errors, and [Hosted configuration](/configuration/#hosted-configuration-draft)
 for credential precedence. BYOK remains available independently.
+
+### Use my own API key
+
+This path doesn't need a 0sec Cloud account or inference credit. Your provider
+handles its own authentication and billing.
+
+Choose **one** provider to start with. For example:
+
+```bash
+export ANTHROPIC_API_KEY="your-api-key"
+```
+
+Or configure another supported provider in [API Keys](/api-keys/), including
+ChatGPT Codex subscription authentication and Azure. Model credentials are
+different from target credentials passed with `--auth`, and from `0sec auth`
+managed-service authentication.
+
+When multiple credentials are present, select a matching model explicitly with
+`--model` or `0SEC_MODEL`. See [Configuration](/configuration/) for runtime and
+provider resolution. Never commit credentials or paste real keys into an issue.
 
 ## Run your first scan
 

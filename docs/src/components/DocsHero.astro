@@ -1,0 +1,28 @@
+---
+import DefaultHero from '@astrojs/starlight/components/Hero.astro';
+import { LinkButton } from '@astrojs/starlight/components';
+---
+
+{Astro.url.pathname !== '/' ? <DefaultHero /> : (
+  <section class="docs-hero" aria-labelledby="_top">
+    <div class="docs-hero-copy">
+      <a class="docs-preview" href="https://0.security/harness/">Research Preview</a>
+      <h1 id="_top" data-page-title>Run 0sec.<br />Understand every layer.</h1>
+      <p>The open cybersecurity harness for authorized research. The 0sec Cloud candidate puts hosted inference first: choose a model and use 0sec inference credit without provisioning supplier accounts. Or bring your own API key to the local agent.</p>
+      <div class="docs-hero-actions">
+        <LinkButton href="/getting-started/#hosted-models-draft" icon="right-arrow">Explore 0sec Cloud · draft</LinkButton>
+        <LinkButton href="/getting-started/#use-my-own-api-key" variant="secondary">Use my own API key</LinkButton>
+      </div>
+      <p class="docs-availability">Research Preview. Cloud production remains disabled; signup and paid inference are not yet qualified. Local and BYOK use needs no 0sec account.</p>
+    </div>
+    <aside class="docs-workflow" aria-label="How the pieces fit together">
+      <h2>One local harness. Your model path.</h2>
+      <ol>
+        <li><strong>Choose model access</strong><span>Explore the 0sec Cloud candidate, or bring your own credentials.</span></li>
+        <li><strong>Run the built-in agent</strong><span>Authorize your target and work with local tools. Hosted inference does not move tools to the cloud.</span></li>
+        <li><strong>Inspect the evidence</strong><span>Review findings, execution failures, and verification state. A candidate is not a confirmed result.</span></li>
+      </ol>
+      <a href="/architecture/">Read the architecture <span aria-hidden="true">→</span></a>
+    </aside>
+  </section>
+)}

@@ -57,6 +57,7 @@ proofs that 0sec improves autonomously:
 | --- | --- | --- |
 | [A Programming Paradigm for Spatiotemporal Composability](https://arxiv.org/abs/2608.25512) and [Cordis](https://github.com/cordiverse/cordis) | Reversible component effects, reactive dependencies, configuration reconciliation, and hot replacement | A security-quality benchmark, automatic compensation for external effects, or durable campaign recovery |
 | [Self-Harness, v3](https://arxiv.org/abs/2606.09498v3) | Same-model weakness mining, diverse targeted code proposals, and held-in/held-out regression-gated selection | Open-ended self-improvement, live hot swapping, multi-day recovery, or security-quality gains in 0sec |
+| [Evo-Harness, v2](https://arxiv.org/abs/2608.15071v2) | Failure-grounded natural-language skill curation, separate general/topic guidance, and bounded retrieval for a frozen solver | Executable self-rewriting, multi-agent validation, universal solver transfer, or measured gains in 0sec |
 | [DeepSeek Harness architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md) | Replaceable agent-loop, tool, model, and session services rather than only fixed tool extension points | Live reload in its shipped headless/SDK profiles or first-class Python plugin hosting |
 | [Hermes Python plugins](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins) | Python-native tools, hooks, commands, bundled skills, and memory/context provider interfaces | A language-neutral live-generation implementation for 0sec |
 | [Voyager's skill manager](https://github.com/MineDojo/Voyager/blob/main/voyager/agents/skill.py) | Retaining executable skill code and retrieving reusable programs by description | General-purpose harness replacement or evidence of cybersecurity effectiveness |
@@ -66,6 +67,23 @@ proofs that 0sec improves autonomously:
 **Cordis and Chord are different projects.** Cordis's formal context discipline
 and Chord's application-neutral service host should not be cited as the same
 implementation. Upstream implementation plans and APIs can change.
+
+**Evo-Harness complements code evolution; it does not implement it.** Its
+natural-language-only learning loop turns failed or negatively reviewed executions
+into candidates carrying a lesson, trigger, evidence, and scope hint. A curator
+chooses ADD, MERGE, REVISE, or SKIP rather than appending every memory; later tasks
+receive bounded relevant guidance. General cross-task lessons remain distinct
+from topic-specific procedures. For 0sec, this informs curation within the existing
+skills and [revision-aware hunt memory](/improvement-plane/#revision-aware-codebase-learning),
+not another registry or a claim that this curator is already implemented.
+Retain provenance and scope, invalidate stale codebase knowledge, and evaluate
+future-task usefulness separately from successful memory writes. The paper reports
+three-run averages, including Opus 4.6 on TerminalBench2 improving from 62.92% to
+73.03%; self-generated judgment instead regressed CL-Bench from 29.54% to 27.96%
+and SWE-bench Lite from 63.67% to 61.67%. External feedback matters, richer
+diagnostics are not uniformly better, and solver/evolver pairings can regress.
+Neither these aggregate results nor individual retained skills establish causal
+gains in 0sec, executable-code safety, or a free evolution allowance.
 
 For a long-horizon experiment, report the task and harness versions, measured
 outcomes, model/tool cost, generation transitions, retained capabilities, and

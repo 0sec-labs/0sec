@@ -1,73 +1,112 @@
 ---
 title: 0sec documentation
-description: Install and use the open-source 0sec CLI. Configure providers, define authorized scope, investigate targets, and review evidence.
+description: Explore 0sec Cloud hosted models or use your own API key with the local harness, then understand executable self-evolution and its trust boundaries.
 template: splash
 hero:
-  title: 0sec documentation
-  tagline: Install the CLI, define your scope, and investigate with evidence. Start with a guided scan or work interactively in the console.
-  actions:
-    - text: CLI quickstart
-      link: /getting-started/
-      icon: right-arrow
-      variant: primary
-    - text: Command reference
-      link: /commands/
-      icon: right-arrow
-      variant: secondary
-    - text: GitHub
-      link: https://github.com/0sec-labs/0sec
-      icon: external
-      variant: minimal
+  title: Run 0sec. Understand every layer.
 ---
 
 import { LinkCard, CardGrid } from "@astrojs/starlight/components";
 
 ## Choose your workflow
 
+<div className="docs-journeys">
 <CardGrid>
   <LinkCard
-    title="Run the CLI"
-    description="Install 0sec, configure a model provider, define an authorized target, and run your first scan."
-    href="/getting-started/"
+    title="Explore 0sec Cloud · draft"
+    description="Inference first: choose a model and use 0sec inference credit without provisioning supplier accounts. Local tools stay local. Production remains disabled; signup, payment, and a funded first request are not qualified."
+    href="/getting-started/#hosted-models-draft"
   />
   <LinkCard
-    title="Work in the console"
-    description="Investigate interactively with explicit scope, approvals, and saved conversations."
-    href="/console/"
+    title="Use my own API key"
+    description="Run the built-in Research Preview with your own provider credentials. Local and BYOK workflows need no 0sec account, and you do not need to author plugins first."
+    href="/getting-started/#use-my-own-api-key"
+  />
+  <LinkCard
+    title="Understand self-evolving agents"
+    description="Executable skills, versioned plugins, source evolution, and rollback exist. Read the separate qualification boundaries for live driver/UI replacement and long-horizon optimization."
+    href="/improvement-plane/"
   />
 </CardGrid>
+</div>
 
+<div className="docs-contract">
+
+**Changing behavior is not granting authority.** Sandboxed self-extension defaults
+on for new sessions; an explicit or persisted off setting stays off. Autonomy
+mode, self-extension, and the separately acknowledged workspace-trusted ESM grant
+are distinct. Self-extension alone never grants host trust.
+[Read the settings and trust boundary](/configuration/#self-extension-and-workspace-trust).
+
+</div>
 
 ## Run the CLI
 
+The shortest path is **install → choose model access → authorize a target → review
+evidence**. The [quickstart](/getting-started/) covers each step, including runtime
+requirements. Default shell execution is on your host, not an OS sandbox.
+
+```bash title="Check your installation before investigating"
+0sec --help
+0sec doctor
+```
+
 <CardGrid>
-  <LinkCard title="Commands" description="Full CLI reference: flags, modes, and subcommands." href="/commands/" />
-  <LinkCard title="Configuration &amp; API Keys" description="Models, credentials, runtimes, feature flags, and provider resolution." href="/configuration/" />
-  <LinkCard title="Scope &amp; Authorization" description="Define allowed hosts, wildcards, CIDR, and exclusions." href="/scope/" />
-  <LinkCard title="Recipes" description="Copy-paste scans for common scenarios." href="/recipes/" />
+  <LinkCard title="Model access & credentials" description="Bring your own provider credentials, understand precedence, or inspect the hosted candidate's catalog, balance, and charging contract." href="/api-keys/" />
+  <LinkCard title="Scope & authorization" description="Define permitted hosts, networks, and exclusions. Scope expresses an authorized target boundary, not permission or sandbox isolation." href="/scope/" />
 </CardGrid>
 
 ## Workflows
 
+Choose a task, not an implementation subsystem.
+
 <CardGrid>
-  <LinkCard title="Console" description="Interactive chat, approvals, sessions, and keyboard controls." href="/console/" />
-  <LinkCard title="Scan Workflows" description="Investigation, saved runs, evidence review, and retesting." href="/scan-workflows/" />
-  <LinkCard title="Integrations" description="CI, MCP, plugins, and data exports." href="/integrations/" />
-  <LinkCard title="Research Workflows" description="Variant hunting, deep review, fuzzing, and binary analysis." href="/research-workflows/" />
-  <LinkCard title="Troubleshooting" description="Diagnose setup, scope, runtime, and execution failures." href="/troubleshooting/" />
+  <LinkCard title="Work in persistent chat" description="Connect a provider, choose a model, adjust settings, and resume saved conversations without treating each action as a separate workspace." href="/console/" />
+  <LinkCard title="Scan and review evidence" description="Run a scan, inspect findings and verification state, save results, and retest." href="/scan-workflows/" />
+  <LinkCard title="Work from source or CI" description="Connect authorized local workflows to GitHub Actions without confusing local review with managed product access." href="/ci/github-action/" />
+  <LinkCard title="Go deeper on a target" description="Variant hunting, deep review, fuzzing, binary analysis, and evidence imports—with their individual prerequisites." href="/research-workflows/" />
 </CardGrid>
+
+In chat, use `/connect` (or `/providers`) for provider authentication, `/model`
+for model selection, `/settings` for persisted preferences, and `/resume` for
+saved conversations. `/transcript` shows the active conversation; `/history`
+opens scan results, not chat history. These local workflows do not imply hosted
+signup or a paid inference launch.
 
 ## Understand the system
 
-- [Architecture](/architecture/) — execution pipeline and runtime boundaries
-- [Agent Loop](/agent-loop/) — how agents plan, use tools, and stop
-- [Finding Triage](/triage/) — how candidate findings are reviewed
-- [Budget Management](/budget-management/) — CLI turn and cost limits
-- [Blind Verification](/blind-verification/) — independent verification approach
-- [Verification Results](/verification-result/) — deterministic replay contract
+Self-evolution is more than changing a prompt or adding a tool. Keep the mechanism,
+activation boundary, and evidence of improvement separate.
+
+| Layer | What to read | Status boundary |
+| --- | --- | --- |
+| Built-in harness | [Architecture](/architecture/) · [Agent loop](/agent-loop/) | Start with the existing agent and authorized tools. |
+| Executable self-evolution | [Plugins and evolution](/improvement-plane/#executable-plugin-evolution) | Versioned executable plugins, source evolution, next-call activation, and rollback are implemented. |
+| Live harness replacement | [Driver and UI generations](/improvement-plane/#live-harness-component-contract) | Shared contract and integration work; not an end-to-end qualification claim. |
+| Long-horizon optimizer | [Continuity and recovery](/improvement-plane/#long-horizon-self-evolution) | Future optimizer goals are not evidence of measured autonomous improvement. |
+
+### Find the exact contract
+
+<CardGrid>
+  <LinkCard title="CLI reference" description="Registered commands, arguments, flags, and defaults. Mechanical tables are checked against the compiled CLI; workflow and safety notes stay human-reviewed." href="/commands/" />
+  <LinkCard title="Configuration" description="Provider selection, runtimes, self-extension, trusted workspaces, and feature settings." href="/configuration/" />
+  <LinkCard title="Verification results" description="Understand deterministic replay results before interpreting an evidence record." href="/verification-result/" />
+  <LinkCard title="Troubleshooting" description="Separate setup failures, budget limits, unavailable execution, and inconclusive results." href="/troubleshooting/" />
+</CardGrid>
 
 ## Research and development
 
-- [Benchmarks](/benchmark/) and [Methodology](/methodology/) — measured results and their limits
-- [Research](/research/) — experiments and technical rationale
-- [Roadmap](/roadmap/) — planned engine work and unreleased product status
+[Benchmarks](/benchmark/) and [methodology](/methodology/) describe measured results
+and their limits. [Research](/research/) separates design rationale from dated
+experiments; the [roadmap](/roadmap/) records planned work. An implementation or a
+lifecycle smoke check does not, by itself, establish better security outcomes.
+
+The reference follows the implementation: inspect the
+[CLI documentation generator](https://github.com/0sec-labs/0sec/blob/main/scripts/sync-cli-docs.mjs),
+the [source repository](https://github.com/0sec-labs/0sec), or this page's source
+link below. Hosted inference, managed testing, and CI review have separate access
+and accounting; a shared account does not imply shared credits or entitlements.
+
+[About the Research Preview](https://0.security/harness/) ·
+[0sec website](https://0.security/) ·
+[Contact the lab](https://0.security/contact/?intent=contact)

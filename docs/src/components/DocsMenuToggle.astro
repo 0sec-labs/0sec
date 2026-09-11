@@ -1,0 +1,74 @@
+---
+import { Icon } from '@astrojs/starlight/components';
+---
+
+<docs-menu-button class="print:hidden" aria-expanded="false">
+  <button
+    class="md:sl-hidden"
+    aria-expanded="false"
+    aria-label={Astro.locals.t('menuButton.accessibleLabel')}
+    aria-controls="starlight__sidebar"
+  >
+    <Icon name="bars" class="open-menu" />
+    <Icon name="close" class="close-menu" />
+  </button>
+</docs-menu-button>
+
+<script>
+  // Keep Starlight's sidebar, inert-content, and Escape contracts. The button
+  // must expose the same expanded state as the host used by PageFrame's CSS.
+  class DocsMenuButton extends HTMLElement {
+    constructor() {
+      super();
+      const button = this.querySelector('button')!;
+      const setExpanded = (expanded: boolean) => {
+        this.setAttribute('aria-expanded', String(expanded));
+        button.setAttribute('aria-expanded', String(expanded));
+        document.body.toggleAttribute('data-mobile-menu-expanded', expanded);
+        document.querySelectorAll('.main-frame, .sl-skip-link').forEach((element) => {
+          element.toggleAttribute('inert', expanded);
+        });
+      };
+      button.addEventListener('click', () => {
+        setExpanded(button.getAttribute('aria-expanded') !== 'true');
+      });
+      this.closest('nav')?.addEventListener('keyup', (event) => {
+        if (event.code === 'Escape') {
+          setExpanded(false);
+          button.focus();
+        }
+      });
+      matchMedia('(min-width: 50em)').addEventListener('change', () => setExpanded(false));
+    }
+  }
+  customElements.define('docs-menu-button', DocsMenuButton);
+</script>
+
+<style>
+  button {
+    position: fixed;
+    top: 1rem;
+    inset-inline-end: var(--sl-nav-pad-x);
+    z-index: var(--sl-z-index-navbar);
+    display: grid;
+    place-items: center;
+    width: var(--sl-menu-button-size);
+    height: var(--sl-menu-button-size);
+    padding: 0.5rem;
+    border: 1px solid var(--sl-color-hairline-shade);
+    border-radius: 50%;
+    background: var(--sl-color-bg-nav);
+    color: var(--sl-color-gray-1);
+    cursor: pointer;
+  }
+  [aria-expanded='true'] .open-menu,
+  [aria-expanded='false'] .close-menu {
+    display: none;
+  }
+  @media (min-width: 50rem) {
+    button { display: none; }
+  }
+  :global([data-mobile-menu-expanded]) {
+    overflow: hidden;
+  }
+</style>

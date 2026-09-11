@@ -395,6 +395,13 @@ header.
 > Status: 2026-09-11. Hosted-inference candidate configuration, not production
 > availability. See [draft setup](/getting-started/#hosted-models-draft).
 
+**0sec Cloud** is the account and hosted-services surface, with hosted inference
+first. Onboarding presents Cloud first and **Use my own API key** second.
+This is a product choice, not an instruction to override existing credentials.
+Local/BYOK and provider-subscription workflows remain account-optional.
+The name doesn't combine inference credit, 0review credit or managed
+0cloud engagement access.
+
 The candidate adds `0sec login` as an alias for `0sec auth login`, plus
 `0sec models [--json]` and `0sec balance [--json]`. It changes the default host
 to `https://cloud.0.security`; the existing-release table above describes

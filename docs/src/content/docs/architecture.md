@@ -271,10 +271,10 @@ installing another tool, and replacing the live agent driver are distinct
 capabilities.
 
 Today, executable plugins provide versioned guest execution, composition,
-next-call activation, source evolution, and rollback. The live-harness
-integration adds `agent.driver` and `ui.view` providers through the shared
-`packages/shared/src/live-harness.ts` contract. The wire types exist; runtime
-and frontend qualification are in progress, not a released-product claim.
+next-call activation, source evolution, and rollback. The unreleased
+live-harness integration defines a shared wire contract for `agent.driver`
+and `ui.view` providers. Runtime and frontend qualification are in progress,
+not a released-product claim.
 
 One complete generation graph declares providers and their dependencies.
 Preparation, state migration, boundary activation, and owned-resource disposal

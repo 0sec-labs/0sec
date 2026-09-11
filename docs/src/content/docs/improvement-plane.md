@@ -543,7 +543,7 @@ verified detection outcomes are separate validation requirements.
 
 ## Live harness component contract
 
-**Integration status:** `packages/shared/src/live-harness.ts` defines the shared
+**Integration status:** The unreleased shared live-harness contract defines the
 wire types. This section describes the agreed runtime contract, not a claim
 that every CLI, browser, and desktop path has passed live integration checks.
 Desktop remains unreleased. An HTTP/event adapter and the TUI must consume the

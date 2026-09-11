@@ -3,9 +3,14 @@ title: API Keys
 description: Supported LLM providers, environment variables, credential priority, model routing, and provider failover.
 ---
 
-The `api` runtime makes direct HTTP calls to a provider. Set credentials
-as environment variables, or use the console credential store for API-key
-providers.
+**0sec Cloud** provides hosted models through one account and an organization
+inference-credit balance. It is the primary onboarding path being prepared;
+production hosted inference remains disabled.
+
+**Use my own API key** connects a provider independently. Local/BYOK and
+supported provider-subscription workflows don't require a 0sec Cloud account.
+The `api` runtime supports direct HTTP provider calls with environment
+credentials or the console's API-key store.
 
 ## Hosted inference (draft)
 
@@ -13,11 +18,14 @@ providers.
 > isn't enabled. Local qualification does not establish paid access or provider
 > availability. The direct-provider instructions below remain the current setup.
 
-The candidate adds a `hosted` provider to the `api` runtime. A scoped 0sec
-organization credential replaces an upstream API key on the client. The gateway
-holds provider credentials and forwards model requests, including the context
-and tool results supplied by the agent. Shell commands and tools still execute
-on your configured local executor. Login doesn't sandbox them.
+The candidate adds a `hosted` provider to the `api` runtime. A scoped 0sec Cloud
+organization credential replaces upstream API keys on the client. You choose
+a model and use 0sec inference credits; supplier-account setup is handled by
+the service, not by you.
+
+The gateway holds provider credentials and forwards model requests, including
+the context and tool results supplied by the agent. Shell commands and tools
+still execute on your configured local executor. Login doesn't sandbox them.
 
 ### Account, models and usage
 
@@ -33,6 +41,16 @@ It isn't a review-credit balance or a local scan cost estimate. The dashboard
 shows recent requests with model/provider identity, token usage, billed amount,
 cancellation and settlement status. There is no `0sec usage` command in this
 candidate; the authenticated usage endpoint is listed below.
+
+Autumn manages the organization's inference credit pool. Before dispatch, the
+gateway reserves credit; once usage is known, it settles the actual amount.
+Funding the pool and consuming it are separate operations. Login doesn't add
+credit, and starting checkout doesn't confirm payment.
+
+The verified sandbox configuration used prepaid top-ups and a separate monthly
+credit allowance. Those funding fixtures don't establish a live subscription
+amount or included allowance. The candidate currently rejects overage: an
+unfunded wallet can't turn into postpaid inference.
 
 | Endpoint on the selected cloud host | Required token scope | Purpose |
 | --- | --- | --- |
