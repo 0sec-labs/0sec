@@ -49,6 +49,26 @@ Only test systems you own or have permission to assess.
 See [Getting started](https://docs.0.security/getting-started/) for Docker,
 source builds, and your first scan.
 
+### Hosted models
+
+This source checkout adds optional hosted inference through a 0sec account.
+It requires a deployment with hosted models enabled; it does not indicate
+that production access or a compatible CLI release is available.
+
+```bash
+0sec login
+0sec models
+0sec balance
+```
+
+Login uses the browser approval flow; it does not enable inference or add funds.
+Model access, funding, and purchasing depend on the configured deployment.
+Provider keys stay on the service, while CLI tools run locally.
+Configured BYOK providers retain precedence over
+automatic hosted selection. An explicitly selected hosted model must appear
+in the service catalogue; the CLI does not silently substitute another model.
+Review subscriptions and managed testing are billed separately.
+
 ## Documentation
 
 [docs.0.security](https://docs.0.security/) is the public documentation
@@ -64,8 +84,9 @@ home for the CLI:
 Docs follow the source checkout; use `0sec --version` and command-specific
 `--help` when comparing an installed release with newly documented features.
 
-**0cloud and Desktop are not released.** Both are in development; their draft
-guides are not published as user documentation. See the [roadmap](https://docs.0.security/roadmap/).
+**Desktop remains an unpublished development build.** Hosted inference is
+deployment-gated; existing managed testing and PR review are separate services.
+See the [roadmap](https://docs.0.security/roadmap/).
 
 ## Research preview
 
