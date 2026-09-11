@@ -300,6 +300,28 @@ See [Improvement Plane](/improvement-plane/#live-harness-component-contract)
 for the exact current/planned distinction, Python support, autonomy settings,
 and long-horizon recovery requirements.
 
+### Hosted inference and evolution accounting
+
+The optional hosted provider integration is a **candidate, disabled in
+production**. Its parent-session SDK path connects plugin model calls through
+`invokePluginModel` to the parent `runtime.executeNative`; executable-plugin
+candidate generation uses the same broker and configured `costModel`.
+When the parent uses hosted inference, those calls consume the organization's
+inference wallet. Self-evolution does not carry a free inference allowance.
+
+This is not a guarantee that every descendant or plugin uses the parent route.
+`runOneSubagent` and `runPersistentLoopOnce` create fresh `LlmApiRuntime`
+instances without an explicit model, so parent-route inheritance must not be
+assumed. Workspace-trusted ESM can use non-SDK clients; the SDK broker does not
+account for every request arbitrary host code can make.
+
+Customer pricing uses an immutable catalog token-rate snapshot. An Orca receipt
+verifies usage and provider cost; it does not determine the customer price.
+Inference credit is separate from review, compute, and engagement accounting.
+The new live-harness lifecycle has not yet passed hosted end-to-end
+qualification. These integration boundaries are not a production-launch or
+security-performance claim.
+
 ## Presentation contract
 
 Every UI and output surface consumes a renderer-neutral document or event rather

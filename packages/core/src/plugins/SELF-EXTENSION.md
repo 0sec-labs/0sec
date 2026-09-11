@@ -5,12 +5,19 @@ exists in a separate module.** This page describes `self-extension.ts`, not the
 complete plugin host.
 
 The registry validates declarations and applies registration policy. It remains
-inert unless constructed with `enabled: true`; the shared session policy defaults
-to self-extension enabled and supplies that choice to the registry. Do not
-confuse a low-level constructor default with the product's YOLO/self-extension
-defaults. `ExecutablePluginManager` in `executable.ts` supplies runnable
-model-authored TypeScript tools, executable skills, composition, source
-evolution, next-call activation, and rollback in configured guests.
+inert unless constructed with `enabled: true`. New sessions default to
+self-extension enabled through `DEFAULT_ALLOW_MODEL_SELF_EXTENSION = true`;
+an explicitly selected or persisted `false` takes precedence. The desktop
+checkbox initializes from that shared default. Existing disabled sessions stay
+disabled and are not reconstructed.
+
+Autonomy is separate: desktop authorization remains unscoped-standard/scoped-YOLO,
+not globally YOLO. Workspace-trusted ESM requires its own explicit workspace
+grant; neither self-extension nor autonomy grants that trust.
+
+`ExecutablePluginManager` in `executable.ts` supplies runnable model-authored
+TypeScript tools, executable skills, composition, source evolution, next-call
+activation, and rollback in configured guests.
 
 The registry itself does not compile, evaluate, import, or invoke source code.
 That separation is not a ban on live self-writing: see the

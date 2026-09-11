@@ -608,12 +608,19 @@ code, compose executable skills, compare alternatives, and replace admitted
 components; the operator need not approve every ordinary iteration when an
 automatic policy already authorizes it.
 
-The shared session defaults are **YOLO autonomy** and **model self-extension
-enabled**: `DEFAULT_AUTONOMY_MODE = "yolo"` and
+New sessions default to model self-extension enabled through
 `DEFAULT_ALLOW_MODEL_SELF_EXTENSION = true` in
-`packages/shared/src/desktop-console.ts`. Explicit session choices still
-matter. The lower-level `SelfExtensionRegistry` requires its caller to pass
+`packages/shared/src/desktop-console.ts`. An explicitly selected or persisted
+`false` takes precedence. The desktop checkbox initializes from the shared
+default; existing disabled sessions remain disabled and are not reconstructed.
+The lower-level `SelfExtensionRegistry` requires its caller to pass
 `enabled: true`; that constructor contract is not the product default.
+
+Autonomy is a separate control. The shared `DEFAULT_AUTONOMY_MODE = "yolo"`
+constant does not mean every desktop session starts in YOLO: the existing
+desktop authorization flow remains unscoped-standard/scoped-YOLO.
+Self-extension enablement does not change that authorization flow or grant
+workspace-trusted execution.
 
 Source evaluation has separate controls: `allowModelSourceAccess` admits selected
 snapshot text into proposal generation, and `autoPromote` authorizes candidates
@@ -1168,6 +1175,15 @@ This smoke does not yet qualify live root-driver replacement, browser/desktop
 registration, workspace-trusted ESM execution, or long-horizon crash recovery.
 Those need their own real integration scenarios, including a task that
 continues across generation changes without reconstructing its session.
+
+A local plugin smoke or a provider-backed candidate-generation check does not
+qualify the new lifecycle with hosted inference. That integration remains
+candidate-stage and production-disabled. Hosted parent SDK calls consume
+inference credit, including evolution calls; child-route inheritance and
+arbitrary trusted ESM clients are not covered by a blanket parent-broker
+guarantee. See [hosted inference and evolution accounting](/architecture/#hosted-inference-and-evolution-accounting)
+for the routing, pricing, and qualification boundaries. Self-Harness's
+model-specific results establish neither universal gains nor launched billing.
 
 If the account already has approved Docker group membership but a persistent
 agent process predates it, restart the session and its broker. A single check
