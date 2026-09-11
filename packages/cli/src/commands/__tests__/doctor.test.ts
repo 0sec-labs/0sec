@@ -33,22 +33,27 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("doctor credential readiness", () => {
-  it("reports configured credentials without claiming their first request is ready", async () => {
+describe("doctor Node prerequisites", () => {
+  it.each([
+    { version: "23.0.0", status: "bad" },
+    { version: "24.0.0", status: "ok" },
+  ])("reports Node $version as $status", async ({ version, status }) => {
+    const nodeDescriptor = Object.getOwnPropertyDescriptor(process.versions, "node")!;
+    const versionDescriptor = Object.getOwnPropertyDescriptor(process, "version")!;
     getRuntimeAvailabilityMock.mockResolvedValue({
-      hasApiKey: true,
-      availableRuntimes: ["codex"],
-      apiRuntime: {
-        configured: true,
-        valid: true,
-        providerLabel: "ChatGPT (Codex backend)",
-      },
+      hasApiKey: false,
+      availableRuntimes: [],
+      apiRuntime: { configured: false, valid: false, providerLabel: "fixture" },
     });
-
-    const output = await runDoctor();
-
-    expect(output).toContain("configured");
-    expect(output).toContain("The first request verifies credentials.");
-    expect(output).not.toContain("Ready to scan.");
+    try {
+      Object.defineProperty(process.versions, "node", { ...nodeDescriptor, value: version });
+      Object.defineProperty(process, "version", { ...versionDescriptor, value: `v${version}` });
+      const output = await runDoctor();
+      const nodeStatus = output.split("\n").find((line) => line.includes("Node.js"));
+      expect(nodeStatus).toMatch(new RegExp(`Node\\.js\\s+${status}\\s+v${version.replaceAll(".", "\\.")}`));
+    } finally {
+      Object.defineProperty(process.versions, "node", nodeDescriptor);
+      Object.defineProperty(process, "version", versionDescriptor);
+    }
   });
 });

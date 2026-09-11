@@ -2246,7 +2246,7 @@ function DoctorScreen({ onExit, shell }: { onExit: () => void; shell?: ShellNav 
         if (!alive) return;
         const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
         setState({
-          nodeOk: nodeMajor >= 20,
+          nodeOk: nodeMajor >= 24,
           nodeVersion: process.version,
           ...result,
         });
@@ -2282,7 +2282,7 @@ function DoctorScreen({ onExit, shell }: { onExit: () => void; shell?: ShellNav 
   const nextStep = !state
     ? "Checking environment"
     : !state.nodeOk
-      ? "Upgrade to Node 20+ before running 0sec."
+      ? "Upgrade to Node 24+ before running 0sec."
       : state.apiRuntime.configured && !state.apiRuntime.valid && state.apiRuntime.error
         ? "Repair the configured API runtime before scanning."
         : state.hasApiKey || state.availableRuntimes.length > 0
