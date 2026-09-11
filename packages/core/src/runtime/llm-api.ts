@@ -720,6 +720,18 @@ type WireApi =
   | "anthropic_messages"
   | "google_generate_content";
 
+// Keep compatible gateways on their existing wire unless explicitly configured.
+function openAICompatibleWireApi(
+  env: Readonly<NodeJS.ProcessEnv>,
+  variable: "OPENAI_WIRE_API" | "OPENROUTER_WIRE_API" | "XAI_WIRE_API" | "AZURE_OPENAI_WIRE_API",
+  fallback: WireApi = "chat_completions",
+): WireApi {
+  const value = env[variable];
+  if (value === undefined) return fallback;
+  if (value === "chat_completions" || value === "responses") return value;
+  throw new Error(`${variable} must be "chat_completions" or "responses"`);
+}
+
 let googleFunctionCallSequence = 0;
 
 function opencodeModelId(model: string): string {
@@ -849,19 +861,19 @@ export function resolveFailoverProvider(
     case "openrouter": {
       const key = apiKey ?? env.OPENROUTER_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: "https://openrouter.ai/api/v1", wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: "https://openrouter.ai/api/v1", wireApi: openAICompatibleWireApi(env, "OPENROUTER_WIRE_API") };
     }
     case "azure": {
       const key = apiKey ?? env.AZURE_OPENAI_API_KEY;
       if (!key) return undefined;
       const url = env.AZURE_OPENAI_BASE_URL ?? env.OPENAI_BASE_URL;
       if (!url) return undefined;
-      return { apiKey: key, baseUrl: url, wireApi: (env.AZURE_OPENAI_WIRE_API as WireApi) ?? "chat_completions" };
+      return { apiKey: key, baseUrl: url, wireApi: openAICompatibleWireApi(env, "AZURE_OPENAI_WIRE_API") };
     }
     case "openai": {
       const key = apiKey ?? env.OPENAI_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", wireApi: openAICompatibleWireApi(env, "OPENAI_WIRE_API") };
     }
     case "anthropic": {
       const key = apiKey ?? env.ANTHROPIC_API_KEY;
@@ -891,7 +903,7 @@ export function resolveFailoverProvider(
     case "xai": {
       const key = apiKey ?? env.XAI_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, wireApi: openAICompatibleWireApi(env, "XAI_WIRE_API") };
     }
     case "opencode": {
       const key = apiKey ?? env.OPENCODE_API_KEY;
@@ -1566,7 +1578,7 @@ function detectProvider(configApiKey: string | undefined, preferredModel: string
         apiKey: configApiKey,
         baseUrl: "https://openrouter.ai/api/v1",
         defaultModel: DEFAULT_OPENROUTER_MODEL,
-        wireApi: "chat_completions",
+        wireApi: openAICompatibleWireApi(env, "OPENROUTER_WIRE_API"),
       };
     }
     if (configApiKey.startsWith("sk-ant-")) {
@@ -1584,7 +1596,7 @@ function detectProvider(configApiKey: string | undefined, preferredModel: string
       apiKey: configApiKey,
       baseUrl: "https://api.openai.com/v1",
       defaultModel: DEFAULT_OPENAI_MODEL,
-      wireApi: "chat_completions",
+      wireApi: openAICompatibleWireApi(env, "OPENAI_WIRE_API"),
     };
   }
 
@@ -1613,10 +1625,7 @@ function detectProvider(configApiKey: string | undefined, preferredModel: string
           env.AZURE_OPENAI_MODEL ??
           azureConfig.model ??
           DEFAULT_OPENAI_MODEL,
-        wireApi:
-          (env.AZURE_OPENAI_WIRE_API as WireApi) ??
-          azureConfig.wireApi ??
-          "chat_completions",
+        wireApi: openAICompatibleWireApi(env, "AZURE_OPENAI_WIRE_API", azureConfig.wireApi),
         reasoningEffort: azureConfig.reasoningEffort,
       };
     }
@@ -1635,7 +1644,7 @@ function detectProvider(configApiKey: string | undefined, preferredModel: string
         baseUrl: env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL, defaultModel: QWEN_DEFAULT_MODEL, wireApi: "chat_completions" };
     case "xai":
       return { provider: "xai", apiKey: env.XAI_API_KEY as string,
-        baseUrl: env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, defaultModel: XAI_DEFAULT_MODEL, wireApi: "chat_completions" };
+        baseUrl: env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, defaultModel: XAI_DEFAULT_MODEL, wireApi: openAICompatibleWireApi(env, "XAI_WIRE_API") };
     case "opencode":
       return { provider: "opencode", apiKey: env.OPENCODE_API_KEY as string,
         baseUrl: env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, defaultModel: OPENCODE_DEFAULT_MODEL, wireApi: opencodeWireApiForModel(preferredModel) };
@@ -1647,10 +1656,10 @@ function detectProvider(configApiKey: string | undefined, preferredModel: string
         baseUrl: env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com", defaultModel: DEFAULT_ANTHROPIC_MODEL, wireApi: "chat_completions" };
     case "openrouter":
       return { provider: "openrouter", apiKey: env.OPENROUTER_API_KEY as string,
-        baseUrl: "https://openrouter.ai/api/v1", defaultModel: DEFAULT_OPENROUTER_MODEL, wireApi: "chat_completions" };
+        baseUrl: "https://openrouter.ai/api/v1", defaultModel: DEFAULT_OPENROUTER_MODEL, wireApi: openAICompatibleWireApi(env, "OPENROUTER_WIRE_API") };
     case "openai":
       return { provider: "openai", apiKey: env.OPENAI_API_KEY as string,
-        baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", defaultModel: DEFAULT_OPENAI_MODEL, wireApi: "chat_completions" };
+        baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", defaultModel: DEFAULT_OPENAI_MODEL, wireApi: openAICompatibleWireApi(env, "OPENAI_WIRE_API") };
     default:
       break; // fall through to env-priority detection
   }
@@ -1719,7 +1728,7 @@ function detectProvider(configApiKey: string | undefined, preferredModel: string
       apiKey: openrouterKey,
       baseUrl: "https://openrouter.ai/api/v1",
       defaultModel: DEFAULT_OPENROUTER_MODEL,
-      wireApi: "chat_completions",
+      wireApi: openAICompatibleWireApi(env, "OPENROUTER_WIRE_API"),
     };
   }
 
@@ -1731,7 +1740,7 @@ function detectProvider(configApiKey: string | undefined, preferredModel: string
       apiKey: azureKey,
       baseUrl: env.AZURE_OPENAI_BASE_URL ?? env.OPENAI_BASE_URL ?? azureConfig.baseUrl ?? "https://api.openai.com/v1",
       defaultModel: env.AZURE_OPENAI_MODEL ?? azureConfig.model ?? DEFAULT_OPENAI_MODEL,
-      wireApi: (env.AZURE_OPENAI_WIRE_API as WireApi) ?? azureConfig.wireApi ?? "chat_completions",
+      wireApi: openAICompatibleWireApi(env, "AZURE_OPENAI_WIRE_API", azureConfig.wireApi),
       reasoningEffort: azureConfig.reasoningEffort,
     };
   }
@@ -1743,7 +1752,7 @@ function detectProvider(configApiKey: string | undefined, preferredModel: string
       apiKey: openaiKey,
       baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       defaultModel: DEFAULT_OPENAI_MODEL,
-      wireApi: "chat_completions",
+      wireApi: openAICompatibleWireApi(env, "OPENAI_WIRE_API"),
     };
   }
 
@@ -1802,7 +1811,7 @@ function detectProvider(configApiKey: string | undefined, preferredModel: string
       apiKey: xaiKey,
       baseUrl: env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL,
       defaultModel: XAI_DEFAULT_MODEL,
-      wireApi: "chat_completions",
+      wireApi: openAICompatibleWireApi(env, "XAI_WIRE_API"),
     };
   }
 
@@ -2933,11 +2942,26 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             .join("\n") ?? "";
       }
 
+      let usage: RuntimeResult["usage"];
+      if (this.isAnthropicWire) {
+        usage = readCacheUsage(json.usage);
+      } else if (this.isGoogleWire && json.usageMetadata) {
+        usage = {
+          inputTokens: json.usageMetadata.promptTokenCount ?? 0,
+          outputTokens: json.usageMetadata.candidatesTokenCount ?? 0,
+        };
+      } else if (this.isOpenAICompat && json.usage) {
+        usage = this.wireApi === "chat_completions"
+          ? { inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 }
+          : { inputTokens: json.usage.input_tokens ?? 0, outputTokens: json.usage.output_tokens ?? 0 };
+      }
+
       return {
         output: text,
         exitCode: 0,
         timedOut: false,
         durationMs: Date.now() - start,
+        ...(usage ? { usage } : {}),
       };
     } catch (err) {
       clearTimeout(timer);
@@ -3847,6 +3871,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     const decoder = new TextDecoder();
     let buffer = "";
     let completedResponse: Record<string, unknown> | null = null;
+    let openRouterStreamFailed = false;
+    let openRouterUsage: NativeRuntimeResult["usage"];
     // The ChatGPT Codex backend's `response.completed` payload has NO
     // `output[]` array — it's just `{response: {id, usage, end_turn}}`.
     // Function calls + assistant messages flow exclusively through
@@ -3943,7 +3969,35 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         }
 
         const type = String(event.type ?? "");
-        if (type === "response.output_text.delta") {
+        if (this.provider === "openrouter" && (
+          type === "response.done" || type === "response.failed" ||
+          type === "response.completed" || type === "response.incomplete"
+        )) {
+          const response = event.response as Record<string, unknown> | undefined;
+          const usage = response?.usage as Record<string, unknown> | undefined;
+          if (usage &&
+              typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens) && usage.input_tokens >= 0 &&
+              typeof usage.output_tokens === "number" && Number.isFinite(usage.output_tokens) && usage.output_tokens >= 0) {
+            // A failed response can still report consumed tokens. Preserve them
+            // independently of whether any output is safe to dispatch.
+            openRouterUsage = {
+              inputTokens: usage.input_tokens,
+              outputTokens: usage.output_tokens,
+              ...readResponsesCachedTokens(usage),
+            };
+            callbacks?.onUsage?.(openRouterUsage);
+          }
+        }
+        if (this.provider === "openrouter" && (
+          type === "error" || type === "response.failed" || type === "response.incomplete"
+        )) {
+          openRouterStreamFailed = true;
+          continue;
+        }
+        if (
+          type === "response.output_text.delta" ||
+          (this.provider === "openrouter" && type === "response.content_part.delta")
+        ) {
           // Visible assistant text streaming. We don't accumulate locally —
           // the agent loop's batcher is responsible for coalescing fragments
           // before they hit the event bus. Just forward the raw fragment.
@@ -3995,12 +4049,22 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           continue;
         }
 
-        if (type === "response.completed" || type === "response.incomplete") {
+        if (
+          type === "response.completed" || type === "response.incomplete" ||
+          (this.provider === "openrouter" && type === "response.done")
+        ) {
           const response = event.response as Record<string, unknown> | undefined;
           if (response) {
+            if (this.provider === "openrouter" && (
+              openRouterStreamFailed || response.error != null ||
+              ((type === "response.done" || response.status !== undefined) && response.status !== "completed")
+            )) {
+              openRouterStreamFailed = true;
+              continue;
+            }
             completedResponse = response;
             const usage = response.usage as Record<string, unknown> | undefined;
-            if (usage) {
+            if (usage && this.provider !== "openrouter") {
               callbacks?.onUsage?.({
                 inputTokens: Number(usage.input_tokens ?? 0),
                 outputTokens: Number(usage.output_tokens ?? 0),
@@ -4013,12 +4077,13 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
     emitThinking(true);
 
-    if (!completedResponse) {
+    if (!completedResponse || openRouterStreamFailed) {
       return {
         content: thinkingText ? [{ type: "text", text: thinkingText }] : [{ type: "text", text: "" }],
         stopReason: "error",
         durationMs: Date.now() - start,
-        error: `${this.providerLabel} API error: stream completed without final response`,
+        ...(openRouterUsage ? { usage: openRouterUsage } : {}),
+        error: `${this.providerLabel} API error: ${openRouterStreamFailed ? "response stream failed" : "stream completed without final response"}`,
       };
     }
 
