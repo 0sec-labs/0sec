@@ -44,6 +44,8 @@ import type { AgentRole, OperatorQuestionAnswer, OperatorQuestionRequest, Scoped
 import { ScopePolicy } from "../scope/scope.js";
 import { eventBus } from "../events/bus.js";
 import { createSessionObjectiveService } from "./session-objective.js";
+import { shellTokens } from "../agent/shell-tokens.js";
+import { parseRepositoryAcquisition, repositoryAcquisitionAllowed } from "../agent/repository-acquisition.js";
 
 /**
  * Unified interactive chat console — engine-side turn driver.
@@ -650,7 +652,7 @@ export function buildConsoleSystemPrompt(opts: {
   autonomyMode?: ConsoleAutonomyMode;
 }): string {
   const autonomyInstruction = opts.autonomyMode === "yolo"
-    ? "YOLO mode: run without any approval prompts and without a preconfigured scope. You are anchored to the launch target — the target and hosts that belong to it (its sub-domains) are reached automatically; a host unrelated to the target, and any network destination whose address cannot be determined, is refused. Do not attempt to pivot to unrelated hosts."
+    ? "YOLO mode: run without any approval prompts and without a preconfigured scope. Security testing stays anchored to the launch target and hosts that belong to it (its sub-domains); do not pivot to unrelated hosts. Source acquisition is different: use a standalone public HTTPS git clone, optionally prefixed by cd DIR &&, to obtain a repository for local review even when its hosting service is not the launch target. This does not add the source host to engagement scope. Explicit exclusions and private/internal-network protections still apply. Clone first, then inspect or build in a separate tool call; never bundle checkout with unrelated commands."
     : opts.autonomyMode === "copilot"
     ? "Co-pilot mode: act with full autonomy within the engagement — no per-action approval prompts. Scope expands automatically to newly-discovered targets that belong to the engagement; a target outside the established engagement still needs the operator's decision."
     : opts.autonomyMode === "recon"
@@ -1313,49 +1315,6 @@ function isSeparator(token: string): boolean {
     token === ";" || token === ";;" || token === "\n";
 }
 
-/**
- * Split a shell payload into tokens, honouring single/double quotes and
- * emitting `| || & && ; \n` as separators. A quoted run that contains spaces is
- * preserved as ONE token, which is what lets the scanner recurse into
- * `bash -c '…'` bodies.
- */
-function shellTokens(payload: string): string[] {
-  const tokens: string[] = [];
-  let current = "";
-  let started = false;
-  let quote: '"' | "'" | null = null;
-  const flush = () => {
-    if (started) {
-      tokens.push(current);
-      current = "";
-      started = false;
-    }
-  };
-  for (let i = 0; i < payload.length; i++) {
-    const ch = payload[i];
-    if (quote) {
-      if (ch === quote) { quote = null; continue; }
-      if (quote === '"' && ch === "\\" && i + 1 < payload.length) { current += payload[++i]; started = true; continue; }
-      current += ch;
-      started = true;
-      continue;
-    }
-    if (ch === '"' || ch === "'") { quote = ch; started = true; continue; }
-    if (ch === "\n") { flush(); tokens.push("\n"); continue; }
-    if (ch === " " || ch === "\t" || ch === "\r") { flush(); continue; }
-    if (ch === "|" || ch === "&" || ch === ";") {
-      flush();
-      let op = ch;
-      while (i + 1 < payload.length && payload[i + 1] === ch) { op += payload[++i]; }
-      tokens.push(op);
-      continue;
-    }
-    current += ch;
-    started = true;
-  }
-  flush();
-  return tokens;
-}
 
 /** Accumulator threaded through the shell scan. */
 interface ShellScanSink {
@@ -2045,11 +2004,26 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       };
     }
 
+    const anchorHost = anchorHostFromTarget(sessionTarget);
+    // Fetching public source is setup, not authority to test the hosting service.
+    // The executor runs this narrow command without a shell, behind a pinned
+    // HTTPS tunnel. Denied-decision memory above and explicit exclusions remain.
+    if (autonomyMode === "yolo" && (call.name === "bash" || call.name === "run_command")) {
+      const command = typeof call.arguments.command === "string" ? call.arguments.command.trim() : "";
+      const acquisition = parseRepositoryAcquisition(command);
+      if (acquisition &&
+          !hostBelongsToEngagement(hostOf(acquisition.url), anchorHost, sessionScope) &&
+          !deniedHosts.has(new URL(acquisition.url).hostname) &&
+          repositoryAcquisitionAllowed(acquisition, sessionScope)) {
+        notify?.(`Acquiring public repository source from ${acquisition.url}; engagement scope is unchanged.`);
+        return "approved";
+      }
+    }
+
     // Partition the uncovered destinations by the TARGET ANCHOR: those that
     // belong to the engagement (target host / its sub-domains / already scoped)
     // versus foreign ones. This split drives copilot's auto-expand and yolo's
     // anchor enforcement.
-    const anchorHost = anchorHostFromTarget(sessionTarget);
     const foreign = uncoveredUrls.filter(
       (url) => !hostBelongsToEngagement(hostOf(url), anchorHost, sessionScope),
     );

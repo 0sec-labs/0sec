@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import type {
 import { ScopePolicy } from "../scope/scope.js";
 import type { PluginHost } from "../plugins/loader.js";
 import type { ToolDefinition } from "../agent/types.js";
+import * as repositoryAcquisition from "../agent/repository-acquisition.js";
 
 
 /**
@@ -2160,6 +2161,113 @@ describe("Console autonomy — yolo: no preconfigured scope, but the target stil
     const session = createConsoleSession({ runtime, autonomyMode: "yolo" });
     const outcome = await session.send("go");
     expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
+});
+
+describe("Console source acquisition is not target authorization", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function checkoutTurn(command: string, name = "bash"): NativeRuntimeResult {
+    return {
+      content: [{ type: "tool_use", id: "checkout", name, input: { command } }],
+      stopReason: "tool_use",
+      durationMs: 1,
+    };
+  }
+
+  it("allows standalone public source acquisition without authorizing the source host", async () => {
+    // Substitute external Git I/O, not the console or executor authorization.
+    vi.spyOn(repositoryAcquisition, "runRepositoryAcquisition").mockResolvedValue({ success: true, output: "Checkout completed" });
+    const runtime = new ScriptedRuntime([
+      checkoutTurn("cd /tmp && git clone --depth=1 https://github.com/golang/go.git golang-go-audit"),
+      endTurn("Source ready."),
+      httpTurn("probe-source-host", "https://github.com/golang/go.git"),
+      endTurn("Hosting service is not an authorized target."),
+    ]);
+    const session = createConsoleSession({
+      runtime, autonomyMode: "yolo", target: "https://target.test",
+      scope: ScopePolicy.fromJson({ in_scope: ["target.test"] }),
+      requestScope: async () => { throw new Error("Checkout must not need scope approval"); },
+    });
+
+    const checkout = await session.send("Get Go source for local review");
+    expect(checkout.toolCalls[0].result.success).toBe(true);
+    expect(session.target).toBe("https://target.test");
+    expect(session.scope?.match("https://github.com").allowed).toBe(false);
+    const probe = await session.send("Now test the hosting service");
+    expect(probe.toolCalls[0].result.success).toBe(false);
+  });
+
+  it("also permits source setup through run_command with no preconfigured target", async () => {
+    vi.spyOn(repositoryAcquisition, "runRepositoryAcquisition").mockResolvedValue({ success: true, output: "Checkout completed" });
+    const session = createConsoleSession({
+      runtime: new ScriptedRuntime([
+        checkoutTurn("git clone --depth 1 https://github.com/golang/go.git", "run_command"),
+        endTurn("Source ready."),
+      ]),
+      autonomyMode: "yolo",
+    });
+    const checkout = await session.send("Get Go source");
+    expect(checkout.toolCalls[0].result.success).toBe(true);
+    expect(session.scope?.match("https://github.com").allowed ?? false).toBe(false);
+  });
+
+  it("does not exempt appended commands or Git configuration and submodule execution", async () => {
+    const commands = [
+      "git clone https://github.com/golang/go.git && curl https://github.com/",
+      "git -c core.sshCommand=anything clone https://github.com/golang/go.git",
+      "git clone --recurse-submodules https://github.com/golang/go.git",
+    ];
+    for (const command of commands) {
+      const session = createConsoleSession({
+        runtime: new ScriptedRuntime([checkoutTurn(command), endTurn("Refused.")]),
+        autonomyMode: "yolo", target: "https://target.test",
+      });
+      const outcome = await session.send("Set up source");
+      expect(outcome.toolCalls[0].result.success).toBe(false);
+      expect(session.scope?.match("https://github.com").allowed ?? false).toBe(false);
+    }
+  });
+
+  it("preserves explicit exclusions even for an otherwise permitted clone", async () => {
+    const session = createConsoleSession({
+      runtime: new ScriptedRuntime([
+        checkoutTurn("git clone https://github.com/golang/go.git"),
+        endTurn("Excluded."),
+      ]),
+      autonomyMode: "yolo", target: "https://target.test",
+      scope: ScopePolicy.fromJson({ in_scope: ["target.test"], out_of_scope: ["github.com"] }),
+    });
+    const outcome = await session.send("Get Go source");
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+  });
+
+  it("preserves a declined source host after switching to YOLO", async () => {
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime: new ScriptedRuntime([
+        checkoutTurn("git clone https://github.com/golang/go.git"), endTurn("Declined."),
+        checkoutTurn("git clone https://github.com/golang/go.git"), endTurn("Still declined."),
+      ]),
+      autonomyMode: "standard", target: "https://target.test",
+      requestScope: async () => { prompts++; return null; },
+    });
+    expect((await session.send("Get Go source")).toolCalls[0].result.success).toBe(false);
+    session.setAutonomyMode("yolo");
+    expect((await session.send("Try again")).toolCalls[0].result.success).toBe(false);
+    expect(prompts).toBe(1);
+  });
+
+  it("rejects loopback source addresses without turning them into engagement scope", async () => {
+    const session = createConsoleSession({
+      runtime: new ScriptedRuntime([
+        checkoutTurn("git clone https://127.0.0.1/internal.git"), endTurn("Private source refused."),
+      ]),
+      autonomyMode: "yolo", target: "https://target.test",
+    });
+    const outcome = await session.send("Get source");
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(session.scope?.match("https://127.0.0.1").allowed ?? false).toBe(false);
   });
 });
 

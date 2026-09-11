@@ -117,6 +117,7 @@ import { validateFlagShape } from "./flag-validator.js";
 import { extractPocStepsFromProse } from "./poc-steps-from-prose.js";
 import { isUntrustedSourceTool, sanitizeUntrustedToolResult } from "../untrusted-sanitizer.js";
 import { computeFindingConfidence } from "./finding-confidence.js";
+import { parseRepositoryAcquisition, repositoryAcquisitionAllowed, runRepositoryAcquisition } from "./repository-acquisition.js";
 import {
   validateFindingDraft,
   type FindingDraft,
@@ -5321,6 +5322,25 @@ export class ToolExecutor {
     let command = (args.command as string)?.trim();
     if (!command) {
       return { success: false, output: null, error: "Command is required" };
+    }
+
+    if (this.ctx.autonomyMode === "yolo" && !this.ctx.enforcement) {
+      const acquisition = parseRepositoryAcquisition(command);
+      if (acquisition && !this.ctx.scope?.match(acquisition.url).allowed) {
+        if (!repositoryAcquisitionAllowed(acquisition, this.ctx.scope)) {
+          return { success: false, output: null, error: "Repository source is explicitly excluded by the engagement scope" };
+        }
+        const ceilingMs = resolveBashWallclockCeilingMs();
+        const requested = typeof args.timeout === "number" && Number.isFinite(args.timeout) ? args.timeout : 90;
+        const timeoutMs = Math.min(ceilingMs, Math.max(1, requested) * 1000);
+        const result = await runRepositoryAcquisition(acquisition, command, timeoutMs, ceilingMs, this.ctx.scope);
+        this.persistToolArtifact("bash", {
+          command: command.slice(0, 500),
+          output: String(result.output ?? result.error ?? "").slice(0, 2_000),
+          sourceAcquisition: true,
+        });
+        return result;
+      }
     }
 
     // Programmatic scope pre-flight (0sec#215). The bash subprocess can

@@ -14,6 +14,13 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- YOLO console sessions can acquire public HTTPS Git repositories for local
+  review without authorizing their hosting services as testing targets.
+  Standalone clones run without a shell through a public-address-pinned tunnel,
+  with isolated Git configuration and bounded execution. Explicit exclusions,
+  declined-host memory, and private-network protection remain enforced.
+  Git checkout failures are reported as failures rather than successful output.
+
 - Console history now connects to the persistent findings database across TUI,
   readline, one-shot, and desktop sessions. `--db-path` also works without
   `--finding` and follows history navigation. Read-only `list_conversations`

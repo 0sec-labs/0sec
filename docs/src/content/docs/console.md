@@ -110,11 +110,32 @@ Cycle the mode with **Shift+Tab** in the TUI, or the `/mode` command.
 | **Standard** | Runs automatically inside scope; can request a narrow session-only scope extension. |
 | **Recon** | Passive, read-only reconnaissance only. Effectful tools are refused. |
 | **Co-pilot** | Adds approval for every non-read-only tool. |
-| **YOLO** | Runs only inside an explicitly configured scope. Never requests scope extensions. |
+| **YOLO** | No per-action prompts. Testing remains target/scope-anchored; public source checkout does not expand scope. |
 
 The readline fallback allows mode selection including Co-pilot and YOLO, but
 Co-pilot tool approvals always return denied — there is no approval surface in
 the text REPL. The TUI is required for interactive approval.
+
+### Acquiring a public repository in YOLO
+
+Source checkout is separate from permission to test its hosting service.
+In YOLO, a standalone public HTTPS `git clone` through `bash` or `run_command`
+can fetch code even when the repository host is not the launch target:
+
+```bash
+cd /home/dev/coding && git clone --depth=1 https://github.com/golang/go.git golang-go-audit
+```
+
+Run inspection, builds, or other commands in subsequent tool calls. Checkout
+does **not** add GitHub to the engagement scope or authorize testing it.
+Previously declined hosts and explicit exclusions still apply.
+
+This acquisition path uses standard HTTPS on port 443, public-address DNS
+validation and a pinned tunnel, isolated Git configuration, no credential
+helpers, and the existing command timeout/output limits. It does not follow
+redirects, fetch submodules, accept arbitrary Git configuration, or execute
+appended shell commands. Private/authenticated repositories need their normal
+authorized workflow; this is not a blanket network-scope bypass.
 
 ### Supported runtimes
 

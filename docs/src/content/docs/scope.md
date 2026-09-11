@@ -107,6 +107,13 @@ active. The `scope_guards_inert` diagnostic identifies that condition; other too
 restrictions may still apply. Local code acquisition, model requests, and tools
 can require network access.
 
+The interactive console's YOLO mode distinguishes public repository checkout
+from live-target authorization. A standalone HTTPS `git clone` can acquire
+source without adding the hosting service to the engagement scope. Explicit
+host/address exclusions and private-network restrictions still apply; other
+commands do not inherit that checkout permission. See
+[public repository acquisition](/console/#acquiring-a-public-repository-in-yolo).
+
 `0SEC_REQUIRE_SCOPE=1` requests fail-closed behavior where these guards are
 used. It does not manufacture a policy, and not every command accepts `--scope`.
 Use the command-specific [reference](/commands/) instead of adding unsupported
