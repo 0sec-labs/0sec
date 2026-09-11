@@ -2792,6 +2792,37 @@ describe("ToolExecutor — cross-origin in-scope authorization", () => {
     expect(metadata.error).toMatch(/Local\/internal/);
   });
 
+  it.each(["[::1]", "[::]", "[::ffff:127.0.0.1]", "[::ffff:10.0.0.1]", "[fc00::1]", "[fe90::1]"])("keeps the private floor for retained IPv6 scope %s after a public target switch", async host => {
+    const url = `http://${host}/`;
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("fixture", { status: 200 }));
+    const ctx: ToolContext = {
+      target: url, scanId: "ipv6-floor", findings: [], attackResults: [], targetInfo: {},
+      scope: HttpAuditScopePolicy.fromJson({ in_scope: [new URL(url).hostname] }),
+    };
+    const executor = new ToolExecutor(ctx, null);
+    try {
+      expect((await executor.execute({ name: "http_request", arguments: { url } })).success).toBe(true);
+      ctx.target = "https://public.test/";
+      const blocked = await executor.execute({ name: "http_request", arguments: { url } });
+      expect(blocked.success).toBe(false);
+      expect(blocked.error).toMatch(/Local\/internal/);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally { await executor.cleanup(); fetch.mockRestore(); }
+  });
+
+  it("allows authorized public IPv6 and public IPv4-mapped destinations", async () => {
+    const urls = ["https://[2606:4700::1111]/", "https://[::ffff:8.8.8.8]/"];
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("fixture", { status: 200 }));
+    const executor = new ToolExecutor({
+      target: "https://public.test/", scanId: "ipv6-public", findings: [], attackResults: [], targetInfo: {},
+      scope: HttpAuditScopePolicy.fromJson({ in_scope: urls.map(url => new URL(url).hostname) }),
+    }, null);
+    try {
+      for (const url of urls) expect((await executor.execute({ name: "http_request", arguments: { url } })).success).toBe(true);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally { await executor.cleanup(); fetch.mockRestore(); }
+  });
+
   it("PATH ALLOWLIST still applies on top of an in-scope cross-origin host", async () => {
     const { ScopePolicy } = await import("../scope/scope.js");
     const scope = ScopePolicy.fromJson({

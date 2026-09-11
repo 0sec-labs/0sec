@@ -13,7 +13,7 @@ import { ScanCostLedger } from "./cost-ledger.js";
 import { detectPlaybooks, buildPlaybookInjection, PLAYBOOKS } from "./playbooks.js";
 import type { NativeRuntime, NativeRuntimeResult, NativeMessage, NativeToolDef } from "../runtime/types.js";
 import type { Finding } from "@0sec/shared";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { eventBus } from "../events/bus.js";
@@ -22,8 +22,8 @@ import {
   UNTRUSTED_CLOSE,
 } from "../untrusted-sanitizer.js";
 import { HuntMemoryStore } from "../memory/index.js";
-import { buildSubagentMessage } from "./tools.js";
-import { LiveHarnessHost } from "../plugins/live-harness.js";
+import { buildSubagentMessage, getToolsForRole } from "./tools.js";
+import { setWorkspaceHarnessTrust } from "../plugins/harness-trust.js";
 
 // Hunt memory defaults ON in the engine; keep the suite from writing to the
 // real ~/.0sec store. The dedicated hunt-memory describe below re-enables it and
@@ -60,54 +60,67 @@ function createMockRuntime(responses: NativeRuntimeResult[]): NativeRuntime {
 // ── Tests ──
 
 describe("runNativeAgentLoop", () => {
-  it("reports failure after a driver executes done then throws without replaying tools or losing usage", async () => {
-    const home = mkdtempSync(join(tmpdir(), "0sec-native-driver-failure-"));
+  it.each(["done-failure", "returned-revoke", "sdk-revoke"])("preserves error outcome, receipts and usage without replay for %s", async mode => {
+    const home = mkdtempSync(join(tmpdir(), "0sec-native-driver-boundary-"));
     const previousHome = process.env.HOME;
     process.env.HOME = home;
-    const failure = new Error("503 driver failure after completion tool");
+    const marker = join(home, "effect");
+    const args = { command: `printf x > ${JSON.stringify(marker)}` };
+    const generation = { label: mode, providers: [{ id: "driver", services: ["agent.driver"], source: {
+      kind: "trusted", entry: "main.mjs", files: { "main.mjs": `export function activate() { return { async driver(request, execution) {
+        await execution.invokeModel(request);
+        ${mode === "done-failure" ? `await execution.invokeTool('done',{summary:'Tool completed'});throw new Error('503 driver failure after completion tool');`
+          : mode === "sdk-revoke" ? `await execution.invokeTool('bash',${JSON.stringify(args)});return {content:[{type:'text',text:'attempt'}],stopReason:'end_turn',durationMs:0};`
+          : `return {content:[{type:'tool_use',id:'effect',name:'bash',input:${JSON.stringify(args)}}],stopReason:'tool_use',durationMs:0};`}
+      } }; }` },
+    } }] };
+    let count = 0;
     const executeNative = vi.fn(async (): Promise<NativeRuntimeResult> => ({
-      content: [{ type: "text", text: "Model receipt" }], stopReason: "end_turn", durationMs: 1,
+      content: ++count === 1
+        ? [{ type: "tool_use", id: "install", name: "self_extend", input: { action: "harness_submit", generation } }]
+        : [{ type: "text", text: "Model receipt" }],
+      stopReason: count === 1 ? "tool_use" : "end_turn", durationMs: 1,
       usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4 },
     }));
-    const driver = vi.spyOn(LiveHarnessHost.prototype, "drive").mockImplementation(async (request, execution = {}) => {
-      await execution.invokeModel!(request);
-      const receipt = await execution.invokeTool!("done", { summary: "Tool completed" });
-      expect(receipt.success).toBe(true);
-      throw failure;
-    });
     const reasons: unknown[] = [];
     const unsubscribe = eventBus.subscribe({ emit(type, payload) {
       if (type === "agent_turn_completed") reasons.push(payload.reason);
     } });
-    const onTurn = vi.fn();
     try {
+      setWorkspaceHarnessTrust(home, true);
       const state = await runNativeAgentLoop({
         config: {
-          role: "discovery", systemPrompt: "test", tools: [], maxTurns: 3,
-          target: "https://example.com", scanId: randomUUID(), workspaceRoot: home,
+          role: "discovery", systemPrompt: "test", tools: getToolsForRole("discovery"), maxTurns: 3,
+          target: "https://example.com", scanId: randomUUID(), workspaceRoot: home, autonomyMode: "yolo",
           allowModelSelfExtension: true, executablePlugins: { backend: "docker", root: join(home, "plugins") },
           executableEvolutionProfiles: {},
         },
-        runtime: { type: "api", executeNative, isAvailable: async () => true },
-        db: null, onTurn,
+        runtime: { type: "api", executeNative, isAvailable: async () => true }, db: null,
+        onToolUpdate: (_turn, calls) => {
+          if (mode !== "done-failure" && calls.some(call => call.name === "bash")) setWorkspaceHarnessTrust(home, false);
+        },
       });
-      expect({ done: state.done, errorExit: state.errorExit, reasons }).toEqual({
-        done: false, errorExit: { error: failure.message, turn: 1 }, reasons: ["error"],
-      });
-      expect(driver).toHaveBeenCalledTimes(1);
-      expect(executeNative).toHaveBeenCalledTimes(1);
-      expect(state.totalUsage).toEqual({ inputTokens: 12, outputTokens: 3, cachedInputTokens: 4 });
-      const receipts = state.messages.flatMap(message => message.content).filter(block => block.type === "tool_result");
-      expect(receipts.map(receipt => ({ failed: receipt.is_error, output: JSON.parse(receipt.content) }))).toEqual([
-        { failed: false, output: { done: true, summary: "Tool completed" } },
-      ]);
-      expect(onTurn).toHaveBeenCalledTimes(1);
-      expect(onTurn.mock.calls[0]?.[1]).toEqual([expect.objectContaining({ name: "done" })]);
-      expect(onTurn.mock.calls[0]?.[2]).toEqual([expect.objectContaining({ success: true })]);
+      expect(state.done).toBe(false);
+      expect(state.errorExit?.error).toMatch(mode === "done-failure" ? /driver failure after completion/ : /trust.*revoked/i);
+      expect(reasons).toEqual(["continue", "error"]);
+      expect(executeNative).toHaveBeenCalledTimes(2);
+      expect(state.totalUsage).toEqual({ inputTokens: 24, outputTokens: 6, cachedInputTokens: 8 });
+      expect(existsSync(marker)).toBe(false);
+      const blocks = state.messages.flatMap(message => message.content);
+      const calls = blocks.filter(block => block.type === "tool_use" && block.name === (mode === "done-failure" ? "done" : "bash"));
+      expect(calls).toHaveLength(1);
+      const call = calls[0] as Extract<NativeMessage["content"][number], { type: "tool_use" }>;
+      const receipts = blocks.filter(block => block.type === "tool_result" && block.tool_use_id === call.id);
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({ is_error: mode !== "done-failure" });
     } finally {
-      unsubscribe(); driver.mockRestore();
+      unsubscribe();
       if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
-      rmSync(home, { recursive: true, force: true });
+      const unlock = (directory: string): void => {
+        chmodSync(directory, 0o700);
+        for (const entry of readdirSync(directory, { withFileTypes: true })) if (entry.isDirectory()) unlock(join(directory, entry.name));
+      };
+      unlock(home); rmSync(home, { recursive: true, force: true });
     }
   });
 

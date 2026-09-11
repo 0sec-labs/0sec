@@ -142,6 +142,7 @@ export class LiveHarnessHost {
   private readonly root: string;
   private readonly retained = new Map<string, RetainedGeneration>();
   private readonly listeners = new Set<(snapshot: HarnessSnapshot) => void>();
+  private readonly driverAuthorities = new WeakMap<NativeRuntimeResult, Generation>();
   private readonly failedUiGenerations = new Set<string>();
   private readonly shutdown = new AbortController();
   private active?: Generation;
@@ -216,6 +217,14 @@ export class LiveHarnessHost {
   private checkTrust(generation: Generation): void {
     if (generation.trusted && !this.options.allowTrusted()) throw new Error("Workspace harness trust was revoked");
     this.shutdown.signal.throwIfAborted();
+  }
+
+  /** Host-internal dispatch authority; never accepted from generated output or wire data. */
+  assertDriverAuthority(result?: NativeRuntimeResult): void {
+    const generation = result === undefined ? this.active : this.driverAuthorities.get(result);
+    if (!generation || generation !== this.active) throw new Error("Harness driver authority is no longer active");
+    this.checkTrust(generation);
+    generation.abort.signal.throwIfAborted();
   }
 
   control(request: HarnessControl): Promise<HarnessSnapshot> {
@@ -435,9 +444,13 @@ export class LiveHarnessHost {
         messages: request.messages.map(({ role, content }) => ({ role, content: structuredClone(content) })),
         tools: structuredClone(request.tools),
       };
-      const result = await provider.implementation.driver!(input, execution);
+      const result = parseResult(await provider.implementation.driver!(input, execution));
+      brokerOpen = false;
+      await Promise.allSettled(pending);
+      this.checkTrust(generation);
       signal.throwIfAborted();
-      return parseResult(result);
+      this.driverAuthorities.set(result, generation);
+      return result;
     } catch (error) { this.error = message(error); this.state = "failed"; this.publish(); throw error; }
     finally {
       brokerOpen = false;

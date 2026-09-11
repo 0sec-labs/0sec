@@ -908,6 +908,7 @@ export async function runNativeAgentLoop(
   let pendingValidationNotes: string[] | undefined;
   let pendingActionLog: ToolCallLogEntry[] | undefined;
   let directDriver = false;
+  let driverResult: NativeRuntimeResult | undefined;
   let driverCalls: ToolCall[] | undefined;
   let driverResults: ToolResult[] | undefined;
   const harnessInput = (phase: HarnessUiInput["phase"]): HarnessUiInput => ({
@@ -978,6 +979,9 @@ export async function runNativeAgentLoop(
       effectiveSignal.throwIfAborted();
       const call: ToolCall = { name, arguments: args };
       const driverCallId = directDriver ? `harness-${randomUUID()}` : undefined;
+      const authorityResult = driverResult;
+      const assertAuthority = directDriver ? () => harness!.assertDriverAuthority()
+        : authorityResult ? () => harness!.assertDriverAuthority(authorityResult) : undefined;
       const driverIndex = driverCallId ? driverCalls!.push(call) - 1 : -1;
       if (driverCallId) onToolUpdate?.(state.turnCount, driverCalls!, driverResults!, "", { usage: { ...state.totalUsage } });
       const correlationId = newCorrelationId();
@@ -989,7 +993,7 @@ export async function runNativeAgentLoop(
       });
       shadowJournal.append({ kind: "tool_call", tool: name, arguments: args, turn: state.turnCount, callId: correlationId });
       let result: ToolResult;
-      try { result = await executor.execute(call, { correlationId, signal: effectiveSignal }); }
+      try { result = await executor.execute(call, { correlationId, signal: effectiveSignal, assertAuthority }); }
       catch (error) { result = { success: false, output: null, error: error instanceof Error ? error.message : String(error) }; }
       if (driverCallId) {
         let content = result.success ? JSON.stringify(result.output) ?? "" : `Error: ${result.error}`;
@@ -1134,14 +1138,28 @@ export async function runNativeAgentLoop(
     });
   }
 
-  // ── Graceful cleanup on signals ──
-  const signalCleanup = () => {
-    executionAbort.abort(new Error("Agent session interrupted."));
-    void harness?.close();
-    void executablePlugins?.close();
-    executor.cleanup();
+  // One ordered cleanup shared by interruption and normal/error completion.
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanupResources = (): Promise<void> => {
+    executionAbort.abort(new Error("Agent session ended."));
+    return cleanupPromise ??= (async () => {
+      const failures: unknown[] = [];
+      try {
+        for (const close of [
+          () => harness?.close(),
+          () => executor.cleanup(),
+          () => executablePlugins?.close(),
+        ]) {
+          try { await close(); } catch (error) { failures.push(error); }
+        }
+      } finally {
+        unregisterSignalCleanup();
+        unsubscribeCoordinator();
+      }
+      if (failures.length) throw new AggregateError(failures, "Agent resource cleanup incomplete");
+    })();
   };
-  const unregisterSignalCleanup = registerSignalCleanup(signalCleanup);
+  const unregisterSignalCleanup = registerSignalCleanup(cleanupResources);
 
   // ── Coordinator rails (multi-agent supervisor) ──
   // Additive, feature-flagged (0SEC_FEATURE_COORDINATOR_RAILS, default OFF /
@@ -1810,10 +1828,15 @@ export async function runNativeAgentLoop(
 
     let supplied: NativeRuntimeResult | undefined;
     let driven = false;
+    driverResult = undefined;
     try {
       await harness?.checkpoint(harnessInput("working"));
       directDriver = true;
       supplied = await harness?.drive({ system: config.systemPrompt, messages: state.messages, tools: nativeTools }, toolCtx.pluginExecutionContext?.());
+      if (supplied !== undefined) {
+        harness!.assertDriverAuthority(supplied);
+        driverResult = supplied;
+      }
       driven = supplied !== undefined;
     } catch (error) {
       driven = true;
@@ -2161,6 +2184,14 @@ export async function runNativeAgentLoop(
     // confirmed/unconfirmed verdict on its NEXT turn.
     const inlineValidationNotes: string[] = pendingValidationNotes ?? [];
     pendingValidationNotes = inlineValidationNotes;
+    let authorityFailure: string | undefined;
+    const assertAuthority = driven ? () => {
+      try { harness!.assertDriverAuthority(result); }
+      catch (error) {
+        authorityFailure = error instanceof Error ? error.message : String(error);
+        throw error;
+      }
+    } : undefined;
 
     for (const block of toolUseBlocks) {
       const call: ToolCall = { name: block.name, arguments: block.input };
@@ -2230,7 +2261,7 @@ export async function runNativeAgentLoop(
         callId: block.id,
       });
 
-      const toolResult = await executor.execute(call, { correlationId, signal: executionSignal });
+      const toolResult = await executor.execute(call, { correlationId, signal: executionSignal, assertAuthority });
       const toolEndedAt = Date.now();
       toolResults.push(toolResult);
       onToolUpdate?.(state.turnCount, toolCalls, toolResults, textContent, turnTelemetry);
@@ -2388,6 +2419,15 @@ export async function runNativeAgentLoop(
 
     // Append tool results as user message
     state.messages.push({ role: "user", content: toolResultBlocks });
+    try { assertAuthority?.(); } catch { /* Keep all completed receipts before terminating the turn. */ }
+    if (authorityFailure) {
+      state.done = false;
+      state.summary = `Error: ${authorityFailure}`;
+      state.errorExit = { error: authorityFailure, turn: state.turnCount };
+      onEvent?.("agent_error", { turn: state.turnCount, error: authorityFailure });
+      onTurn?.(state.turnCount, toolCalls, toolResults, textContent, turnTelemetry);
+      break;
+    }
 
     // If the model registered new tools this turn via `self_extend`, union them
     // into the model-facing tool set so they are callable on the NEXT turn.
@@ -2911,12 +2951,7 @@ export async function runNativeAgentLoop(
 
   return state;
   } finally {
-    executionAbort.abort(new Error("Agent session ended."));
-    await harness?.close();
-    await executor.cleanup();
-    await executablePlugins?.close();
-    unregisterSignalCleanup();
-    unsubscribeCoordinator();
+    await cleanupResources();
   }
 }
 

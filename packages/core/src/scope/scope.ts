@@ -112,7 +112,7 @@ export class ScopePolicy {
   match(url: string): ScopeMatch {
     let host: string;
     try {
-      host = new URL(url).hostname.toLowerCase();
+      host = normalizeScopeHostname(new URL(url).hostname);
     } catch {
       return { allowed: false, reason: `out-of-scope: not a valid URL (${url})` };
     }
@@ -180,6 +180,28 @@ export function matchUrl(url: string, policy: ScopePolicy): ScopeMatch {
   return policy.match(url);
 }
 
+/**
+ * Normalize a hostname for scope identity matching: lowercase and strip
+ * terminal DNS root dot(s). Retains URL IPv6 brackets untouched.
+ *
+ * A URL such as `https://example.com./path` produces hostname
+ * `"example.com."` from the URL parser — the trailing dot is a valid
+ * DNS convention ("fully qualified domain name") that identifies the
+ * same host as `"example.com"`. Without normalization, rules written
+ * without the trailing dot silently fail to match such URLs.
+ *
+ * Reuses the same idiom as the existing hostname normalization in
+ * `active-subdomains.ts:normalizeApex`:
+ *
+ *   hostname.toLowerCase().replace(/\.+$/, "")
+ *
+ * Only the terminal dot(s) are removed — interior dots that form DNS
+ * labels are untouched, and IPv6 brackets are never matched by `\.`.
+ */
+export function normalizeScopeHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/\.+$/, "");
+}
+
 // ── internals ──
 
 function parseRule(raw: unknown): ParsedRule {
@@ -223,7 +245,10 @@ function parseRule(raw: unknown): ParsedRule {
   // matching ambiguity that is not worth the implementation cost for a
   // primitive whose whole job is to be conservative.
   if (rule.startsWith("*.")) {
-    const suffix = rule.slice(2);
+    // Normalise suffix so "*.example.com." → suffix "example.com".
+    // The trailing-dot FQDN form is semantically identical to the bare
+    // name, and our match logic operates on the normalised value.
+    const suffix = normalizeScopeHostname(rule.slice(2));
     if (suffix.length === 0 || suffix.includes("*")) {
       throw new Error(`Invalid wildcard rule '${raw}': must be of the form '*.domain.tld'`);
     }
@@ -234,7 +259,10 @@ function parseRule(raw: unknown): ParsedRule {
     throw new Error(`Invalid scope rule '${raw}': only leading '*.' wildcards are supported`);
   }
 
-  return { raw, kind: "exact", host: rule };
+  // Normalise host so "example.com." → host "example.com".  The raw
+  // rule string stored in the ParsedRule keeps the original for
+  // reporting purposes; only the match-target value is normalised.
+  return { raw, kind: "exact", host: normalizeScopeHostname(rule) };
 }
 
 function matches(rule: ParsedRule, host: string): boolean {

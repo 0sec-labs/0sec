@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ToolExecutor } from "./tools.js";
@@ -34,20 +34,31 @@ function baseCtx(overrides: Partial<ToolContext> = {}): ToolContext {
 const patchCall: ToolCall = { name: "apply_patch", arguments: {} };
 
 describe("scoped source-audit escalation gate", () => {
-  it("no autonomy + no callback → today's exact hard-denial error (regression guard)", async () => {
-    const root = mkdtempSync(join(tmpdir(), "0sec-esc-"));
+  it("rechecks host authority after asynchronous admission before applying a patch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "0sec-authority-admission-"));
+    let authorized = true;
+    let entered!: () => void;
+    let approve!: (value: boolean) => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const executor = new ToolExecutor(baseCtx({
+      scopePath: root, autonomyMode: "standard",
+      escalateScopedAudit: () => { entered(); return new Promise(resolve => { approve = resolve; }); },
+    }), null);
     try {
-      const exec = new ToolExecutor(baseCtx({ scopePath: root }), null);
-      const result = await exec.execute(patchCall);
-      expect(result.success).toBe(false);
-      // Byte-identical to the pre-autonomy message.
-      expect(result.error).toBe(
-        'Tool "apply_patch" is not available in a scoped source audit',
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+      const result = executor.execute({
+        name: "apply_patch",
+        arguments: { patch: "*** Begin Patch\n*** Add File: effect.txt\n+effect\n*** End Patch" },
+      }, { assertAuthority: () => { if (!authorized) throw new Error("Fixture authority revoked"); } });
+      await waiting;
+      authorized = false;
+      approve(true);
+      const outcome = await result;
+      expect(outcome.success).toBe(false);
+      expect(outcome.error).toBe("Fixture authority revoked");
+      expect(existsSync(join(root, "effect.txt"))).toBe(false);
+    } finally { await executor.cleanup(); rmSync(root, { recursive: true, force: true }); }
   });
+
 
   it("YOLO + configured scope → a previously-blocked tool dispatches", async () => {
     const root = mkdtempSync(join(tmpdir(), "0sec-esc-"));

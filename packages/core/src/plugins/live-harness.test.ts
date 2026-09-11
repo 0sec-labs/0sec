@@ -13,6 +13,7 @@ const input = { sessionId: "regression", phase: "idle" as const, iterations: 0, 
 let root: string;
 let host: LiveHarnessHost;
 let manager: ExecutablePluginManager;
+let trusted = true;
 function generation(label: string, body = ""): HarnessGenerationSpec {
   return { label, providers: [{ id: "driver", services: ["agent.driver", "ui.view"], source: { kind: "trusted", entry: "main.mjs", files: {
     "main.mjs": `import { appendFileSync } from 'node:fs';
@@ -68,9 +69,10 @@ function waitForGuest(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 beforeEach(() => {
+  trusted = true;
   root = mkdtempSync(join(tmpdir(), "0sec-live-regression-"));
   manager = new ExecutablePluginManager({ registry: new SelfExtensionRegistry({ enabled: true, baseGuards: BUILTIN_GUARDS }), root: join(root, "executable"), backend: "docker", image: "unused-for-trusted-fixtures" });
-  host = new LiveHarnessHost({ executablePlugins: manager, root: join(root, "harness"), workspaceRoot: root, allowTrusted: () => true });
+  host = new LiveHarnessHost({ executablePlugins: manager, root: join(root, "harness"), workspaceRoot: root, allowTrusted: () => trusted });
 });
 afterEach(async () => {
   try { await host.close(); await manager.close(); }
@@ -78,6 +80,40 @@ afterEach(async () => {
 });
 
 describe("retained live harness", () => {
+  it.each(["driver", "broker drain"])("rejects authority revoked during %s before returning a decision", async phase => {
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    await activate(generation("revoked", phase === "broker drain" ? `
+      return { async driver(request, execution) {
+        void execution.invokeModel(request);
+        return { content: [{ type: 'text', text: 'stale' }], stopReason: 'end_turn', durationMs: 0 };
+      }, view() { return { title: 'fixture', blocks: [] }; } };
+    ` : ""));
+    const running = host.drive(request, { invokeModel: async () => {
+      entered(); await barrier;
+      return { content: [], stopReason: "end_turn", durationMs: 0 };
+    } }).then(value => ({ value }), error => ({ error }));
+    await started;
+    trusted = false;
+    release();
+    expect(await running).toEqual({ error: expect.objectContaining({ message: expect.stringMatching(/trust.*revoked/i) }) });
+    expect(host.snapshot().status).toBe("failed");
+  });
+
+  it("rejects copied decisions and decisions retained across generation replacement", async () => {
+    await activate(generation("first"));
+    const decision = (await host.drive(request))!;
+    host.assertDriverAuthority(decision);
+    expect(() => host.assertDriverAuthority(structuredClone(decision))).toThrow(/authority/);
+    await activate(generation("second"));
+    expect(() => host.assertDriverAuthority(decision)).toThrow(/authority/);
+    const current = (await host.drive(request))!;
+    trusted = false;
+    expect(() => host.assertDriverAuthority(current)).toThrow(/trust.*revoked/i);
+  });
+
   it("rejects a driver queued behind preparation when the host closes instead of selecting builtin", async () => {
     let entered!: () => void;
     let release!: () => void;
