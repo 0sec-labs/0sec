@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -197,7 +198,7 @@ describe("LlmApiRuntime provider detection", () => {
 
   it("keeps explicit Anthropic credentials ahead of hosted login", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test456";
-    process.env["0SEC_CLOUD_TOKEN"] = "hosted-fixture";
+    process.env["0SEC_CLOUD_TOKEN"] = randomUUID();
     const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
     expect(rt.getConfigurationDiagnostics().provider).toBe("anthropic");
   });
