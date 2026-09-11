@@ -4,7 +4,7 @@
 // Subcommands:
 //   - login        alias for `0sec auth login` (opens browser/polls)
 //   - models       list available hosted inference models
-//   - balance      show available inference credit balance in USD equivalent
+//   - balance      show the percentage of inference credits remaining
 //
 // All use CloudClient from @0sec/core, which reads scoped creds from
 // env or ~/.0sec/cloud.env. 401 → clear auth error, not silent fallback.
@@ -55,7 +55,7 @@ export function registerHostedCommand(program: Command): void {
   // ── 0sec balance ──
   program
     .command("balance")
-    .description("Show inference credit balance in USD equivalent")
+    .description("Show the percentage of inference credits remaining")
     .option("--json", "Output raw JSON instead of a formatted line")
     .action(async (opts: { json?: boolean }) => {
       await runBalance(opts);
@@ -190,10 +190,19 @@ async function runBalance(opts: { json?: boolean }): Promise<void> {
     if (opts.json) {
       consolePresentationOutput.stdout(JSON.stringify(acct, null, 2), "hosted.balance-json");
     } else {
+      const percent = acct.credits?.remainingPercent;
       consolePresentationOutput.stdout(
-        `  Credit balance: ${chalk.bold(`$${acct.remainingUsd.toFixed(2)}`)} ${acct.currency} equivalent`,
+        percent === null || percent === undefined
+          ? "  Cloud: usage percentage unavailable"
+          : `  Cloud: ${chalk.bold(`${Number(percent.toFixed(1))}%`)} credits remaining`,
         "hosted.balance",
       );
+      if (acct.credits?.nextResetAt !== null && acct.credits?.nextResetAt !== undefined) {
+        consolePresentationOutput.stdout(
+          `  Next credit source reset: ${new Date(acct.credits.nextResetAt).toISOString()}`,
+          "hosted.balance-reset",
+        );
+      }
     }
     process.exitCode = EXIT_OK;
   } catch (err) {

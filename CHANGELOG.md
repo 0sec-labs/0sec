@@ -18,6 +18,9 @@ on the published npm package and the GitHub Release tag.
   connection choices. Cancelling sign-in returns to the current conversation;
   changing the provider or model applies to the next chat. Login alone does not
   establish model availability or a funded account.
+- `0sec balance` displays the service-reported percentage of inference credits
+  remaining. Missing percentage data stays unavailable; JSON retains accounting
+  fields, and reservations remain distinct from settled spending.
 - Interactive YOLO sessions request approval for uncovered targets and retain
   the same conversation after approval. Explicit exclusions, denied hosts,
   private-address checks, and revoked tool authority remain enforced.

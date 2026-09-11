@@ -2591,7 +2591,7 @@ Guide: [Hosted models](/getting-started/#hosted-models-draft).
 
 ### balance
 
-Read the inference account balance in USD equivalent. `--json` prints the account response.
+Read the service-reported percentage of inference credits remaining. If the service cannot provide a percentage, the command reports it as unavailable. `--json` retains the full account response, including accounting fields.
 
 ```text
 0sec balance [options]

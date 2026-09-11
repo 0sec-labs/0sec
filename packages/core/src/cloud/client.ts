@@ -85,10 +85,21 @@ export interface InferenceModelsResponse {
   data: InferenceModel[];
 }
 
+/** Availability reported by the service for one Autumn credit pool. */
+export interface InferenceCreditBalance {
+  featureId: string;
+  granted: number | null;
+  remaining: number;
+  remainingPercent: number | null;
+  /** Unix milliseconds; only the earliest balance source may reset then. */
+  nextResetAt: number | null;
+}
+
 /** Account balance from GET /api/inference/account */
 export interface InferenceAccountResponse {
   remainingUsd: number;
   currency: "USD";
+  credits: InferenceCreditBalance | null;
 }
 
 /** Usage metadata from GET /api/inference/usage */
@@ -138,12 +149,30 @@ export class CloudClient {
   }
 
   /**
-   * Fetch the operator's hosted inference account balance. Reflects
-   * remaining prepaid credits (Autumn billing) in USD. A depleted balance
-   * will cause the inference endpoint to return 402 InsufficientFunds.
+   * Fetch the organization's hosted inference credit availability. The service
+   * calculates the percentage from Autumn's current pool; holds reduce availability.
+   * Older gateways without percentage metadata remain explicitly unavailable.
    */
   async getInferenceAccount(): Promise<InferenceAccountResponse> {
-    return this.getJson<InferenceAccountResponse>("/api/inference/account");
+    const account = await this.getJson<InferenceAccountResponse>("/api/inference/account");
+    const credits = account.credits;
+    if (!credits || typeof credits !== "object" ||
+        typeof credits.featureId !== "string" || !credits.featureId.trim() ||
+        typeof credits.remaining !== "number" || !Number.isFinite(credits.remaining) || credits.remaining < 0 ||
+        (credits.granted !== null && (typeof credits.granted !== "number" || !Number.isFinite(credits.granted) || credits.granted < 0))) {
+      return { ...account, credits: null };
+    }
+    // Validate, but never reconstruct a quota or percentage on the client.
+    const remainingPercent = typeof credits.remainingPercent === "number" &&
+      Number.isFinite(credits.remainingPercent) && credits.remainingPercent >= 0 && credits.remainingPercent <= 100 &&
+      credits.granted !== null && credits.granted > 0 && credits.remaining <= credits.granted
+      ? credits.remainingPercent : null;
+    const nextResetAt = typeof credits.nextResetAt === "number" &&
+      Number.isSafeInteger(credits.nextResetAt) && credits.nextResetAt > 0 && credits.nextResetAt <= 8.64e15
+      ? credits.nextResetAt : null;
+    return { ...account, credits: {
+      featureId: credits.featureId, granted: credits.granted, remaining: credits.remaining, remainingPercent, nextResetAt,
+    } };
   }
 
   /**
