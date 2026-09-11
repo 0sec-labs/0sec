@@ -2454,6 +2454,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.apiKey = cfg.apiKey;
       this.baseUrl = cfg.baseUrl;
       this.wireApi = cfg.wireApi;
+      this.hostedCatalogPromise = null;
       diag.warn(
         "failover_engaged",
         `${reason} — failover to ${entry.provider} (${entry.model})`,
@@ -2471,10 +2472,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
    * full jitter (so a burst of concurrent scans desynchronises instead of
    * hammering the limit in lockstep).
    *
-   * The body is supplied as a zero-arg factory (`bodyFactory`) so that when
-   * cross-provider failover fires (plan quota or 429 retry budget exhausted →
-   * next provider), the body can be regenerated with the new model name by
-   * calling the factory again, which reads `this.model` lazily.
+   * The body factory is valid only for the current provider and wire protocol.
+   * A null result signals failover: the caller resolves the hosted catalog and
+   * rebuilds the complete request under its existing timeout/cancellation signal.
    *
    * Retry + failover caps documented on `retryBackoffMs` / `llm429MaxRetries`.
    *
@@ -2485,7 +2485,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     bodyFactory: () => string,
     signal: AbortSignal,
     abort?: CallAbort,
-  ): Promise<Response> {
+  ): Promise<Response | null> {
     let waited429Ms = 0;
     let waitedOtherMs = 0;
     for (let attempt = 0; ; attempt++) {
@@ -2604,10 +2604,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             quota,
           );
           if (this._tryFailover("plan quota exhausted")) {
-            attempt = -1;
-            waited429Ms = 0;
-            waitedOtherMs = 0;
-            continue;
+            return null;
           }
           throw quotaError;
         }
@@ -2628,12 +2625,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       if (attempt >= maxRetries) {
         // 429 budget exhausted — try cross-provider failover before giving up.
         if (is429 && this._tryFailover("429 retry budget exhausted")) {
-          // Provider switched; reset retry state. The next bodyFactory() call
-          // picks up `this.model` for the new provider.
-          attempt = -1;
-          waited429Ms = 0;
-          waitedOtherMs = 0;
-          continue;
+          return null;
         }
         return handBack();
       }
@@ -2644,10 +2636,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       if (waitedMs + delay > maxWaitMs) {
         // 429 cumulative backoff budget exhausted — try cross-provider failover.
         if (is429 && this._tryFailover("429 retry budget exhausted")) {
-          attempt = -1;
-          waited429Ms = 0;
-          waitedOtherMs = 0;
-          continue;
+          return null;
         }
         return handBack();
       }
@@ -2722,78 +2711,81 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     );
 
     try {
-      let res: Response;
+      let res: Response | null;
+      do {
 
-      if (this.isOpenAICompat && this.wireApi === "chat_completions") {
-        // OpenRouter / OpenAI / Azure chat completions format
-        const messages: Array<Record<string, string>> = [];
-        if (systemPrompt) {
-          messages.push({ role: "system", content: systemPrompt });
-        }
-        messages.push({ role: "user", content: prompt });
+        if (this.isOpenAICompat && this.wireApi === "chat_completions") {
+          // OpenRouter / OpenAI / Azure chat completions format
+          const messages: Array<Record<string, string>> = [];
+          if (systemPrompt) {
+            messages.push({ role: "system", content: systemPrompt });
+          }
+          messages.push({ role: "user", content: prompt });
 
-        res = await this.postWithRetry(
-          () => JSON.stringify({
-            model: this.model,
-            [this.maxTokensParamKey]: NATIVE_COMPLETION_TOKEN_LIMIT,
-            messages,
-            // See executeNative: explicit reasoning_effort passthrough only.
-            ...(this.reasoningEffort
-              ? { reasoning_effort: this.reasoningEffort }
-              : {}),
-          }),
-          controller.signal,
-        );
-      } else if (this.isOpenAICompat && this.wireApi === "responses") {
-        // Azure Responses API format
-        const input: Array<Record<string, unknown>> = [];
-        if (systemPrompt) {
+          res = await this.postWithRetry(
+            () => JSON.stringify({
+              model: this.model,
+              [this.maxTokensParamKey]: NATIVE_COMPLETION_TOKEN_LIMIT,
+              messages,
+              // See executeNative: explicit reasoning_effort passthrough only.
+              ...(this.reasoningEffort
+                ? { reasoning_effort: this.reasoningEffort }
+                : {}),
+            }),
+            controller.signal,
+          );
+        } else if (this.isOpenAICompat && this.wireApi === "responses") {
+          // Azure Responses API format
+          const input: Array<Record<string, unknown>> = [];
+          if (systemPrompt) {
+            input.push({
+              role: "system",
+              content: [{ type: "input_text", text: systemPrompt }],
+            });
+          }
           input.push({
-            role: "system",
-            content: [{ type: "input_text", text: systemPrompt }],
+            role: "user",
+            content: [{ type: "input_text", text: prompt }],
           });
-        }
-        input.push({
-          role: "user",
-          content: [{ type: "input_text", text: prompt }],
-        });
 
-        const isCodex = this.provider === "chatgpt-codex";
-        res = await this.postWithRetry(
-          () => JSON.stringify({
-            model: this.model,
-            input,
-            ...(isCodex ? { store: false } : { max_output_tokens: NATIVE_COMPLETION_TOKEN_LIMIT }),
-          }),
-          controller.signal,
-        );
-      } else if (this.isGoogleWire) {
-        res = await this.postWithRetry(
-          () => JSON.stringify({
-            ...(systemPrompt
-              ? { systemInstruction: { parts: [{ text: systemPrompt }] } }
-              : {}),
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
-          }),
-          controller.signal,
-        );
-      } else if (this.isAnthropicWire) {
-        // Anthropic Messages API format (also serves the z-ai/GLM and
-        // kimi/Moonshot providers — see `isAnthropicWire`).
-        res = await this.postWithRetry(
-          () => JSON.stringify({
-            model: this.model,
-            max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
-            ...this.anthropicThinkingField(),
-            ...(systemPrompt ? { system: systemPrompt } : {}),
-            messages: [{ role: "user", content: prompt }],
-          }),
-          controller.signal,
-        );
-      } else {
-        throw new Error(`execute: provider ${this.provider} is not mapped to a wire`);
-      }
+          const isCodex = this.provider === "chatgpt-codex";
+          res = await this.postWithRetry(
+            () => JSON.stringify({
+              model: this.model,
+              input,
+              ...(isCodex ? { store: false } : { max_output_tokens: NATIVE_COMPLETION_TOKEN_LIMIT }),
+            }),
+            controller.signal,
+          );
+        } else if (this.isGoogleWire) {
+          res = await this.postWithRetry(
+            () => JSON.stringify({
+              ...(systemPrompt
+                ? { systemInstruction: { parts: [{ text: systemPrompt }] } }
+                : {}),
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
+            }),
+            controller.signal,
+          );
+        } else if (this.isAnthropicWire) {
+          // Anthropic Messages API format (also serves the z-ai/GLM and
+          // kimi/Moonshot providers — see `isAnthropicWire`).
+          res = await this.postWithRetry(
+            () => JSON.stringify({
+              model: this.model,
+              max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
+              ...this.anthropicThinkingField(),
+              ...(systemPrompt ? { system: systemPrompt } : {}),
+              messages: [{ role: "user", content: prompt }],
+            }),
+            controller.signal,
+          );
+        } else {
+          throw new Error(`execute: provider ${this.provider} is not mapped to a wire`);
+        }
+        if (!res) await this.ensureHostedModel();
+      } while (!res);
 
       clearTimeout(timer);
 
@@ -2932,437 +2924,444 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     const call = composeCallAbort(controller.signal, signal);
 
     try {
-      let res: Response;
+      let res: Response | null;
+      do {
 
-      if (this.isOpenAICompat && this.wireApi === "chat_completions") {
-        // Convert to OpenAI chat completions format
-        const chatMessages: Array<Record<string, unknown>> = [];
-        chatMessages.push({ role: "system", content: system });
+        if (this.isOpenAICompat && this.wireApi === "chat_completions") {
+          // Convert to OpenAI chat completions format
+          const chatMessages: Array<Record<string, unknown>> = [];
+          chatMessages.push({ role: "system", content: system });
 
-        for (const m of messages) {
-          // Batch all tool_use blocks from the same message into a
-          // single assistant message with a tool_calls array. gpt-5+
-          // strictly validates that every assistant with tool_calls is
-          // immediately followed by tool responses for each call id —
-          // splitting one turn into multiple assistant messages breaks
-          // that invariant and produces a 400 from Azure.
-          type ToolCall = {
-            id: string;
-            type: "function";
-            function: { name: string; arguments: string };
-          };
-          const pendingToolCalls: ToolCall[] = [];
-          let pendingAssistantText: string | null = null;
-          const flushAssistant = (): void => {
-            if (pendingToolCalls.length === 0 && pendingAssistantText === null) return;
-            const msg: Record<string, unknown> = { role: "assistant" };
-            if (pendingAssistantText !== null) msg.content = pendingAssistantText;
-            else msg.content = null;
-            if (pendingToolCalls.length > 0) msg.tool_calls = pendingToolCalls.slice();
-            chatMessages.push(msg);
-            pendingToolCalls.length = 0;
-            pendingAssistantText = null;
-          };
+          for (const m of messages) {
+            // Batch all tool_use blocks from the same message into a
+            // single assistant message with a tool_calls array. gpt-5+
+            // strictly validates that every assistant with tool_calls is
+            // immediately followed by tool responses for each call id —
+            // splitting one turn into multiple assistant messages breaks
+            // that invariant and produces a 400 from Azure.
+            type ToolCall = {
+              id: string;
+              type: "function";
+              function: { name: string; arguments: string };
+            };
+            const pendingToolCalls: ToolCall[] = [];
+            let pendingAssistantText: string | null = null;
+            const flushAssistant = (): void => {
+              if (pendingToolCalls.length === 0 && pendingAssistantText === null) return;
+              const msg: Record<string, unknown> = { role: "assistant" };
+              if (pendingAssistantText !== null) msg.content = pendingAssistantText;
+              else msg.content = null;
+              if (pendingToolCalls.length > 0) msg.tool_calls = pendingToolCalls.slice();
+              chatMessages.push(msg);
+              pendingToolCalls.length = 0;
+              pendingAssistantText = null;
+            };
 
-          for (const block of m.content) {
-            if (block.type === "text") {
-              if (m.role === "assistant") {
-                pendingAssistantText = (pendingAssistantText ?? "") + block.text;
-              } else {
+            for (const block of m.content) {
+              if (block.type === "text") {
+                if (m.role === "assistant") {
+                  pendingAssistantText = (pendingAssistantText ?? "") + block.text;
+                } else {
+                  flushAssistant();
+                  chatMessages.push({ role: m.role, content: block.text });
+                }
+              } else if (block.type === "tool_use") {
+                pendingToolCalls.push({
+                  id: block.id,
+                  type: "function",
+                  function: { name: block.name, arguments: JSON.stringify(block.input) },
+                });
+              } else if (block.type === "tool_result") {
                 flushAssistant();
-                chatMessages.push({ role: m.role, content: block.text });
+                chatMessages.push({
+                  role: "tool",
+                  tool_call_id: block.tool_use_id,
+                  content: block.content,
+                });
               }
-            } else if (block.type === "tool_use") {
-              pendingToolCalls.push({
-                id: block.id,
-                type: "function",
-                function: { name: block.name, arguments: JSON.stringify(block.input) },
-              });
-            } else if (block.type === "tool_result") {
-              flushAssistant();
-              chatMessages.push({
-                role: "tool",
-                tool_call_id: block.tool_use_id,
-                content: block.content,
-              });
             }
+            // End-of-message flush so a turn that ends with tool_use
+            // blocks emits one assistant message with the full tool_calls
+            // array before the next turn's tool_results land.
+            flushAssistant();
           }
-          // End-of-message flush so a turn that ends with tool_use
-          // blocks emits one assistant message with the full tool_calls
-          // array before the next turn's tool_results land.
-          flushAssistant();
-        }
 
-        const body: Record<string, unknown> = {
-          model: this.model,
-          [this.maxTokensParamKey]: NATIVE_COMPLETION_TOKEN_LIMIT,
-          messages: chatMessages,
-        };
+          const body: Record<string, unknown> = {
+            model: this.model,
+            [this.maxTokensParamKey]: NATIVE_COMPLETION_TOKEN_LIMIT,
+            messages: chatMessages,
+          };
 
-        // reasoning_effort on the chat_completions wire — only when the
-        // operator set it explicitly (0SEC_REASONING_EFFORT / Azure config).
-        // DeepSeek direct honors it (measured 4x reasoning-token separation,
-        // 2026-08-12); endpoints that don't know the field (Alibaba
-        // compatible-mode) silently ignore it. Never apply the gpt-5/o1
-        // default here — default request shape must stay byte-identical.
-        if (this.reasoningEffort) {
-          body.reasoning_effort = this.reasoningEffort;
-        }
+          // reasoning_effort on the chat_completions wire — only when the
+          // operator set it explicitly (0SEC_REASONING_EFFORT / Azure config).
+          // DeepSeek direct honors it (measured 4x reasoning-token separation,
+          // 2026-08-12); endpoints that don't know the field (Alibaba
+          // compatible-mode) silently ignore it. Never apply the gpt-5/o1
+          // default here — default request shape must stay byte-identical.
+          if (this.reasoningEffort) {
+            body.reasoning_effort = this.reasoningEffort;
+          }
 
-        if (tools.length > 0) {
-          body.tools = tools.map((t) => ({
-            type: "function",
-            function: {
-              name: t.name,
-              description: t.description,
-              parameters: t.input_schema,
-            },
-          }));
-        }
+          if (tools.length > 0) {
+            body.tools = tools.map((t) => ({
+              type: "function",
+              function: {
+                name: t.name,
+                description: t.description,
+                parameters: t.input_schema,
+              },
+            }));
+          }
 
-        res = await this.postWithRetry(
-          () => JSON.stringify({ ...body, model: this.model }),
-          call.signal,
-          call,
-        );
-      } else if (this.isOpenAICompat && this.wireApi === "responses") {
-        // Responses API uses a flat list of items, not role-based messages.
-        // function_call and function_call_output are top-level items, not nested
-        // inside content arrays. See: developers.openai.com/docs/api-reference/responses
-        //
-        // ChatGPT Codex backend deviates: the system/developer prompt MUST
-        // travel as the top-level `instructions` body field, not as a
-        // role:"system" item inside `input`. A request without `instructions`
-        // gets a 400 `{"detail":"Instructions are required"}` regardless of
-        // what's in `input`. Send the prompt as `instructions` for codex and
-        // skip the in-input system message.
-        const isCodexProvider = this.provider === "chatgpt-codex";
-        const input: Array<Record<string, unknown>> = isCodexProvider
-          ? []
-          : [
+          res = await this.postWithRetry(
+            () => JSON.stringify({ ...body, model: this.model }),
+            call.signal,
+            call,
+          );
+        } else if (this.isOpenAICompat && this.wireApi === "responses") {
+          // Responses API uses a flat list of items, not role-based messages.
+          // function_call and function_call_output are top-level items, not nested
+          // inside content arrays. See: developers.openai.com/docs/api-reference/responses
+          //
+          // ChatGPT Codex backend deviates: the system/developer prompt MUST
+          // travel as the top-level `instructions` body field, not as a
+          // role:"system" item inside `input`. A request without `instructions`
+          // gets a 400 `{"detail":"Instructions are required"}` regardless of
+          // what's in `input`. Send the prompt as `instructions` for codex and
+          // skip the in-input system message.
+          const isCodexProvider = this.provider === "chatgpt-codex";
+          const input: Array<Record<string, unknown>> = isCodexProvider
+            ? []
+            : [
               {
                 role: "system",
                 content: [{ type: "input_text", text: system }],
               },
             ];
 
-        for (const m of messages) {
-          // ── Retained reasoning ──
-          // When this assistant turn carries the provider's own item array AND
-          // it was produced by exactly this provider+model+wireApi, replay it
-          // verbatim. That is the only supported way to return encrypted
-          // reasoning on this backend: `previous_response_id` is unsupported,
-          // and a field-by-field reconstruction cannot honour "a reasoning item
-          // must be immediately followed by the item it produced" — the flush
-          // below emits pending text as a `{role, content}` message BEFORE the
-          // function_call, which would land a message between the two and 400
-          // with `Item 'rs_…' … without its required following item`.
-          //
-          // The `continue` is load-bearing: falling through would emit the raw
-          // items AND their reconstructed twins.
-          //
-          // Any identity mismatch degrades to today's exact behaviour, which is
-          // also the model-switch strip point — encrypted reasoning is bound to
-          // the model that produced it. That covers the ensemble runtime
-          // (`openrouter.ts`), which hands ONE shared messages array to N models
-          // and appends the winner's turn back: every non-producing model sees a
-          // mismatch and reconstructs, instead of 400-ing on a sibling's items.
-          if (
-            features.retainedReasoning
-            && m.role === "assistant"
-            && m.providerRaw
-            && m.providerRaw.provider === this.provider
-            && m.providerRaw.model === this.model
-            && m.providerRaw.wireApi === this.wireApi
-            && m.providerRaw.output.length > 0
-          ) {
-            input.push(...(m.providerRaw.output as Array<Record<string, unknown>>));
-            continue;
-          }
+          for (const m of messages) {
+            // ── Retained reasoning ──
+            // When this assistant turn carries the provider's own item array AND
+            // it was produced by exactly this provider+model+wireApi, replay it
+            // verbatim. That is the only supported way to return encrypted
+            // reasoning on this backend: `previous_response_id` is unsupported,
+            // and a field-by-field reconstruction cannot honour "a reasoning item
+            // must be immediately followed by the item it produced" — the flush
+            // below emits pending text as a `{role, content}` message BEFORE the
+            // function_call, which would land a message between the two and 400
+            // with `Item 'rs_…' … without its required following item`.
+            //
+            // The `continue` is load-bearing: falling through would emit the raw
+            // items AND their reconstructed twins.
+            //
+            // Any identity mismatch degrades to today's exact behaviour, which is
+            // also the model-switch strip point — encrypted reasoning is bound to
+            // the model that produced it. That covers the ensemble runtime
+            // (`openrouter.ts`), which hands ONE shared messages array to N models
+            // and appends the winner's turn back: every non-producing model sees a
+            // mismatch and reconstructs, instead of 400-ing on a sibling's items.
+            if (
+              features.retainedReasoning
+              && m.role === "assistant"
+              && m.providerRaw
+              && m.providerRaw.provider === this.provider
+              && m.providerRaw.model === this.model
+              && m.providerRaw.wireApi === this.wireApi
+              && m.providerRaw.output.length > 0
+            ) {
+              input.push(...(m.providerRaw.output as Array<Record<string, unknown>>));
+              continue;
+            }
 
-          // Collect text blocks into a role-based message. The OpenAI Responses
-          // API distinguishes text content by producer: user/system/developer
-          // roles use `input_text`, but the assistant role must use
-          // `output_text` (or `refusal`). Sending `input_text` on an assistant
-          // message yields a 400 on Azure with:
-          //   "Invalid value: 'input_text'. Supported values are:
-          //    'output_text' and 'refusal'."
-          // The agent loop replays the assistant's prior text replies on every
-          // turn, so this bug used to kill every multi-turn scan on Azure
-          // starting at turn 2 — the error was misdiagnosed as a "max turns
-          // without completion" because each retry failed with the same 400.
-          const assistantText = m.role === "assistant";
-          const textType = assistantText ? "output_text" : "input_text";
-          const textBlocks: Array<Record<string, unknown>> = [];
-          for (const block of m.content) {
-            if (block.type === "text") {
-              textBlocks.push({ type: textType, text: block.text });
-            } else if (block.type === "tool_use") {
-              // Flush any pending text blocks first
-              if (textBlocks.length > 0) {
-                input.push({ role: m.role, content: [...textBlocks] });
-                textBlocks.length = 0;
+            // Collect text blocks into a role-based message. The OpenAI Responses
+            // API distinguishes text content by producer: user/system/developer
+            // roles use `input_text`, but the assistant role must use
+            // `output_text` (or `refusal`). Sending `input_text` on an assistant
+            // message yields a 400 on Azure with:
+            //   "Invalid value: 'input_text'. Supported values are:
+            //    'output_text' and 'refusal'."
+            // The agent loop replays the assistant's prior text replies on every
+            // turn, so this bug used to kill every multi-turn scan on Azure
+            // starting at turn 2 — the error was misdiagnosed as a "max turns
+            // without completion" because each retry failed with the same 400.
+            const assistantText = m.role === "assistant";
+            const textType = assistantText ? "output_text" : "input_text";
+            const textBlocks: Array<Record<string, unknown>> = [];
+            for (const block of m.content) {
+              if (block.type === "text") {
+                textBlocks.push({ type: textType, text: block.text });
+              } else if (block.type === "tool_use") {
+                // Flush any pending text blocks first
+                if (textBlocks.length > 0) {
+                  input.push({ role: m.role, content: [...textBlocks] });
+                  textBlocks.length = 0;
+                }
+                // Assistant tool_use → top-level function_call item
+                input.push({
+                  type: "function_call",
+                  call_id: block.id,
+                  name: block.name,
+                  arguments: JSON.stringify(block.input),
+                });
+              } else if (block.type === "tool_result") {
+                // Flush any pending text blocks first
+                if (textBlocks.length > 0) {
+                  input.push({ role: m.role, content: [...textBlocks] });
+                  textBlocks.length = 0;
+                }
+                // Tool result → top-level function_call_output item
+                input.push({
+                  type: "function_call_output",
+                  call_id: block.tool_use_id,
+                  output: block.content,
+                });
               }
-              // Assistant tool_use → top-level function_call item
-              input.push({
-                type: "function_call",
-                call_id: block.id,
-                name: block.name,
-                arguments: JSON.stringify(block.input),
-              });
-            } else if (block.type === "tool_result") {
-              // Flush any pending text blocks first
-              if (textBlocks.length > 0) {
-                input.push({ role: m.role, content: [...textBlocks] });
-                textBlocks.length = 0;
-              }
-              // Tool result → top-level function_call_output item
-              input.push({
-                type: "function_call_output",
-                call_id: block.tool_use_id,
-                output: block.content,
-              });
+            }
+            // Flush remaining text blocks
+            if (textBlocks.length > 0) {
+              input.push({ role: m.role, content: textBlocks });
             }
           }
-          // Flush remaining text blocks
-          if (textBlocks.length > 0) {
-            input.push({ role: m.role, content: textBlocks });
-          }
-        }
 
-        const reasoningEffort = this.reasoningEffort ?? defaultReasoningEffort(this.model);
-        // Codex backend rejects `max_output_tokens` set explicitly +
-        // expects `store: false` to stay stateless (opencode
-        // transform.ts:1056-1063 sets these for every Responses
-        // request). For the public Platform API path keep the
-        // explicit cap so we stay budget-bounded. Diff is per-key,
-        // not per-shape — same body otherwise.
-        const isCodex = this.provider === "chatgpt-codex";
-        const body: Record<string, unknown> = {
-          model: this.model,
-          input,
-          ...(isCodex
-            ? { store: false, instructions: system }
-            : { max_output_tokens: NATIVE_COMPLETION_TOKEN_LIMIT }),
-          ...(reasoningEffort
-            ? {
+          const reasoningEffort = this.reasoningEffort ?? defaultReasoningEffort(this.model);
+          // Codex backend rejects `max_output_tokens` set explicitly +
+          // expects `store: false` to stay stateless (opencode
+          // transform.ts:1056-1063 sets these for every Responses
+          // request). For the public Platform API path keep the
+          // explicit cap so we stay budget-bounded. Diff is per-key,
+          // not per-shape — same body otherwise.
+          const isCodex = this.provider === "chatgpt-codex";
+          const body: Record<string, unknown> = {
+            model: this.model,
+            input,
+            ...(isCodex
+              ? { store: false, instructions: system }
+              : { max_output_tokens: NATIVE_COMPLETION_TOKEN_LIMIT }),
+            ...(reasoningEffort
+              ? {
                 reasoning: {
                   effort: reasoningEffort,
                   summary: "auto",
                 },
                 include: ["reasoning.encrypted_content"],
               }
-            : {}),
-          // Server-side compaction, opt-in per runtime. ZDR-friendly: it works
-          // with `store: false`, so nothing is retained server-side between
-          // requests. Only the loops with no context strategy of their own ask
-          // for it — the native loop compacts client-side and must not be
-          // compacted twice.
-          //
-          // SHAPE IS LOAD-BEARING and was verified live against
-          // chatgpt.com/backend-api/codex/responses, because this backend
-          // rejects unknown and mis-typed body fields rather than ignoring
-          // them (a bogus field returns
-          // `400 Unsupported parameter: <name>`):
-          //   [{"type":"compaction","compact_threshold":N}]  → 200
-          //   {"compaction":{"compact_threshold":N}}         → 400 expected an
-          //                                                    array of objects
-          //   [{"compaction":{...}}]                         → 400 missing
-          //                                                    'context_management[0].type'
-          //   []                                             → 400 minimum
-          //                                                    length 1
-          // The object form is what the public Responses docs show; it is not
-          // what this backend takes. Never emit the key with an empty array —
-          // that is a hard 400, hence the guard rather than a `.filter()`.
-          //
-          // Only the two stages that opt in send this, and they run on the
-          // Codex backend. The shape is UNVERIFIED on plain OpenAI / Azure
-          // Responses; if a caller ever enables it there, verify with a live
-          // request before trusting it.
-          ...(this.serverCompactionTokens
-            ? {
+              : {}),
+            // Server-side compaction, opt-in per runtime. ZDR-friendly: it works
+            // with `store: false`, so nothing is retained server-side between
+            // requests. Only the loops with no context strategy of their own ask
+            // for it — the native loop compacts client-side and must not be
+            // compacted twice.
+            //
+            // SHAPE IS LOAD-BEARING and was verified live against
+            // chatgpt.com/backend-api/codex/responses, because this backend
+            // rejects unknown and mis-typed body fields rather than ignoring
+            // them (a bogus field returns
+            // `400 Unsupported parameter: <name>`):
+            //   [{"type":"compaction","compact_threshold":N}]  → 200
+            //   {"compaction":{"compact_threshold":N}}         → 400 expected an
+            //                                                    array of objects
+            //   [{"compaction":{...}}]                         → 400 missing
+            //                                                    'context_management[0].type'
+            //   []                                             → 400 minimum
+            //                                                    length 1
+            // The object form is what the public Responses docs show; it is not
+            // what this backend takes. Never emit the key with an empty array —
+            // that is a hard 400, hence the guard rather than a `.filter()`.
+            //
+            // Only the two stages that opt in send this, and they run on the
+            // Codex backend. The shape is UNVERIFIED on plain OpenAI / Azure
+            // Responses; if a caller ever enables it there, verify with a live
+            // request before trusting it.
+            ...(this.serverCompactionTokens
+              ? {
                 context_management: [
                   { type: "compaction", compact_threshold: this.serverCompactionTokens },
                 ],
               }
-            : {}),
-        };
+              : {}),
+          };
 
-        if (tools.length > 0) {
-          body.tools = tools.map((t) => ({
-            type: "function",
-            name: t.name,
-            description: t.description,
-            // Codex backend's Responses API expects `strict` alongside
-            // parameters. `false` keeps schema enforcement off so a model
-            // that drifts on argument shape still emits the call instead
-            // of failing it server-side. The public OpenAI Responses
-            // schema tolerates the extra field.
-            strict: false,
-            parameters: t.input_schema,
-          }));
-          if (isCodex) {
-            // Every reference Codex client (openai/codex,
-            // glowbom/glowby) sets these. Omitting them shouldn't be
-            // fatal — the backend doesn't 400 — but it leaves the
-            // tool-invocation policy implicit. Setting them explicitly
-            // matches the canonical client behaviour and rules out a
-            // server-side default that gates tool use.
-            body.tool_choice = "auto";
-            body.parallel_tool_calls = true;
+          if (tools.length > 0) {
+            body.tools = tools.map((t) => ({
+              type: "function",
+              name: t.name,
+              description: t.description,
+              // Codex backend's Responses API expects `strict` alongside
+              // parameters. `false` keeps schema enforcement off so a model
+              // that drifts on argument shape still emits the call instead
+              // of failing it server-side. The public OpenAI Responses
+              // schema tolerates the extra field.
+              strict: false,
+              parameters: t.input_schema,
+            }));
+            if (isCodex) {
+              // Every reference Codex client (openai/codex,
+              // glowbom/glowby) sets these. Omitting them shouldn't be
+              // fatal — the backend doesn't 400 — but it leaves the
+              // tool-invocation policy implicit. Setting them explicitly
+              // matches the canonical client behaviour and rules out a
+              // server-side default that gates tool use.
+              body.tool_choice = "auto";
+              body.parallel_tool_calls = true;
+            }
           }
-        }
 
-        res = await this.postWithRetry(
-          () => JSON.stringify({ ...body, stream: true, model: this.model }),
-          call.signal,
-          call,
-        );
+          res = await this.postWithRetry(
+            () => JSON.stringify({ ...body, stream: true, model: this.model }),
+            call.signal,
+            call,
+          );
+          if (!res) {
+            await this.ensureHostedModel();
+            continue;
+          }
 
 
-        if (!res.ok) {
-          const responseText = await res.text();
+          if (!res.ok) {
+            const responseText = await res.text();
+            clearTimeout(timer);
+            return {
+              content: [{ type: "text", text: "" }],
+              stopReason: "error",
+              durationMs: Date.now() - start,
+              error: `${this.providerLabel} API error ${res.status}: ${responseText.slice(0, 500)}`,
+            };
+          }
+
+          const streamed = await this.consumeResponsesStream(res, start, callbacks, {
+            idleTimeoutMs: llmStreamIdleTimeoutMs(),
+            abort: call,
+          });
           clearTimeout(timer);
-          return {
-            content: [{ type: "text", text: "" }],
-            stopReason: "error",
-            durationMs: Date.now() - start,
-            error: `${this.providerLabel} API error ${res.status}: ${responseText.slice(0, 500)}`,
+          return streamed;
+        } else if (this.isGoogleWire) {
+          const body: Record<string, unknown> = {
+            ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+            contents: this.googleContents(messages),
+            generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
           };
-        }
+          if (tools.length > 0) {
+            body.tools = [{
+              functionDeclarations: tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                parametersJsonSchema: tool.input_schema,
+              })),
+            }];
+          }
+          res = await this.postWithRetry(
+            () => JSON.stringify(body),
+            call.signal,
+            call,
+          );
+        } else if (this.isAnthropicWire) {
+          // Anthropic Messages API format (also serves the z-ai/GLM and
+          // kimi/Moonshot providers — see `isAnthropicWire`).
+          const replayedRawMessageIndexes = new Set<number>();
+          const apiMessages: Array<{ role: string; content: WireBlock[] }> = messages.map((m, index) => {
+            // Anthropic requires an assistant turn containing thinking or
+            // redacted_thinking to be echoed back EXACTLY as received. Rebuilding
+            // it from visible text/tool blocks drops the signature and 400s on the
+            // next tool-use turn. The full response content array keeps each
+            // thinking block adjacent to the text/tool_use item it produced.
+            if (
+              features.retainedReasoning
+              && m.role === "assistant"
+              && m.providerRaw
+              && m.providerRaw.provider === this.provider
+              && m.providerRaw.model === this.model
+              && m.providerRaw.wireApi === this.wireApi
+              && m.providerRaw.output.length > 0
+              && isWireBlockArray(m.providerRaw.output)
+            ) {
+              replayedRawMessageIndexes.add(index);
+              return { role: m.role, content: m.providerRaw.output };
+            }
 
-        const streamed = await this.consumeResponsesStream(res, start, callbacks, {
-          idleTimeoutMs: llmStreamIdleTimeoutMs(),
-          abort: call,
-        });
-        clearTimeout(timer);
-        return streamed;
-      } else if (this.isGoogleWire) {
-        const body: Record<string, unknown> = {
-          ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-          contents: this.googleContents(messages),
-          generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
-        };
-        if (tools.length > 0) {
-          body.tools = [{
-            functionDeclarations: tools.map((tool) => ({
-              name: tool.name,
-              description: tool.description,
-              parametersJsonSchema: tool.input_schema,
-            })),
-          }];
-        }
-        res = await this.postWithRetry(
-          () => JSON.stringify(body),
-          call.signal,
-          call,
-        );
-      } else if (this.isAnthropicWire) {
-        // Anthropic Messages API format (also serves the z-ai/GLM and
-        // kimi/Moonshot providers — see `isAnthropicWire`).
-        const replayedRawMessageIndexes = new Set<number>();
-        const apiMessages: Array<{ role: string; content: WireBlock[] }> = messages.map((m, index) => {
-          // Anthropic requires an assistant turn containing thinking or
-          // redacted_thinking to be echoed back EXACTLY as received. Rebuilding
-          // it from visible text/tool blocks drops the signature and 400s on the
-          // next tool-use turn. The full response content array keeps each
-          // thinking block adjacent to the text/tool_use item it produced.
-          if (
-            features.retainedReasoning
-            && m.role === "assistant"
-            && m.providerRaw
-            && m.providerRaw.provider === this.provider
-            && m.providerRaw.model === this.model
-            && m.providerRaw.wireApi === this.wireApi
-            && m.providerRaw.output.length > 0
-            && isWireBlockArray(m.providerRaw.output)
-          ) {
-            replayedRawMessageIndexes.add(index);
-            return { role: m.role, content: m.providerRaw.output };
+            return {
+              role: m.role,
+              content: m.content.map((block): WireBlock => {
+                if (block.type === "text") return { type: "text", text: block.text };
+                if (block.type === "tool_use") {
+                  return { type: "tool_use", id: block.id, name: block.name, input: block.input };
+                }
+                if (block.type === "tool_result") {
+                  return {
+                    type: "tool_result",
+                    tool_use_id: block.tool_use_id,
+                    content: block.content,
+                    ...(block.is_error ? { is_error: true } : {}),
+                  };
+                }
+                // Unreachable for the current block union (`block` narrows to
+                // `never` here); kept as the original passthrough so an added
+                // block kind degrades to "sent as-is" rather than being dropped.
+                return block;
+              }),
+            };
+          });
+
+          // ── Prompt caching ──
+          // Only Anthropic (and explicitly opted-in Anthropic-compatible
+          // endpoints) get `cache_control`. This branch is the ONLY one that can
+          // emit it: the OpenAI chat-completions and Responses branches above
+          // build their bodies independently and never reach this code, so the
+          // Azure / OpenAI / Codex / OpenRouter wires are structurally incapable
+          // of receiving an Anthropic-shaped field.
+          const cacheEnabled =
+            features.promptCache && providerSupportsPromptCache(this.provider);
+
+          for (const index of cacheEnabled
+            ? planMessageBreakpoints(apiMessages, MESSAGE_CACHE_BREAKPOINTS)
+            : []) {
+            // `cache_control` would mutate a replayed assistant turn and violate
+            // Anthropic's "echo exactly as received" signature contract. Keep the
+            // stable system breakpoint and other message breakpoints; skip only
+            // the opaque replayed turn.
+            if (replayedRawMessageIndexes.has(index)) continue;
+            // Mark the message's LAST block so the cached prefix covers it whole.
+            // Breakpoints are recomputed from the current array on every call and
+            // never carried across turns — which is exactly what makes recovery
+            // from `native-loop`'s compaction automatic: compaction rewrites the
+            // transcript and voids these entries, and the next call simply plans
+            // fresh breakpoints over the rewritten history.
+            const blocks = apiMessages[index]?.content;
+            const lastBlock = blocks?.length ? blocks[blocks.length - 1] : undefined;
+            if (blocks && lastBlock) blocks[blocks.length - 1] = withCacheControl(lastBlock);
           }
 
-          return {
-            role: m.role,
-            content: m.content.map((block): WireBlock => {
-              if (block.type === "text") return { type: "text", text: block.text };
-              if (block.type === "tool_use") {
-                return { type: "tool_use", id: block.id, name: block.name, input: block.input };
-              }
-              if (block.type === "tool_result") {
-                return {
-                  type: "tool_result",
-                  tool_use_id: block.tool_use_id,
-                  content: block.content,
-                  ...(block.is_error ? { is_error: true } : {}),
-                };
-              }
-              // Unreachable for the current block union (`block` narrows to
-              // `never` here); kept as the original passthrough so an added
-              // block kind degrades to "sent as-is" rather than being dropped.
-              return block;
-            }),
+          const body: Record<string, unknown> = {
+            model: this.model,
+            max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
+            ...this.anthropicThinkingField(),
+            // The remaining breakpoint goes on the system prompt. Because the
+            // wire renders `tools` → `system` → `messages`, one marker here
+            // caches the tool schemas AND the system prompt together — the
+            // largest, most static span in the request, and the one that never
+            // changes for the lifetime of an agent session. Sent as a block array
+            // (the only shape that accepts `cache_control`) when caching is on,
+            // and left as a plain string otherwise so non-caching providers see a
+            // byte-identical body to before this change.
+            system: cacheEnabled
+              ? [withCacheControl({ type: "text", text: system })]
+              : system,
+            messages: apiMessages,
           };
-        });
 
-        // ── Prompt caching ──
-        // Only Anthropic (and explicitly opted-in Anthropic-compatible
-        // endpoints) get `cache_control`. This branch is the ONLY one that can
-        // emit it: the OpenAI chat-completions and Responses branches above
-        // build their bodies independently and never reach this code, so the
-        // Azure / OpenAI / Codex / OpenRouter wires are structurally incapable
-        // of receiving an Anthropic-shaped field.
-        const cacheEnabled =
-          features.promptCache && providerSupportsPromptCache(this.provider);
+          if (tools.length > 0) {
+            body.tools = tools;
+          }
 
-        for (const index of cacheEnabled
-          ? planMessageBreakpoints(apiMessages, MESSAGE_CACHE_BREAKPOINTS)
-          : []) {
-          // `cache_control` would mutate a replayed assistant turn and violate
-          // Anthropic's "echo exactly as received" signature contract. Keep the
-          // stable system breakpoint and other message breakpoints; skip only
-          // the opaque replayed turn.
-          if (replayedRawMessageIndexes.has(index)) continue;
-          // Mark the message's LAST block so the cached prefix covers it whole.
-          // Breakpoints are recomputed from the current array on every call and
-          // never carried across turns — which is exactly what makes recovery
-          // from `native-loop`'s compaction automatic: compaction rewrites the
-          // transcript and voids these entries, and the next call simply plans
-          // fresh breakpoints over the rewritten history.
-          const blocks = apiMessages[index]?.content;
-          const lastBlock = blocks?.length ? blocks[blocks.length - 1] : undefined;
-          if (blocks && lastBlock) blocks[blocks.length - 1] = withCacheControl(lastBlock);
+          res = await this.postWithRetry(
+            () => JSON.stringify({ ...body, model: this.model }),
+            call.signal,
+            call,
+          );
+        } else {
+          throw new Error(`executeNative: provider ${this.provider} is not mapped to a wire`);
         }
-
-        const body: Record<string, unknown> = {
-          model: this.model,
-          max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
-          ...this.anthropicThinkingField(),
-          // The remaining breakpoint goes on the system prompt. Because the
-          // wire renders `tools` → `system` → `messages`, one marker here
-          // caches the tool schemas AND the system prompt together — the
-          // largest, most static span in the request, and the one that never
-          // changes for the lifetime of an agent session. Sent as a block array
-          // (the only shape that accepts `cache_control`) when caching is on,
-          // and left as a plain string otherwise so non-caching providers see a
-          // byte-identical body to before this change.
-          system: cacheEnabled
-            ? [withCacheControl({ type: "text", text: system })]
-            : system,
-          messages: apiMessages,
-        };
-
-        if (tools.length > 0) {
-          body.tools = tools;
-        }
-
-        res = await this.postWithRetry(
-          () => JSON.stringify({ ...body, model: this.model }),
-          call.signal,
-          call,
-        );
-      } else {
-        throw new Error(`executeNative: provider ${this.provider} is not mapped to a wire`);
-      }
+        if (!res) await this.ensureHostedModel();
+      } while (!res);
 
       // Keep the abort timer ARMED through the body read. `fetch()` resolves as
       // soon as the response HEADERS arrive; the body is drained by `res.text()`.
