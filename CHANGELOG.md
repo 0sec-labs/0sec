@@ -25,6 +25,9 @@ on the published npm package and the GitHub Release tag.
   Status rows and pickers use Nerd Font icons with retained text labels;
   glyph appearance depends on the terminal font. Cancellation keeps partial
   output without adding a persistent interruption notice.
+- Contextual model, session, finding, usage, worker, and marketplace views use
+  compact controls. Usage reports scroll without losing unknown-cost markers;
+  worker steering accepts pasted text, and marketplace actions retain confirmation.
 - Child runtimes inherit the parent's resolved provider configuration.
   Scoped harness shutdown drains work before disposal and reports incomplete
   cleanup. Restarting an engine does not reconstruct active harness state.

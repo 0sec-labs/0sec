@@ -34,12 +34,9 @@ import {
   buildUsageReport,
   clipUsageRows,
   computeUsageLayout,
-  computeUsageTitleLayout,
   readCurrentUsage,
   usageFooterHint,
   usageMeterBar,
-  usageTitle,
-  usageTitleMeta,
   type UsageLayout,
   type UsagePane,
   type UsageReportRow,
@@ -108,13 +105,10 @@ function toneColor(theme: Theme, tone: UsageTone | undefined): string | undefine
 function Pane({
   pane,
   bordered,
-  title,
   children,
 }: {
   pane: UsagePane;
   bordered: boolean;
-  /** The header row node, already fitted to the pane's inner width. */
-  title: React.ReactNode;
   children: React.ReactNode;
 }) {
   const theme = useTheme();
@@ -132,35 +126,7 @@ function Pane({
       backgroundColor={bordered ? theme.PANEL : undefined}
       paddingX={bordered ? 1 : undefined}
     >
-      {pane.hasTitle ? title : null}
       {children}
-    </box>
-  );
-}
-
-/**
- * The pane header: a bold, primary-toned title on the left and a right-aligned
- * summary meta on the right (the priced session cost, else the model). Widths
- * come off `computeUsageTitleLayout`, so the row claims exactly the pane's inner
- * width and the title survives when the header is too narrow for both.
- */
-function TitleRow({ innerWidth, title, meta }: { innerWidth: number; title: string; meta: string }) {
-  const theme = useTheme();
-  const columns = computeUsageTitleLayout(innerWidth, meta.length);
-  if (columns.width <= 0) return null;
-  return (
-    <box flexDirection="row" width={columns.width} flexShrink={0} minWidth={0}>
-      <Cells width={columns.titleWidth} fg={theme.PRIMARY} attributes={TextAttributes.BOLD}>
-        {title}
-      </Cells>
-      {columns.metaWidth > 0 ? (
-        <>
-          <Cells width={columns.gap}>{""}</Cells>
-          <Cells width={columns.metaWidth} align="right" fg={theme.MUTED}>
-            {meta}
-          </Cells>
-        </>
-      ) : null}
     </box>
   );
 }
@@ -243,7 +209,10 @@ export function UsageScreen({ frame, usage, onBack, onExit }: UsageScreenProps) 
   const report = useMemo(() => buildUsageReport(snapshot), [snapshot]);
 
   const layout = computeUsageLayout({ width, height });
-  const visible = clipUsageRows(report, layout.visibleRows);
+  const [offset, setOffset] = React.useState(0);
+  const maxOffset = Math.max(0, report.length - Math.max(1, layout.visibleRows));
+  const currentOffset = Math.min(offset, maxOffset);
+  const visible = clipUsageRows(report.slice(currentOffset), layout.visibleRows);
 
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") {
@@ -254,16 +223,20 @@ export function UsageScreen({ frame, usage, onBack, onExit }: UsageScreenProps) 
       onBack();
       return;
     }
+    if (key.ctrl || key.meta || key.option) return;
+    if (key.name === "home") return setOffset(0);
+    if (key.name === "end") return setOffset(maxOffset);
+    const step = Math.max(1, layout.visibleRows - 1);
+    if (key.name === "up" || key.name === "pageup") {
+      setOffset(Math.max(0, currentOffset - (key.name === "pageup" ? step : 1)));
+    } else if (key.name === "down" || key.name === "pagedown") {
+      setOffset(Math.min(maxOffset, currentOffset + (key.name === "pagedown" ? step : 1)));
+    }
   });
-
-  const meta = usageTitleMeta(snapshot);
-  const titleRow = (
-    <TitleRow innerWidth={layout.pane.innerWidth} title={usageTitle()} meta={meta} />
-  );
 
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
-      <Pane pane={layout.pane} bordered={layout.bordered} title={titleRow}>
+      <Pane pane={layout.pane} bordered={layout.bordered}>
         {visible.map((row, index) => (
           <ReportRow key={`usage-${index}`} row={row} layout={layout} theme={theme} />
         ))}
@@ -271,5 +244,5 @@ export function UsageScreen({ frame, usage, onBack, onExit }: UsageScreenProps) 
     </box>
   );
 
-  return <>{frame({ body, hint: usageFooterHint() })}</>;
+  return <>{frame({ body, hint: `${maxOffset > 0 ? "↑↓ scroll · " : ""}${usageFooterHint()}` })}</>;
 }

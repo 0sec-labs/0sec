@@ -494,10 +494,9 @@ export type ModelMode = "browse" | "filter";
 export function modelFooterHint(mode: ModelMode, hasFilter = false): string {
   return [
     "↑↓ select",
-    "enter select for new chat",
-    "tab curated/all",
+    "enter pick",
+    "tab all",
     mode === "filter" || hasFilter ? "esc clear" : "esc back",
-    "ctrl+u clear",
   ].join(" · ");
 }
 

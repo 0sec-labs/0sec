@@ -351,14 +351,13 @@ export function resumeFooterHint(
       return "del confirm delete · esc cancel";
     default:
       return [
-        "up/down move",
+        "↑↓",
         hasSessions ? "enter resume" : undefined,
         "del delete",
         "/ filter",
-        `tab ${scope === "project" ? "all projects" : "project scope"}`,
+        `tab ${scope === "project" ? "all" : "project"}`,
         count,
-        hasFilter ? "esc clear filter" : "esc back",
-        "ctrl+c exit",
+        hasFilter ? "esc clear" : "esc back",
       ]
         .filter((part): part is string => part !== undefined)
         .join(" · ");

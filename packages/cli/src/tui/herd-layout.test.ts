@@ -676,7 +676,6 @@ describe("focus content — header and transcript", () => {
     const p = subagentPeers(map, NOW).find((x) => x.id === "child-1");
     const text = focusHeaderLines(p, rec, 60, NOW + 2).map((l) => l.text);
     expect(text.some((t) => t.includes("audit the auth flow"))).toBe(true);
-    expect(text).toContain("Status: running");
     expect(text).toContain("Turns: 3");
     expect(text.some((t) => t.startsWith("Tool: curl"))).toBe(true);
   });

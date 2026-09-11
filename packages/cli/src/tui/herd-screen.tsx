@@ -324,12 +324,13 @@ export function HerdScreen({
     setSearchQuery(value);
   };
 
-  // Paste into the search field. Only fires while search is active so a paste
-  // never escapes into navigation or focus mode.
+  // Paste only into the active search or steering field, never navigation.
   usePaste((event) => {
-    if (!searchingRef.current) return;
+    if (!searchingRef.current && !composingRef.current) return;
     const text = sanitizeTuiText(decodePasteBytes(event.bytes));
-    if (text) setSearchQueryBoth(searchQueryRef.current + text);
+    if (!text) return;
+    if (searchingRef.current) setSearchQueryBoth(searchQueryRef.current + text);
+    else setDraftBoth(draftRef.current + text);
   });
 
   const setComposingBoth = (value: boolean) => {

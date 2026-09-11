@@ -438,6 +438,7 @@ export function MarketScreen({
     // ── filter mode ──
     if (mode === "filter") {
       if (key.name === "escape") {
+        setQuery("");
         setMode("browse");
         return;
       }
@@ -508,9 +509,9 @@ export function MarketScreen({
     // The marker column doubles as a selection caret and an installed-state
     // dot, exactly like the shared agent row: a selected row shows an accent
     // "▸", an installed/enabled/active item a state-coloured "●", and an
-    // available one nothing. The highlighted row's label is accent + bold.
+    // available one a faint "·" so the column is never bare.
     const installed = entry.state !== "available";
-    const markerGlyph = selectedRow ? "▸" : installed ? "●" : "";
+    const markerGlyph = selectedRow ? "▸" : installed ? "●" : "·";
     const markerFg = selectedRow ? theme.ACCENT : stateColor(theme, entry.state);
     const labelFg = selectedRow ? theme.ACCENT : installed ? theme.TEXT : theme.MUTED;
     return (
@@ -565,14 +566,7 @@ export function MarketScreen({
         layout.detail.bodyRows,
         layout.detail.innerWidth,
       )
-    : clipMarketDetailLines(
-        marketEmptyLines(
-          { registryUrl: url, error, reachableButEmpty },
-          layout.detail.innerWidth,
-        ),
-        layout.detail.bodyRows,
-        layout.detail.innerWidth,
-      );
+    : [];
 
   const detailBody = detailLines.map((line, index) => (
     <Cells
@@ -584,13 +578,17 @@ export function MarketScreen({
     </Cells>
   ));
 
-  const listEmptyText = !loaded
-    ? "loading…"
-    : filter
-      ? "no items match this filter"
-      : url.length === 0
-        ? "no registry configured"
-        : "no items available";
+  const emptyLines = rows.length === 0
+    ? clipMarketDetailLines(
+        filter
+          ? [{ text: "No extensions match this filter.", tone: "muted" }]
+          : !loaded
+            ? [{ text: "Loading extensions…", tone: "muted" }]
+            : marketEmptyLines({ registryUrl: url, error, reachableButEmpty }, layout.contentWidth),
+        layout.bodyRows,
+        layout.contentWidth,
+      )
+    : [];
 
   const statusText =
     mode === "confirm" && activeItem
@@ -623,6 +621,15 @@ export function MarketScreen({
 
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
+      {rows.length === 0 ? (
+        <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
+          {emptyLines.map((line, index) => (
+            <Cells key={`empty-${index}`} width={layout.contentWidth} fg={toneColor(theme, line.tone)}>
+              {line.text}
+            </Cells>
+          ))}
+        </box>
+      ) : (
       <box
         flexDirection={layout.stacked ? "column" : "row"}
         gap={layout.paneGap}
@@ -635,13 +642,7 @@ export function MarketScreen({
           title={listHeading.title}
           meta={listHeading.meta}
         >
-          {rows.length === 0 ? (
-            <Cells width={row.width} fg={theme.MUTED}>
-              {listEmptyText}
-            </Cells>
-          ) : (
-            listBody
-          )}
+          {listBody}
         </Pane>
         <Pane
           pane={layout.detail}
@@ -652,14 +653,20 @@ export function MarketScreen({
           {detailBody}
         </Pane>
       </box>
+      )}
+      {rows.length > 0 || notice || mode !== "browse" ? (
       <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>
         <Cells width={layout.contentWidth} fg={statusTone}>
           {statusText}
         </Cells>
       </box>
+      ) : null}
     </box>
   );
 
   const hasFilter = filter.length > 0;
-  return <>{frame({ body, hint: marketFooterHint(mode, hasFilter, activeAction) })}</>;
+  const hint = rows.length === 0 && !hasFilter && mode === "browse"
+    ? "esc back · ctrl+c exit"
+    : marketFooterHint(mode, hasFilter, activeAction);
+  return <>{frame({ body, hint })}</>;
 }

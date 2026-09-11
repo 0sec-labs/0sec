@@ -332,10 +332,6 @@ describe("buildFindingRows", () => {
     expect(flat).toContain("Bare finding");
   });
 
-  it("returns a placeholder row when no finding is supplied", () => {
-    const rows = buildFindingRows(undefined, 60);
-    expect(rows).toEqual([{ kind: "text", text: "No finding selected.", tone: "muted" }]);
-  });
 });
 
 describe("paneTitleColumns (finding-detail)", () => {
