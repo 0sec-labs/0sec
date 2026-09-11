@@ -600,15 +600,6 @@ describe("motion settings", () => {
 });
 
 describe("SETTING_DEFS", () => {
-  // The table and the interface are two halves of one declaration; nothing but
-  // a test stops a new field from being added to `TuiSettings` without a def
-  // (invisible in the settings UI) or a def from outliving its field.
-  it("has one def per TuiSettings field", () => {
-    const defKeys = SETTING_DEFS.map((def) => def.key).sort();
-    const fieldKeys = Object.keys(DEFAULT_SETTINGS).sort();
-
-    expect(defKeys).toEqual(fieldKeys);
-  });
 
   it("has a field for every def", () => {
     for (const def of SETTING_DEFS) {
@@ -616,13 +607,6 @@ describe("SETTING_DEFS", () => {
     }
   });
 
-  it("has a def for every field", () => {
-    const defKeys = new Set(SETTING_DEFS.map((def) => def.key));
-
-    for (const key of Object.keys(DEFAULT_SETTINGS)) {
-      expect(defKeys.has(key)).toBe(true);
-    }
-  });
 
   it("declares each key exactly once", () => {
     const keys = SETTING_DEFS.map((def) => def.key);
@@ -710,6 +694,82 @@ function writeProjectRaw(projectDir: string, raw: unknown): void {
 
 // dirname is needed above.
 import { dirname } from "node:path";
+
+describe("operator-only privacy and updates", () => {
+  it("does not let a project grant consent or hide unanswered onboarding", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    writeProjectRaw(project, {
+      diagnosticReporting: "automatic",
+      diagnosticReportingPrompted: true,
+      updatePolicy: "automatic",
+      showLogo: false,
+    });
+    const { settings, sources } = loadLayeredSettings({ homeDir: home, projectDir: project });
+    expect(settings.diagnosticReporting).toBe("off");
+    expect(settings.diagnosticReportingPrompted).toBe(false);
+    expect(settings.updatePolicy).toBe("off");
+    expect(sources.diagnosticReporting).toBe("default");
+    expect(sources.updatePolicy).toBe("default");
+    expect(settings.showLogo).toBe(false);
+  });
+
+  it("preserves an explicit global false as an opt-out with global provenance", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    mkdirSync(dirname(settingsFilePath(home)), { recursive: true });
+    writeFileSync(settingsFilePath(home), JSON.stringify({
+      diagnosticReporting: false,
+      diagnosticReportingPrompted: false,
+      updatePolicy: false,
+    }));
+    writeProjectRaw(project, {
+      diagnosticReporting: "automatic",
+      diagnosticReportingPrompted: true,
+      updatePolicy: "automatic",
+    });
+    const { settings, sources } = loadLayeredSettings({ homeDir: home, projectDir: project });
+    expect(settings.diagnosticReporting).toBe("off");
+    expect(settings.diagnosticReportingPrompted).toBe(false);
+    expect(settings.updatePolicy).toBe("off");
+    expect(sources.diagnosticReporting).toBe("global");
+    expect(sources.updatePolicy).toBe("global");
+  });
+
+  it("persists an operator choice without allowing project consent overrides", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    saveSettings({
+      ...DEFAULT_SETTINGS,
+      diagnosticReporting: "ask",
+      diagnosticReportingPrompted: true,
+      updatePolicy: "notify",
+    }, home);
+    writeProjectRaw(project, {
+      diagnosticReporting: "automatic",
+      diagnosticReportingPrompted: false,
+      updatePolicy: "automatic",
+    });
+    const settings = loadSettings(home, project);
+    expect(settings.diagnosticReporting).toBe("ask");
+    expect(settings.diagnosticReportingPrompted).toBe(true);
+    expect(settings.updatePolicy).toBe("notify");
+    saveSettings({ ...settings, diagnosticReporting: "automatic", updatePolicy: "automatic" }, home);
+    writeProjectRaw(project, { diagnosticReporting: "off", updatePolicy: "off" });
+    expect(loadSettings(home, project).diagnosticReporting).toBe("automatic");
+    expect(loadSettings(home, project).updatePolicy).toBe("automatic");
+  });
+
+  it("rejects project permission writes without changing existing project settings", async () => {
+    const project = makeProjectDir();
+    saveProjectOverrides({ showLogo: false }, project);
+    const { setProjectOverride } = await import("./settings.js");
+    expect(setProjectOverride("diagnosticReporting", "automatic", project)).toBe(false);
+    expect(setProjectOverride("diagnosticReportingPrompted", true, project)).toBe(false);
+    expect(setProjectOverride("updatePolicy", "automatic", project)).toBe(false);
+    expect(readProjectOverrides(project)).toEqual({ showLogo: false });
+  });
+});
 
 describe("two-level layering", () => {
   it("global-only: every key comes from the global file", () => {

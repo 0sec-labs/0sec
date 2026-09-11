@@ -80,6 +80,7 @@ import {
 } from "./selector.js";
 import {
   appendFeedback,
+  buildDiagnosticFeedback,
   buildSubmitPreview,
   submitFeedback,
   submissionBlockedReason,
@@ -1043,6 +1044,9 @@ export function ChatScreen({
     payload: FeedbackPayload;
     preview: { url: string; body: string; headers: Record<string, string>; warnings: string[] } | null;
   } | null>(null);
+  const latestProblemRef = useRef<FeedbackPayload | null>(null);
+  const reportedProblemsRef = useRef(new Set<string>());
+  const [problemReview, setProblemReview] = useState<FeedbackPayload | null>(null);
   // The OMP-style "what am I working on" objective for the bottom-bar pill.
   // Empty ("") hides the pill; the session-objective service replaces it in
   // place (heuristic first, model-refined when/if it lands).
@@ -1266,6 +1270,111 @@ export function ChatScreen({
     }));
   }, [flushStreamPatches]);
 
+  const stageFeedback = useCallback((payload: FeedbackPayload) => {
+    const written = appendFeedback(payload);
+    if (!written.ok) {
+      appendEntry({ kind: "error", text: "could not save feedback", detail: written.error, turn: turn.current });
+      return;
+    }
+    const preview = buildSubmitPreview(payload);
+    setPendingFeedback({ payload, preview });
+    if (!preview) {
+      const blocked = submissionBlockedReason();
+      appendEntry({
+        kind: "notice",
+        text: "feedback saved locally",
+        detail: blocked ? describeSkip(blocked) : "Submission is unavailable.",
+        turn: turn.current,
+      });
+      return;
+    }
+    appendEntry({
+      kind: "notice",
+      text: "review feedback",
+      detail: `Endpoint: ${preview.url}\nHeaders: ${JSON.stringify(preview.headers)}\nBody: ${preview.body}`
+        + (preview.warnings.length ? `\n\nWarnings:\n${preview.warnings.join("\n")}` : "")
+        + "\n\n/feedback send to submit · /feedback cancel to discard",
+      turn: turn.current,
+    });
+  }, [appendEntry]);
+
+  const chooseReporting = useCallback((choice: string) => {
+    if (choice !== "off" && choice !== "ask" && choice !== "automatic") return;
+    const saved = updateSetting("diagnosticReporting", choice, { scope: "global" });
+    const recorded = updateSetting("diagnosticReportingPrompted", true, { scope: "global" });
+    showToast(saved && recorded ? `Problem reports: ${choice}` : "Privacy choice changed for this session; could not save it.");
+  }, [showToast]);
+
+  const openReportingChoices = useCallback(() => {
+    const current = settingsRef.current.diagnosticReporting;
+    setPicker({
+      state: createSelectorState("Problem reports · optional", [
+        { id: "off", label: "Keep reports local", detail: "No automatic submission. You can still review and send individual reports with /feedback.", current: current === "off" },
+        { id: "ask", label: "Ask before sending", detail: "Offer to review limited diagnostics after a problem. Nothing is sent until you confirm.", current: current === "ask" },
+        { id: "automatic", label: "Send limited diagnostics automatically", detail: "Version, platform, runtime and problem category only. No prompts, tool arguments, output, paths or credentials. Uses your configured feedback endpoint; offline policies still win.", current: current === "automatic" },
+      ], current),
+      commit: chooseReporting,
+      onCancel: () => { restorePaletteDraft(); },
+    });
+  }, [chooseReporting, restorePaletteDraft]);
+
+  const recordProblem = useCallback((kind: "tool" | "runtime", error: unknown, toolName?: string) => {
+    if (!alive.current || abortRef.current?.signal.aborted) return;
+    if (error instanceof Error && error.name === "AbortError") return;
+    if (typeof error === "string" && /^(?:aborted|cancelled|canceled)\b|(?:operator|user).*(?:declined|rejected)|(?:was )?(?:already )?(?:declined|rejected) by (?:the )?(?:operator|user)\b|previously declined/i.test(error)) return;
+    const payload = buildDiagnosticFeedback({
+      kind, error, toolName, version: VERSION, platform: process.platform, arch: process.arch,
+      runtime: process.versions.bun ? "bun" : "node",
+      runtimeVersion: process.versions.bun ?? process.versions.node,
+    });
+    latestProblemRef.current = payload;
+    const policy = settingsRef.current.diagnosticReporting;
+    if (policy === "off" || submissionBlockedReason(process.env, { allowCloud: false }) === "opt-out") return;
+    const key = `${policy}:${payload.message}`;
+    const seen = reportedProblemsRef.current;
+    if (seen.has(key)) return;
+    if (seen.size >= 64) seen.delete(seen.values().next().value!);
+    seen.add(key);
+    if (policy === "ask") {
+      setProblemReview(payload);
+      return;
+    }
+    const written = appendFeedback(payload);
+    if (!written.ok) {
+      showToast("Could not save the diagnostic report.");
+      return;
+    }
+    void submitFeedback(payload).then((result) => {
+      if (alive.current) showToast(result.ok ? "Problem report submitted" : "Problem report saved locally; submission unavailable.");
+    });
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!problemReview) return;
+    if (settings.diagnosticReporting !== "ask") {
+      setProblemReview(null);
+      return;
+    }
+    if (busy || picker || pendingScope || pendingLocalScope || pendingToolApproval || pendingOperatorQuestion) return;
+    const payload = problemReview;
+    setProblemReview(null);
+    setPicker({
+      state: createSelectorState("Report this problem?", [
+        { id: "review", label: "Review report", detail: "Inspect the limited diagnostics and destination before deciding whether to send." },
+        { id: "local", label: "Keep it local", detail: "Save this diagnostic report locally without sending it." },
+        { id: "off", label: "Stop asking", detail: "Turn off automatic problem-report prompts in your user settings." },
+      ]),
+      commit: (id) => {
+        if (id === "review") stageFeedback(payload);
+        else if (id === "off") chooseReporting("off");
+        else if (id === "local") {
+          const saved = appendFeedback(payload);
+          showToast(saved.ok ? "Problem report saved locally" : "Could not save the problem report.");
+        }
+      },
+    });
+  }, [problemReview, settings.diagnosticReporting, busy, picker, pendingScope, pendingLocalScope, pendingToolApproval, pendingOperatorQuestion, stageFeedback, chooseReporting, showToast]);
+
   /** Construct only at initial startup, explicit new chat, or failed-start recovery. */
   const buildSession = useCallback((
     opts: { model?: string; providerId?: RuntimeConfig["provider"]; initialMessages?: NativeMessage[] } = {},
@@ -1401,6 +1510,7 @@ export function ChatScreen({
         setEntries(entriesFromStoredMessages(resumeMessages));
       }
     } catch (error) {
+      recordProblem("runtime", error);
       const detail = error instanceof Error ? error.message : String(error);
       setStartupError(startupRecoveryText(detail));
       const recovery = connectionRecoveryForError(detail);
@@ -1689,6 +1799,7 @@ export function ChatScreen({
             });
           }
           (p.tools ?? []).forEach((t, i) => {
+            if (!t.running && !t.result.success) recordProblem("tool", t.result.error, t.call.name);
             fresh.push({
               id: `${p.agent_id}-t${p.turn}-x${i}`,
               kind: "tool",
@@ -1728,7 +1839,7 @@ export function ChatScreen({
       },
     });
     return unsub;
-  }, [session]);
+  }, [session, recordProblem]);
 
   // The LEFT sidebar's recent-sessions list. A disk read, so it only runs while
   // the sidebar is actually enabled, and re-runs when the live session changes —
@@ -2267,11 +2378,27 @@ export function ChatScreen({
       case "feedback": {
         const feedbackCommand = parseFeedbackCommand(args);
         if (feedbackCommand.kind === "usage") {
-          appendEntry({
-            kind: "notice",
-            text: "usage: /feedback <message> | /feedback submit <message> | /feedback send | /feedback cancel",
-            detail: "Feedback is written to a local file. /feedback submit persists locally and shows a preview; /feedback send transmits it; /feedback cancel clears the pending message.",
-            turn: turn.current,
+          setPicker({
+            state: createSelectorState("Feedback", [
+              { id: "write", label: "Write feedback", detail: "Save locally and review the exact message and destination before sending." },
+              { id: "problem", label: "Review latest problem", detail: "Limited diagnostics only; no prompt or tool output.", disabled: latestProblemRef.current === null },
+              { id: "privacy", label: "Problem-report preferences", meta: settingsRef.current.diagnosticReporting, detail: "Choose local-only, ask before sending, or automatic limited diagnostics." },
+            ]),
+            commit: (id) => {
+              if (id === "privacy") openReportingChoices();
+              else if (id === "problem" && latestProblemRef.current) stageFeedback(latestProblemRef.current);
+              else if (id === "write") {
+                restorePaletteDraft();
+                if (composerRef.current.trim()) {
+                  showToast("Draft kept · use /feedback submit <message> when ready.");
+                } else {
+                  setComposerText("/feedback submit ");
+                  composingRef.current = true;
+                  setComposing(true);
+                }
+              }
+            },
+            onCancel: () => { restorePaletteDraft(); },
           });
           return true;
         }
@@ -2296,46 +2423,7 @@ export function ChatScreen({
             mode: modeLabel(mode),
           };
 
-          // Persist locally first — always, regardless of submission state
-          const written = appendFeedback(payload);
-          if (!written.ok) {
-            appendEntry({
-              kind: "error",
-              text: "could not write feedback",
-              detail: written.error,
-              turn: turn.current,
-            });
-            return true;
-          }
-
-          const preview = buildSubmitPreview(payload);
-          setPendingFeedback({ payload, preview });
-
-          if (preview !== null) {
-            const warningBlock =
-              preview.warnings.length > 0
-                ? `\n\nWarnings:\n${preview.warnings.map((w) => `  • ${w}`).join("\n")}`
-                : "";
-
-            appendEntry({
-              kind: "notice",
-              text: "feedback staged for sending",
-              detail:
-                `Endpoint: ${preview.url}\n` +
-                `Headers: ${JSON.stringify(preview.headers)}\n` +
-                `Body: ${preview.body}${warningBlock}\n\n` +
-                `Run /feedback send to transmit, or /feedback cancel to discard.`,
-              turn: turn.current,
-            });
-          } else {
-            const blocked = submissionBlockedReason();
-            appendEntry({
-              kind: "notice",
-              text: "feedback saved locally, submission unavailable",
-              detail: `${blocked ? describeSkip(blocked) : "Submission is not available."}\nSaved to ${written.path}. Use /feedback cancel to clear.`,
-              turn: turn.current,
-            });
-          }
+          stageFeedback(payload);
           return true;
         }
 
@@ -2372,7 +2460,7 @@ export function ChatScreen({
             turn: turn.current,
           });
 
-          submitFeedback(payload).then((result) => {
+          submitFeedback(payload, process.env, { expectedPreview: preview }).then((result) => {
             appendEntry({
               kind: result.ok ? "notice" : "error",
               text: result.ok ? "feedback sent" : "feedback not sent",
@@ -2691,6 +2779,11 @@ export function ChatScreen({
     onExit,
     onGoBack,
     onNavigate,
+    openReportingChoices,
+    restorePaletteDraft,
+    setComposerText,
+    showToast,
+    stageFeedback,
     pendingFeedback,
     scopeLabel,
     scopeRules,
@@ -2765,6 +2858,7 @@ export function ChatScreen({
         onToolResult: (call, result) => {
           flushStreamPatches();
           setRunningTool(null);
+          if (!result.success) recordProblem("tool", result.error, call.name);
           // SETTLE the running row `onToolStart` appended IN PLACE rather than
           // appending a second row. Without this, the running row (success
           // undefined) never resolved, so it kept SHIMMERING until the turn
@@ -2857,6 +2951,7 @@ export function ChatScreen({
       const producedText = Boolean(assistantText || outcome.assistantText);
       if (outcome.stopReason === "error") {
         const detail = outcome.error ?? "The runtime reported an error but gave no message.";
+        recordProblem("runtime", outcome.error);
         appendEntry({
           kind: "error",
           text: "turn failed",
@@ -2904,6 +2999,7 @@ export function ChatScreen({
         });
       }
     } catch (error) {
+      recordProblem("runtime", error);
       const detail = error instanceof Error ? error.message : String(error);
       appendEntry({
         kind: "error",
@@ -3001,6 +3097,7 @@ export function ChatScreen({
     flushStreamPatches,
     queueStreamPatch,
     onConnectionFailure,
+    recordProblem,
     routeSlashCommand,
     session,
     settings.showTurnSummary,
@@ -3991,6 +4088,9 @@ export function ChatScreen({
   // and everything downstream of that (the fused approval card, the fused
   // subagent rows, the transcript that would not scroll to the bottom)
   // followed from the same miscount.
+  const showReportingInvitation = !reviewOpen && !settings.diagnosticReportingPrompted
+    && settings.diagnosticReporting === "off"
+    && submissionBlockedReason(process.env, { allowCloud: false }) !== "opt-out";
   const ledgerRows = computeLedgerRows({
     height,
     compact,
@@ -4002,7 +4102,7 @@ export function ChatScreen({
       + (secretPrompt ? SECRET_PANEL_HEIGHT + 1 : 0)
       + (operatorQuestionOpen ? operatorBoxHeight + 1 : 0),
     // The agent-nav hint row (+ its marginTop) below the composer.
-    hintRows: (showAgentNavHint ? 2 : 0) + (settings.showStatusBar ? 1 : 0),
+    hintRows: (showAgentNavHint ? 2 : 0) + (settings.showStatusBar ? 1 : 0) + (showReportingInvitation ? 1 : 0),
   });
   // Optional empty-state lines are dropped from the bottom up rather than
   // overprinted. The mark needs the most room, so it goes first.
@@ -4981,6 +5081,11 @@ export function ChatScreen({
           {agentNavHintNode}
         </>
       )}
+      {showReportingInvitation ? (
+        <box width="100%" minWidth={0} height={1} flexShrink={0}>
+          <text fg={MUTED}>{fitTuiText("Problem reports are off · /feedback to choose", contentWidth)}</text>
+        </box>
+      ) : null}
 
       {/*
         * The bottom bar is its own row BELOW the composer, not a second

@@ -1,24 +1,17 @@
 /**
- * `0sec upgrade` — re-runs install.sh to fetch the latest binary.
+ * `0sec upgrade` — fetches and installs a 0sec binary via the canonical
+ * install.sh script. Delegates to the shared {@link performAutoUpdate}
+ * helper so that both manual `upgrade` and automatic policy use the same
+ * single installer path.
  *
- * Convenience wrapper around the canonical install path:
- *
- *   curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
- *
- * When run from inside an installed 0sec binary, this re-fetches the
- * matching binary for the host platform and writes it into
- * `$0SEC_INSTALL_DIR` (default `~/.0sec/bin/`), overwriting the
- * current binary atomically.
- *
- * Windows is intentionally not supported by install.sh — print the
+ * Windows support: install.sh does not target Windows, so we print the
  * download URL and tell the user to refresh manually.
  */
 
 import type { Command } from "commander";
-import { spawn } from "node:child_process";
 import chalk from "chalk";
+import { performAutoUpdate } from "../utils/update-check.js";
 
-const INSTALL_URL = "https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh";
 const RELEASES_URL = "https://github.com/0sec-labs/0sec/releases/latest";
 
 interface UpgradeOptions {
@@ -40,45 +33,37 @@ export function registerUpgradeCommand(program: Command): void {
         console.log(`  Download the latest ${chalk.cyan("0sec-windows-x64.exe")} from:`);
         console.log(`    ${chalk.cyan(RELEASES_URL)}`);
         console.log("");
-        console.log(`  Replace your current binary in place. Auto-upgrade is tracked in #234.`);
+        console.log(`  Replace your current binary in place. Auto-upgrade is tracked in issue #46.`);
         console.log("");
         process.exit(1);
       }
 
-      // We pipe the install script into bash, mirroring the curl|bash one-
-      // liner from the README. Set up the env so install.sh picks up the
-      // requested overrides.
-      const env: NodeJS.ProcessEnv = { ...process.env };
-      if (opts.version) env["0SEC_VERSION"] = opts.version;
-      if (opts.installDir) env["0SEC_INSTALL_DIR"] = opts.installDir;
-
       console.log("");
-      console.log(`  ${chalk.bold("0sec upgrade")} — fetching the latest binary…`);
-      console.log(`    ${chalk.dim(`curl -fsSL ${INSTALL_URL} | bash`)}`);
-      if (opts.version) console.log(`    ${chalk.dim(`0SEC_VERSION=${opts.version}`)}`);
-      if (opts.installDir) console.log(`    ${chalk.dim(`0SEC_INSTALL_DIR=${opts.installDir}`)}`);
-      console.log("");
+      console.log(`  ${chalk.bold("0sec upgrade")} — fetching the latest binary\u2026`);
+      if (opts.version) console.log(`    ${chalk.dim(`tag=${opts.version}`)}`);
+      if (opts.installDir) console.log(`    ${chalk.dim(`install_dir=${opts.installDir}`)}`);
 
-      // Use sh -c so we can pipe curl into bash without writing a temp
-      // file. install.sh itself is bash-shebanged, so passing it via stdin
-      // to `bash` is fine on every supported platform (macOS, Linux).
-      const cmd = `set -e; curl -fsSL "${INSTALL_URL}" | bash`;
-      const child = spawn("sh", ["-c", cmd], { stdio: "inherit", env });
-      child.on("error", (e) => {
-        console.error(chalk.red(`upgrade failed: ${e.message}`));
-        process.exit(1);
+      const result = await performAutoUpdate({
+        version: opts.version,
+        installDir: opts.installDir,
       });
-      child.on("exit", (code, signal) => {
-        if (signal) {
-          process.kill(process.pid, signal);
-          return;
-        }
-        if (code === 0) {
-          console.log("");
-          console.log(`  ${chalk.green("✓")} ${chalk.bold("upgraded.")} run ${chalk.cyan("0sec --version")} to confirm.`);
-          console.log("");
-        }
-        process.exit(code ?? 0);
-      });
+
+      if (result.signal) {
+        process.kill(process.pid, result.signal);
+        return;
+      }
+
+      if (result.success) {
+        console.log("");
+        console.log(
+          `  ${chalk.green("\u2713")} ${chalk.bold("upgraded.")}` +
+            ` run ${chalk.cyan("0sec --version")} to confirm.`,
+        );
+        console.log("");
+        process.exit(0);
+      } else {
+        console.error(chalk.red(`upgrade failed: ${result.error ?? "unknown error"}`));
+        process.exit(result.exitCode ?? 1);
+      }
     });
 }

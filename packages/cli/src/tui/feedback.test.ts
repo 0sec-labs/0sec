@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import {
   DEFAULT_FEEDBACK_URL,
   FEEDBACK_WIRE_FIELDS,
   appendFeedback,
+  buildDiagnosticFeedback,
   buildSubmitPreview,
   feedbackEndpoint,
   feedbackFilePath,
@@ -15,6 +18,8 @@ import {
   submissionBlockedReason,
   parseFeedbackCommand,
   submitFeedback,
+  MAX_DIAGNOSTIC_MESSAGE_BYTES,
+  type DiagnosticInfo,
   type FeedbackPayload,
 } from "./feedback.js";
 
@@ -420,6 +425,102 @@ describe("submitFeedback", () => {
     expect(result.status).toBe(503);
   });
 
+  it("never reposts feedback to a second origin after a 307 or 308 redirect", async () => {
+    let redirectedDeliveries = 0;
+    let reviewedDeliveries = 0;
+    let redirectStatus = 307;
+    const destination = createServer((request, response) => {
+      redirectedDeliveries++;
+      request.resume();
+      response.writeHead(202, { connection: "close" });
+      response.end();
+    });
+    const source = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        reviewedDeliveries++;
+        response.writeHead(redirectStatus, {
+          location: `http://127.0.0.1:${(destination.address() as AddressInfo).port}/unreviewed`,
+          connection: "close",
+        });
+        response.end();
+      });
+    });
+    try {
+      await new Promise<void>((resolve) => destination.listen(0, "127.0.0.1", resolve));
+      await new Promise<void>((resolve) => source.listen(0, "127.0.0.1", resolve));
+      const env = { "0SEC_FEEDBACK_URL": `https://127.0.0.1:${(source.address() as AddressInfo).port}/reviewed` };
+      const report = payload();
+      // Map the initial TLS address to the HTTP-only local fixture. Native
+      // fetch owns redirect handling; no response or redirect is mocked.
+      const localFetch = ((url, init) => fetch(String(url).replace(/^https:/, "http:"), init)) as typeof fetch;
+      for (redirectStatus of [307, 308]) {
+        const result = await submitFeedback(report, env, {
+          fetchImpl: localFetch,
+          expectedPreview: buildSubmitPreview(report, env)!,
+        });
+        expect(result.ok).toBe(false);
+        expect(redirectedDeliveries).toBe(0);
+      }
+      expect(reviewedDeliveries).toBe(2);
+    } finally {
+      for (const server of [source, destination]) {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
+  });
+
+  it("rejects with zero POST when the endpoint differs from the reviewed preview", async () => {
+    const { fn, calls } = stubFetch(() => okResponse());
+    const preview = buildSubmitPreview(payload(), HTTPS_ENV)!;
+    const result = await submitFeedback(payload(), HTTPS_ENV, {
+      fetchImpl: fn,
+      expectedPreview: { ...preview, url: "https://evil.example.com/hook" },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("changed");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects with zero POST when the body differs from the reviewed preview", async () => {
+    const { fn, calls } = stubFetch(() => okResponse());
+    const preview = buildSubmitPreview(payload(), HTTPS_ENV)!;
+    const result = await submitFeedback(
+      payload({ message: "different body than previewed" }),
+      HTTPS_ENV,
+      { fetchImpl: fn, expectedPreview: preview },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("changed");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects with zero POST when the redacted headers differ from the reviewed preview", async () => {
+    const { fn, calls } = stubFetch(() => okResponse());
+    const preview = buildSubmitPreview(payload(), {}, CLOUD_CREDENTIALS)!;
+    // Feed a preview whose redacted headers do not match the current target
+    const result = await submitFeedback(payload(), {}, {
+      fetchImpl: fn,
+      expectedPreview: { ...preview, headers: { "content-type": "text/plain" } },
+      ...CLOUD_CREDENTIALS,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("changed");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("still submits when the preview matches exactly", async () => {
+    const { fn, calls } = stubFetch(() => okResponse(202));
+    const preview = buildSubmitPreview(payload(), HTTPS_ENV)!;
+    const result = await submitFeedback(payload(), HTTPS_ENV, {
+      fetchImpl: fn,
+      expectedPreview: preview,
+    });
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
   it("does not hang when the transport never settles", async () => {
     // Deliberately ignores the abort signal, which is the case a signal-only
     // timeout would miss.
@@ -473,5 +574,67 @@ describe("submitFeedback", () => {
     const result = await submitFeedback(payload({ message: "kept" }), HTTPS_ENV, { fetchImpl: fn });
     expect(result.ok).toBe(false);
     expect(readFileSync(local.path, "utf8")).toContain("kept");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostic auto-report
+// ---------------------------------------------------------------------------
+
+function diagInfo(overrides: Partial<DiagnosticInfo> = {}): DiagnosticInfo {
+  return {
+    kind: "tool",
+    version: "0.14.0",
+    platform: "linux",
+    arch: "x64",
+    runtime: "node",
+    runtimeVersion: "v20.11.0",
+    toolName: undefined,
+    error: undefined,
+    timestamp: "2026-09-11T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("buildDiagnosticFeedback", () => {
+  it("reports the finite category and release without private error or tool context", () => {
+    const secret = "private-target-and-credential";
+    const result = buildDiagnosticFeedback(diagInfo({
+      toolName: secret,
+      error: new TypeError(secret),
+      version: `0.14.0-${secret}`,
+      runtimeVersion: `v24.3.0-${secret}`,
+    }));
+    expect(result.version).toBe("0.14.0");
+    expect(result.message).toContain("Error: TypeError");
+    expect(result.message).toContain("linux/x64 on node 24.3.0");
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(result.model).toBeUndefined();
+    expect(result.mode).toBeUndefined();
+  });
+
+  it("does not accept inherited object names or malformed metadata as classifiers", () => {
+    for (const unsafe of ["constructor", "__proto__", "toString", "secret".repeat(200)]) {
+      const result = buildDiagnosticFeedback(diagInfo({
+        platform: unsafe, arch: unsafe, runtime: unsafe,
+        runtimeVersion: unsafe, version: unsafe, timestamp: unsafe,
+      }));
+      expect(result.version).toBe("unknown");
+      expect(result.message).toContain("unknown/unknown on unknown unknown");
+      expect(JSON.stringify(result)).not.toContain(unsafe);
+      expect(Number.isFinite(Date.parse(result.timestamp))).toBe(true);
+      expect(Buffer.byteLength(result.message)).toBeLessThanOrEqual(MAX_DIAGNOSTIC_MESSAGE_BYTES);
+    }
+  });
+
+  it("bounds numeric metadata and survives an uninspectable error", () => {
+    const result = buildDiagnosticFeedback(diagInfo({
+      version: "999999.999999.999999",
+      runtimeVersion: "999999.999999.999999",
+      error: new Proxy({}, { getPrototypeOf() { throw new Error("private"); } }),
+    }));
+    expect(result.message).toContain("Error: unknown");
+    expect(result.message).not.toContain("private");
+    expect(Buffer.byteLength(result.message)).toBeLessThanOrEqual(MAX_DIAGNOSTIC_MESSAGE_BYTES);
   });
 });

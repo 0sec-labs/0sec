@@ -119,22 +119,23 @@ import {
   registerConfigCommand,
 } from "./commands/index.js";
 import { detectAndRoute } from "./routing.js";
-import { maybeNotifyUpdate } from "./utils/update-check.js";
+import { runStartupUpdate } from "./utils/update-check.js";
 import { enforceSourceDistFreshness } from "./source-freshness.js";
 
 enforceSourceDistFreshness({ entryUrl: import.meta.url });
 
 
-// Fire-and-forget update check. It only runs when 0SEC_UPDATE_CHECK=1;
-// otherwise normal commands make no update request or cache write.
-void maybeNotifyUpdate(VERSION);
+// Explicit automatic updates finish before command parsing or interactive work.
+// Notification-only checks stay in the background; unset settings remain opt-in.
+await runStartupUpdate(VERSION);
 
 const program = new Command();
 
 program
   .name("0sec")
   .description("Open-source multi-model security research harness")
-  .version(VERSION);
+  .version(VERSION)
+  .enablePositionalOptions();
 
 registerScanCommand(program);
 registerResumeCommand(program);

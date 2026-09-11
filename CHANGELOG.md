@@ -28,6 +28,15 @@ on the published npm package and the GitHub Release tag.
 - Child runtimes inherit the parent's resolved provider configuration.
   Scoped harness shutdown drains work before disposal and reports incomplete
   cleanup. Restarting an engine does not reconstruct active harness state.
+- Optional problem reporting defaults to off and uses operator-global consent;
+  project settings cannot enable it. Automatic reports contain limited version,
+  platform, runtime, and problem-category data, excluding prompts, tool arguments,
+  output, and credentials. Manual feedback retains review and local capture.
+  Feedback submission rejects redirects to unreviewed destinations.
+- Update checks and automatic installation use an operator-global policy.
+  Automatic installation is opt-in and completes before interactive startup;
+  notification-only checks remain in the background. Manual upgrades retain
+  their version and destination options and report failures or interruption.
 
 - Executable TypeScript plugins, reusable skills, and agent programs can be
   created during a session, composed through tool/model brokers, retained
