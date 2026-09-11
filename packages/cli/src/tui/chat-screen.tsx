@@ -4088,9 +4088,6 @@ export function ChatScreen({
   // and everything downstream of that (the fused approval card, the fused
   // subagent rows, the transcript that would not scroll to the bottom)
   // followed from the same miscount.
-  const showReportingInvitation = !reviewOpen && !settings.diagnosticReportingPrompted
-    && settings.diagnosticReporting === "off"
-    && submissionBlockedReason(process.env, { allowCloud: false }) !== "opt-out";
   const ledgerRows = computeLedgerRows({
     height,
     compact,
@@ -4102,7 +4099,7 @@ export function ChatScreen({
       + (secretPrompt ? SECRET_PANEL_HEIGHT + 1 : 0)
       + (operatorQuestionOpen ? operatorBoxHeight + 1 : 0),
     // The agent-nav hint row (+ its marginTop) below the composer.
-    hintRows: (showAgentNavHint ? 2 : 0) + (settings.showStatusBar ? 1 : 0) + (showReportingInvitation ? 1 : 0),
+    hintRows: (showAgentNavHint ? 2 : 0) + (settings.showStatusBar ? 1 : 0),
   });
   // Optional empty-state lines are dropped from the bottom up rather than
   // overprinted. The mark needs the most room, so it goes first.
@@ -5081,11 +5078,6 @@ export function ChatScreen({
           {agentNavHintNode}
         </>
       )}
-      {showReportingInvitation ? (
-        <box width="100%" minWidth={0} height={1} flexShrink={0}>
-          <text fg={MUTED}>{fitTuiText("Problem reports are off · /feedback to choose", contentWidth)}</text>
-        </box>
-      ) : null}
 
       {/*
         * The bottom bar is its own row BELOW the composer, not a second
