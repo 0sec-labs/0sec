@@ -3,6 +3,17 @@
 // $ per 1M tokens. Models the feed lacks live in MANUAL_PRICING (src/pricing.ts).
 
 export const OSS_PRICING: Record<string, { input: number; output: number; cachedInput?: number }> = {
+  "gpt-6-astra": { input: 10, output: 50, cachedInput: 1 },
+  "claude-fable-5-1": { input: 10, output: 50, cachedInput: 0.25 },
+  "claude-opus-5": { input: 5, output: 25, cachedInput: 0.5 },
+  "claude-sonnet-5": { input: 2, output: 10, cachedInput: 0.2 },
+  "gemini-3.8-flash": { input: 0.75, output: 3.75, cachedInput: 0.075 },
+  "gemini-3.7-flash": { input: 0.75, output: 3.75, cachedInput: 0.075 },
+  "gemini-3.6-flash": { input: 0.75, output: 3.75, cachedInput: 0.075 },
+  "gemini-3.5-flash": { input: 1.5, output: 9, cachedInput: 0.15 },
+  "gemini-3.5-flash-lite": { input: 0.3, output: 2.5, cachedInput: 0.03 },
+  "gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
+  "gemini-3.1-pro-preview": { input: 2, output: 12, cachedInput: 0.2 },
   "gpt-5.4": { input: 2.5, output: 15, cachedInput: 0.25 },
   "gpt-5.5": { input: 5, output: 30, cachedInput: 0.5 },
   "gpt-4o": { input: 2.5, output: 10, cachedInput: 1.25 },

@@ -53,8 +53,8 @@ export function shortAgentName(id: string): string {
 /** Bullet glyph + colour for a lifecycle status. Failures keep a red "×". */
 function statusMark(status: string, theme: Theme): { glyph: string; color: string } {
   if (status === "failed") return { glyph: "×", color: theme.ERROR };
-  if (status === "completed") return { glyph: "·", color: theme.SUCCESS };
-  if (status === "running") return { glyph: "·", color: theme.ACCENT };
+  if (status === "completed") return { glyph: "✓", color: theme.SUCCESS };
+  if (status === "running") return { glyph: "▶", color: theme.ACCENT };
   // Parked: finished its task but still alive, ready to be revived by a message.
   if (status === "parked") return { glyph: "◌", color: theme.MUTED };
   return { glyph: "·", color: theme.MUTED };

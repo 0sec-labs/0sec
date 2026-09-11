@@ -9,6 +9,9 @@ import {
   todoTextWidth,
   wrapCells,
   DEFAULT_WRAP_LINES,
+  sidebarItemPriority,
+  buildSidebarOverflowText,
+  buildSidebarHeader,
 } from "./todos-sidebar-layout.js";
 
 /**
@@ -76,7 +79,13 @@ export function Todos({
     <box flexDirection="column" minWidth={0} marginTop={1}>
       <text fg={PRIMARY}>{fitTuiText(header, Math.max(1, width))}</text>
       {groups.map((view, groupIdx) => {
-        const heading = view.group ? `${phaseNumeral((phaseIndex += 1))}. ${view.group}` : "";
+        const groupDone = view.items.filter((i) => i.status === "completed").length;
+        const groupTotal = view.items.length;
+        const groupProgress =
+          groupTotal > 0 && groupDone > 0 ? ` (${groupDone}/${groupTotal})` : "";
+        const heading = view.group
+          ? `${phaseNumeral((phaseIndex += 1))}. ${view.group}${groupProgress}`
+          : "";
         return (
           <box key={`todo-group-${groupIdx}`} flexDirection="column" minWidth={0}>
             {heading ? (
@@ -131,17 +140,70 @@ const SIDEBAR_STATUS_GLYPH: Record<TodoStatus, string> = {
 /** Rows the sidebar section spends on its header (the "PLAN done/total" line). */
 export const TODOS_SIDEBAR_HEADER_ROWS = 1;
 
+// ── Sidebar display-row model ────────────────────────────────────────────────
+
+/** A row the sidebar paints: either a phase/group label, or one todo item. */
+interface SidebarDisplayRow {
+  kind: "group" | "item";
+  /** `"group"` → the group label. */
+  label?: string;
+  /** `"item"` → the item data. */
+  item?: TodosEventPayload["todos"][number];
+  /** `"item"` → pre-wrapped text lines. */
+  lines?: string[];
+}
+
 /**
- * The RIGHT-sidebar variant of the plan: a compact section that sits beneath
- * the AGENTS / FINDINGS sections in the same narrow column and reads as their
- * sibling. A muted `PLAN done/total` header, then each todo as ONE fitted row —
- * a status glyph + text WRAPPED across up to two rows (via {@link wrapCells}) so
- * a long title reads in full rather than being clipped, while the glyph sits on
- * the first line and continuation lines indent to align under the text. The
- * in-progress item wears the accent tone; completed is a muted check; pending a
- * muted dot. Visible ITEMS are bounded by `rows` via {@link budgetWrappedRows}
- * — each item costing 1..2 rows — with the remainder folded into a "+N more"
- * tail, so the plan can never grow unbounded in the sidebar.
+ * Build the sidebar's ordered display-row array from the flat payload.
+ * Items are sorted by status priority (in_progress first, then pending, then
+ * completed, preserving original order within each tier). Phase/group labels
+ * are inserted as separate rows before the first item of each new named group,
+ * so context is visible without reading the transcript.
+ */
+function buildSidebarRows(payload: TodosEventPayload, textCells: number): SidebarDisplayRow[] {
+  // Priority sort: active → pending → completed
+  const sorted = [...payload.todos].sort((a, b) => {
+    const pa = sidebarItemPriority(a.status);
+    const pb = sidebarItemPriority(b.status);
+    return pa - pb;
+  });
+
+  const rows: SidebarDisplayRow[] = [];
+  let prevGroup = "";
+
+  for (const item of sorted) {
+    const group = item.group ?? "";
+    if (group && group !== prevGroup) {
+      rows.push({ kind: "group", label: group });
+    }
+    rows.push({
+      kind: "item",
+      item,
+      lines: wrapCells(item.content, textCells, DEFAULT_WRAP_LINES),
+    });
+    prevGroup = group;
+  }
+
+  return rows;
+}
+
+/**
+ * The RIGHT-sidebar variant of the plan: a compact section that prioritises
+ * active/current work over completed items while preserving phase context.
+ *
+ * Items are sorted by status priority so in-progress work is always visible
+ * before pending or completed items, even when earlier phases dominate the
+ * declared order. Phase/group labels appear as compact muted headings before
+ * the first item of each named group, so an operator can see which phase the
+ * current work belongs to.
+ *
+ * The section header reflects the honest status composition:
+ *   - Active items present: "PLAN ● 1 active · 3/5" (compact if tight)
+ *   - All completed:        "PLAN ● 5/5" header + "● All 5 tasks completed"
+ *   - Normal:               "PLAN 3/5"
+ *
+ * The overflow tail describes hidden items by status rather than a bare count:
+ *   "+3 remaining", "+2 remaining, 1 done", "+2 done"
  *
  * `rows` is the WHOLE section's row budget (header included). `width` is the
  * sidebar's inner content width (`sidebars.rightInnerWidth`). Renders nothing
@@ -161,35 +223,92 @@ export function TodosSidebar({
   const { MUTED, TEXT, ACCENT, SUCCESS } = theme;
   if (payload.total <= 0) return null;
   if (rows < TODOS_SIDEBAR_HEADER_ROWS + 1) return null;
+  const { done, total } = payload;
 
   const itemRows = Math.max(0, rows - TODOS_SIDEBAR_HEADER_ROWS);
+
+  // ── All completed: compact summary, no item listing ──────────────────────
+  if (done === total && total > 0) {
+    return (
+      <box flexDirection="column" flexShrink={0} minWidth={0} marginTop={1}>
+        <box width={width} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{buildSidebarHeader(done, total, width)}</text>
+        </box>
+        <box width={width} flexShrink={0} minWidth={0}>
+          <text fg={SUCCESS}>
+            {fitTuiText(`● All ${total} tasks completed`, width)}
+          </text>
+        </box>
+      </box>
+    );
+  }
+
+  // ── Build priority-ordered rows with phase labels ────────────────────────
   const textCells = todoTextWidth(width);
-  // Wrap every title first so the budgeter knows each item's true row cost
-  // (1..DEFAULT_WRAP_LINES); items are then admitted whole so a title never
-  // shows a dangling half.
-  const wrapped = payload.todos.map((item) =>
-    wrapCells(item.content, textCells, DEFAULT_WRAP_LINES),
-  );
-  const { visible, overflow } = budgetWrappedRows(
-    wrapped.map((lines) => lines.length),
-    itemRows,
-  );
-  const shown = payload.todos.slice(0, visible);
+  let displayRows = buildSidebarRows(payload, textCells);
+
+  // Cost array: group labels = 1 row, items = wrapped line count
+  const costs = displayRows.map((r) => (r.kind === "group" ? 1 : (r.lines?.length ?? 1)));
+  const { visible } = budgetWrappedRows(costs, itemRows);
+  let visibleDisplayRows = displayRows.slice(0, visible);
+
+  // Trim orphan phase headings: never show a group label without at least
+  // its first item — a bare heading wastes the budget and hides work.
+  while (visibleDisplayRows.length > 0 &&
+         visibleDisplayRows[visibleDisplayRows.length - 1].kind === "group") {
+    visibleDisplayRows.pop();
+  }
+  // Under pressure, spend scarce rows on the active task rather than its phase.
+  if (!visibleDisplayRows.some((row) => row.kind === "item")) {
+    displayRows = displayRows.filter((row) => row.kind === "item");
+    const compact = budgetWrappedRows(displayRows.map((row) => row.lines!.length), itemRows);
+    visibleDisplayRows = displayRows.slice(0, compact.visible);
+
+  }
+
+  // ── Overflow text from hidden ITEMS only ─────────────────────────────────
+  const visibleItems = visibleDisplayRows.filter((r) => r.kind === "item").length;
+  const hiddenItems: Array<{ status: string }> = [];
+  let itemsSeen = 0;
+  for (const row of displayRows) {
+    if (row.kind === "item") {
+      if (itemsSeen >= visibleItems) {
+        hiddenItems.push({ status: row.item!.status });
+      }
+      itemsSeen++;
+    }
+  }
+  const overflowText =
+    hiddenItems.length > 0
+      ? buildSidebarOverflowText(hiddenItems, width)
+      : "";
 
   return (
     <box flexDirection="column" flexShrink={0} minWidth={0} marginTop={1}>
       <box width={width} flexShrink={0} minWidth={0}>
-        <text fg={MUTED}>{fitTuiText(`PLAN ${payload.done}/${payload.total}`, width)}</text>
+        <text fg={MUTED}>{buildSidebarHeader(done, total, width)}</text>
       </box>
-      {shown.map((item, itemIdx) => {
+      {visibleDisplayRows.map((row, rowIdx) => {
+        if (row.kind === "group") {
+          return (
+            <box key={`phase-${rowIdx}`} flexDirection="row" width={width} flexShrink={0} minWidth={0}>
+              <text width={1} flexShrink={0}>
+                {" "}
+              </text>
+              <text fg={MUTED}>
+                {fitTuiText(row.label ?? "", textCells)}
+              </text>
+            </box>
+          );
+        }
+        // Item row
+        const item = row.item!;
         const glyph = SIDEBAR_STATUS_GLYPH[item.status] ?? SIDEBAR_STATUS_GLYPH.pending;
-        const done = item.status === "completed";
-        const active = item.status === "in_progress";
-        const glyphColor = done ? SUCCESS : active ? ACCENT : MUTED;
-        // Done → the whole item goes green + struck through (matching the panel),
-        // so a completed plan step reads as crossed-off at a glance.
-        const textColor = done ? SUCCESS : active ? TEXT : MUTED;
-        const lines = wrapped[itemIdx];
+        const itemDone = item.status === "completed";
+        const itemActive = item.status === "in_progress";
+        const glyphColor = itemDone ? SUCCESS : itemActive ? ACCENT : MUTED;
+        const textColor = itemDone ? SUCCESS : itemActive ? TEXT : MUTED;
+        const lines = row.lines!;
         return (
           <box key={item.id} flexDirection="column" width={width} flexShrink={0} minWidth={0}>
             {lines.map((line, lineIdx) => (
@@ -207,9 +326,9 @@ export function TodosSidebar({
                   <text
                     fg={textColor}
                     attributes={
-                      done
+                      itemDone
                         ? TextAttributes.STRIKETHROUGH
-                        : active
+                        : itemActive
                           ? TextAttributes.BOLD
                           : undefined
                     }
@@ -222,9 +341,9 @@ export function TodosSidebar({
           </box>
         );
       })}
-      {overflow > 0 ? (
+      {overflowText ? (
         <box width={width} flexShrink={0} minWidth={0}>
-          <text fg={MUTED}>{fitTuiText(`+${overflow} more`, width)}</text>
+          <text fg={MUTED}>{overflowText}</text>
         </box>
       ) : null}
     </box>

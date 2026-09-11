@@ -344,10 +344,11 @@ that run use?" answerable when a request 401s or a metered key overspends.
 file permissions. Treat `credentials.json` like an exported secret in a shell
 profile.
 
-Picking a model whose provider has no credentials won't fail at startup — the
-`/model` picker lists every model 0sec can price, not every one it can actually
-call. The request fails later instead (a zero-token turn reporting a missing key).
-Run `/providers` first to confirm the provider is configured.
+The `/model` picker starts with curated models; **Tab** opens the full catalog.
+A listing is not proof of credentials or account access. The detail pane shows
+credential sources and setup hints; an unknown price is shown as `—`, not zero.
+Use `/connect` to add credentials and `/providers` to inspect the configured
+provider before making a request.
 
 ## Cloud authentication
 
@@ -388,7 +389,7 @@ scans to a specific backend.
 `0SEC_SELECTED_PROVIDER` to different values is an error.
 
 ```bash
-env 0SEC_SELECTED_PROVIDER=deepseek 0SEC_MODEL=deepseek-v4-flash \
+env 0SEC_SELECTED_PROVIDER=deepseek 0SEC_MODEL=deepseek-flash \
   0sec scan --target https://example.com --scope ./scope.json --mode web
 ```
 
@@ -406,7 +407,7 @@ the provider whose credentials are available. The runtime maps model prefixes:
 | `opencode/*`, `muse-spark*`, `mimo*`, `ling*`, `big-pickle`, `nemotron*`, `minimax*` | OpenCode Zen |
 | `claude*`, `anthropic/*` | Anthropic, then OpenRouter when auth missing |
 | `gpt-*`, `o1`-`o4` | ChatGPT Codex subscription when configured, otherwise OpenAI |
-| `deepseek-v4-flash` | DeepSeek |
+| `deepseek-flash`, `deepseek-v4-flash` | DeepSeek (`deepseek-flash` is V4.1 Flash) |
 | Azure Foundry deployment ids | Azure |
 
 ### Ambient credential priority
@@ -433,7 +434,7 @@ vars in this priority order:
 primary exhausts its retry budget or hits a plan quota limit:
 
 ```bash
-env 0SEC_LLM_FALLBACK=deepseek:deepseek-v4-flash,azure:gpt-5-deployment \
+env 0SEC_LLM_FALLBACK=deepseek:deepseek-flash,azure:gpt-5-deployment \
   0sec review ./authorized-repo
 ```
 
@@ -656,33 +657,22 @@ a per-file circuit breaker (3 identical-signature failures abort the rest).
 (comma-separated). When the primary provider exhausts its retry budget, the runtime
 advances to the next entry whose credentials are present in the environment.
 
-## Docker executor overrides
+## Execution backends
 
-When `0SEC_FEATURE_DOCKER_EXECUTOR=1` is enabled, these extra env vars
-control the container image, networking, and bootstrap behavior:
+Backend selection is command-specific, not a global console isolation switch:
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `0SEC_DOCKER_IMAGE` | `ghcr.io/0sec-labs/0sec:latest` | Override the executor image |
-| `0SEC_DOCKER_NETWORK` | `bridge` | Docker network mode for the executor container |
-| `0SEC_DOCKER_BOOTSTRAP_TOOLS` | auto | Force or disable apt-based tool bootstrap inside the container |
+- Source evolution defaults to Docker. Set `backend: "smolvm"` and a local
+  `imageArchive` in its config to use qualified Linux microVM workers. See
+  [Improvement Plane](/improvement-plane/#local-smolvm-backend) for prerequisites,
+  image provisioning, restrictions, and real qualification commands.
+- Deterministic replay selects `--runner local|docker|qemu`; Docker replay
+  networking follows the explicit scope and `--docker-network` rules above.
+- Agentic exploit execution requires `--container` or `--exec-script`; it does
+  not default to running exploit commands on the host.
 
-Bootstrap rules:
-
-- default GHCR image -> no bootstrap, use the pre-baked toolchain
-- `kalilinux/kali-rolling` -> bootstrap tools on first start
-- `0SEC_DOCKER_BOOTSTRAP_TOOLS=1` -> always bootstrap
-- `0SEC_DOCKER_BOOTSTRAP_TOOLS=0` -> never bootstrap
-
-Networking rules:
-
-- `bridge` (default) gives the container its own network stack, but allows
-  egress; it is not an offline or credential-isolation guarantee.
-- `0SEC_DOCKER_NETWORK=host` when the target runs on the same host (local XBOW
-  challenges, a `docker-compose` service), so the container can reach
-  `host.docker.internal` / `localhost`.
-- any valid `docker run --network <name>` value works — e.g. a compose network
-  name to land the executor on the target stack's network.
+Selecting smolvm for evolution does not move general console/PTY tools, replay,
+or exploit executors into that VM. Provision toolbox dependencies before offline
+evaluation; candidate execution does not bootstrap packages over the network.
 
 ## Cost ceiling
 
@@ -739,19 +729,9 @@ env \
   0sec scan --target https://example.com --scope ./scope.json --mode web --depth deep
 ```
 
-## Example: Kali toolchain + web search
+## Example: web search
 
 ```bash
-env 0SEC_FEATURE_DOCKER_EXECUTOR=1 0SEC_FEATURE_WEB_SEARCH=1 \
-  0sec scan --target https://example.com --scope ./scope.json --mode web
-```
-
-## Example: raw Kali fallback
-
-```bash
-env \
-  0SEC_FEATURE_DOCKER_EXECUTOR=1 \
-  0SEC_DOCKER_IMAGE=kalilinux/kali-rolling \
-  0SEC_DOCKER_BOOTSTRAP_TOOLS=1 \
+env 0SEC_FEATURE_WEB_SEARCH=1 \
   0sec scan --target https://example.com --scope ./scope.json --mode web
 ```

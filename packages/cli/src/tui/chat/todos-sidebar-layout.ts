@@ -140,3 +140,73 @@ export function budgetSidebarRows(itemCount: number, availableRows: number): Sid
 export function todoTextWidth(columnWidth: number): number {
   return Math.max(1, Math.floor(columnWidth) - 2);
 }
+
+// ── Priority ordering for sidebar ───────────────────────────────────────────
+
+/**
+ * Status priority for sidebar display: `in_progress` (0) comes first so active
+ * work is always visible, then `pending` (1), then `completed` (2). Within each
+ * tier the item's original order is preserved.
+ */
+export function sidebarItemPriority(status: string): number {
+  return status === "in_progress" ? 0 : status === "pending" ? 1 : 2;
+}
+
+/**
+ * Build a short overflow summary that describes the hidden items rather than
+ * a bare "+N more". Returns text already fitted to `width`.
+ *
+ * - All completed: "+N done"
+ * - Some completed, some remaining: "+N remaining, M done"
+ * - All remaining: "+N remaining"
+ */
+export function buildSidebarOverflowText(
+  hiddenItems: ReadonlyArray<{ status: string }>,
+  width: number,
+): string {
+  const count = hiddenItems.length;
+  if (count <= 0) return "";
+
+  let active = 0;
+  let pending = 0;
+  let completed = 0;
+  for (const item of hiddenItems) {
+    if (item.status === "in_progress") active++;
+    else if (item.status === "pending") pending++;
+    else completed++;
+  }
+
+  const remaining = active + pending;
+  let text: string;
+  if (remaining === 0) {
+    text = `+${completed} done`;
+  } else if (completed === 0) {
+    text = `+${remaining} remaining`;
+  } else {
+    text = `+${remaining} remaining, ${completed} done`;
+  }
+
+  return fitTuiText(text, Math.max(1, width));
+}
+
+/**
+ * Build the sidebar section header with status-aware labels.
+ *
+ * - All completed: "PLAN ● 5/5" (compact checkmark style)
+ * - Normal: "PLAN 3/5"
+ */
+export function buildSidebarHeader(
+  done: number,
+  total: number,
+  width: number,
+): string {
+  const base = `PLAN ${done}/${total}`;
+  const allDone = done === total && total > 0;
+
+  if (allDone) {
+    // Compact: "PLAN ✓ 5/5"
+    return fitTuiText(`PLAN ● ${done}/${total}`, Math.max(1, width));
+  }
+
+  return fitTuiText(base, Math.max(1, width));
+}

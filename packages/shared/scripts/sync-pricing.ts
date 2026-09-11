@@ -30,6 +30,10 @@ const LITELLM_URL =
  * MANUAL_PRICING instead). Add a model key here once the OSS feed carries it.
  */
 const CURATED = [
+  "gpt-6-astra",
+  "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5",
+  "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
+  "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview",
   "gpt-5.4", "gpt-5.5", "gpt-4o", "gpt-4o-mini",
   "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
   "o3", "o3-mini", "o4-mini",

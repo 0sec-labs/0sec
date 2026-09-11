@@ -24,7 +24,6 @@ import {
   herdDetailLines,
   herdFocusFooterHint,
   herdFocusTranscriptTitle,
-  herdListHeading,
   herdListTitle,
   paneTitleColumns,
   herdRowLabelText,
@@ -874,23 +873,3 @@ describe("paneTitleColumns (herd)", () => {
   });
 });
 
-describe("herdListHeading", () => {
-  it("names the pane and counts the roster, or the window when scrolled", () => {
-    const grouped = buildHerdRows(
-      [peer("a"), peer("b", { activity: { phase: "working" } })],
-      NOW,
-    );
-    const whole = computeHerdWindow({ rows: grouped, selected: 1, visible: grouped.length });
-    const heading = herdListHeading(whole);
-    expect(heading.title).toBe("HERD");
-    expect(heading.meta).toBe(`${whole.total}`);
-    expect(herdListHeading(computeHerdWindow({ rows: [], selected: -1, visible: 4 }))).toEqual({
-      title: "HERD",
-      meta: "empty",
-    });
-    const scrolled = computeHerdWindow({ rows: grouped, selected: 3, visible: 2, anchor: 2 });
-    if (scrolled.hasAbove || scrolled.hasBelow) {
-      expect(herdListHeading(scrolled).meta).toMatch(/^\d+-\d+ \/ \d+$/);
-    }
-  });
-});

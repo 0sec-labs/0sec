@@ -75,6 +75,7 @@ const FIELD_LABEL = 0;
 const FIELD_CATEGORY = 1;
 const FIELD_META = 2;
 const FIELD_DESCRIPTION = 3;
+const FIELD_ID = 4;
 
 const KIND_PREFIX = 0;
 const KIND_SUBSTRING = 1;
@@ -111,6 +112,7 @@ export function rankDialogItem(item: DialogItem, needle: string): number {
     [FIELD_CATEGORY, item.category],
     [FIELD_META, item.meta],
     [FIELD_DESCRIPTION, item.description],
+    [FIELD_ID, item.id],
   ];
   let best = NO_MATCH;
   for (const [weight, raw] of fields) {
@@ -393,7 +395,7 @@ export interface DialogPanel {
   detailGap: number;
   /** Body rows the list can hold given the terminal height. */
   capacityRows: number;
-  /** Body rows actually rendered: `min(capacityRows, max(1, totalRows))`. */
+  /** Rendered rows; inline detail panels retain their full height while filtering. */
   visibleRows: number;
   /** Whether the list scrolls — a scrollbar column is then reserved. */
   scrolls: boolean;
@@ -446,7 +448,9 @@ export function computeDialogPanel({
 
   const capacityRows = Math.max(MIN_LIST_ROWS, availableHeight);
   const scrolls = total > capacityRows;
-  const visibleRows = Math.max(1, Math.min(capacityRows, Math.max(1, total)));
+  const visibleRows = inline && withDetail
+    ? capacityRows
+    : Math.max(1, Math.min(capacityRows, Math.max(1, total)));
 
   const split = splitDialogDetail(innerWidth, withDetail);
   const rowWidth = Math.max(1, split.listWidth - (scrolls ? 1 : 0));

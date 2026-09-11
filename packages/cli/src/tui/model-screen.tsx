@@ -48,8 +48,9 @@
  *    judges.
  */
 
-import React, { useEffect, useMemo, useState } from "react";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import React, { useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
+import { decodePasteBytes } from "@opentui/core";
 
 import { useTheme, type Theme } from "./theme-context.js";
 import { Cells } from "./primitives.js";
@@ -74,12 +75,17 @@ import {
 } from "./model-layout.js";
 import { buildFullModelCatalog } from "./model-catalog.js";
 import { syncModelCatalog } from "./model-catalog-sync.js";
+import { OFFLINE_MODEL_CATALOG } from "./model-catalog.offline.js";
 import { providerStates } from "./provider-status.js";
+import { sanitizeTuiText } from "./text.js";
 
 /** How many rows page-up and page-down move. */
 const PAGE_STEP = 5;
-/** The status line under the list always states which providers are lit. */
-const STATUS_ROWS = 1;
+/** One scope row above the list and one credential row below it. */
+const STATUS_ROWS = 2;
+const CURATED_MODEL_IDS: Readonly<Record<string, true>> = Object.fromEntries(
+  OFFLINE_MODEL_CATALOG.map((model) => [model.id, true]),
+);
 
 export interface ModelFrameInput {
   /** The screen body, already sized to the rows the frame left it. */
@@ -132,6 +138,18 @@ function toneColor(theme: Theme, tone: ModelDetailTone): string | undefined {
   }
 }
 
+function modelDialogItems(rows: ModelRow[]): DialogItem[] {
+  return rows
+    .filter((row): row is Extract<ModelRow, { kind: "model" }> => row.kind === "model")
+    .map((row) => ({
+      id: row.model.id,
+      label: row.model.id,
+      meta: row.model.price,
+      category: row.group.label,
+      current: row.active,
+    }));
+}
+
 export function ModelScreen({
   frame,
   currentModel,
@@ -144,7 +162,10 @@ export function ModelScreen({
   const { width, height } = useTerminalDimensions();
 
   const [filter, setFilter] = useState("");
-  const [filtering, setFiltering] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [refreshing, setRefreshing] = useState(true);
+  const filterRef = useRef("");
+  const showAllRef = useRef(false);
 
   // Read once per mount. Credentials are process-level and cannot change
   // under a screen that has no way to set them; re-deriving them on every
@@ -161,7 +182,10 @@ export function ModelScreen({
   useEffect(() => {
     let alive = true;
     void syncModelCatalog().then((updated) => {
-      if (alive && updated) setCatalogNonce((n) => n + 1);
+      if (alive) {
+        if (updated) setCatalogNonce((n) => n + 1);
+        setRefreshing(false);
+      }
     });
     return () => {
       alive = false;
@@ -173,6 +197,10 @@ export function ModelScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [currentModel, catalogNonce],
   );
+  const scopedCatalog = useMemo(
+    () => showAll ? catalog : catalog.filter((model) => Object.hasOwn(CURATED_MODEL_IDS, model.id) || model.id === currentModel),
+    [catalog, currentModel, showAll],
+  );
 
   // `buildModelRows` does all the domain work — grouping by provider, credential
   // lookup, credential-band ordering, floating the active model first, and the
@@ -181,22 +209,10 @@ export function ModelScreen({
   // shared body draws a heading per provider), the price is the right-aligned
   // meta, and the running model carries the current-value dot.
   const modelRows = useMemo(
-    () => buildModelRows({ catalog, states, filter, activeModel: currentModel }),
-    [catalog, states, filter, currentModel],
+    () => buildModelRows({ catalog: scopedCatalog, states, filter, activeModel: currentModel }),
+    [scopedCatalog, states, filter, currentModel],
   );
-  const items = useMemo<DialogItem[]>(
-    () =>
-      modelRows
-        .filter((row): row is Extract<ModelRow, { kind: "model" }> => row.kind === "model")
-        .map((row) => ({
-          id: row.model.id,
-          label: row.model.id,
-          meta: row.model.price,
-          category: row.group.label,
-          current: row.active,
-        })),
-    [modelRows],
-  );
+  const items = useMemo(() => modelDialogItems(modelRows), [modelRows]);
   // id -> ModelRow, so the detail renderer can reach the full provider/credential
   // facts the flat `DialogItem` does not carry.
   const rowById = useMemo(() => {
@@ -218,16 +234,10 @@ export function ModelScreen({
     return count;
   }, [items]);
 
-  // Open on the running model rather than on row zero: the most common reason to
-  // open the screen is to confirm or step off what is already set. The stored
-  // index then catches up as the operator moves or filters.
-  const [selected, setSelected] = useState(() =>
-    Math.max(0, items.findIndex((item) => item.current)),
-  );
-  // The highlighted row can vanish from under the cursor as the filter narrows,
-  // so the rendered cursor is always the clamped one.
-  const cursor = clampDialogSelection(items, selected);
-  const activeItem = cursor >= 0 ? items[cursor] : undefined;
+  // Keep the highlight on the same model when the background catalog refreshes.
+  const [selectedId, setSelectedId] = useState(currentModel);
+  const selectedIdRef = useRef(selectedId);
+  const cursor = clampDialogSelection(items, items.findIndex((item) => item.id === selectedId));
 
   const contentWidth = Math.max(0, width - 4);
   const bodyRows = Math.max(0, height - shellChromeRows(width) - STATUS_ROWS);
@@ -240,25 +250,47 @@ export function ModelScreen({
     bodyRows,
   });
 
-  const mode: ModelMode = filtering ? "filter" : "browse";
+  const mode: ModelMode = filter ? "filter" : "browse";
   // The always-on status line carries the one statement this screen can always
   // make. It matters most for the operator whose only credential is ChatGPT
   // Codex: the catalogue has no chatgpt-codex models to group under, so no
   // heading names them, and without this line that reads as "nothing works".
   const statusText = credentialSummary(states);
 
-  const move = (delta: number) => {
-    if (items.length === 0) return;
-    const dir: 1 | -1 = delta >= 0 ? 1 : -1;
-    let next = cursor < 0 ? 0 : cursor;
-    for (let i = 0; i < Math.abs(delta); i += 1) next = moveDialogSelection(items, next, dir);
-    setSelected(next);
+  const currentItems = () => filterRef.current === filter && showAllRef.current === showAll
+    ? items
+    : modelDialogItems(buildModelRows({
+      catalog: showAllRef.current
+        ? catalog
+        : catalog.filter((model) => Object.hasOwn(CURATED_MODEL_IDS, model.id) || model.id === currentModel),
+      states,
+      filter: filterRef.current,
+      activeModel: currentModel,
+    }));
+  const highlight = (id: string | undefined) => {
+    selectedIdRef.current = id;
+    setSelectedId(id);
   };
 
-  const setQuery = (next: string) => {
-    setFilter(next);
-    setSelected(0);
+  const move = (delta: number) => {
+    const visible = currentItems();
+    if (visible.length === 0) return;
+    const dir: 1 | -1 = delta >= 0 ? 1 : -1;
+    let next = clampDialogSelection(visible, visible.findIndex((item) => item.id === selectedIdRef.current));
+    for (let i = 0; i < Math.abs(delta); i += 1) next = moveDialogSelection(visible, next, dir);
+    highlight(visible[next]?.id);
   };
+
+  const setQuery = (next: SetStateAction<string>) => {
+    filterRef.current = typeof next === "function" ? next(filterRef.current) : next;
+    setFilter(filterRef.current);
+    highlight(undefined);
+  };
+
+  usePaste((event) => {
+    const text = sanitizeTuiText(decodePasteBytes(event.bytes));
+    if (text) setQuery((current) => current + text);
+  });
 
   useKeyboard((key) => {
     const seq = typeof key.sequence === "string" ? key.sequence : "";
@@ -268,56 +300,38 @@ export function ModelScreen({
       return;
     }
 
+    if (key.ctrl && key.name === "u") return setQuery("");
+    if (key.ctrl || key.meta || key.option) return;
     if (key.name === "up") return move(-1);
     if (key.name === "down") return move(1);
     if (key.name === "pageup") return move(-PAGE_STEP);
     if (key.name === "pagedown") return move(PAGE_STEP);
+    if (key.name === "home") return highlight(currentItems()[0]?.id);
+    if (key.name === "end") return highlight(currentItems().at(-1)?.id);
+    if (key.name === "tab") {
+      showAllRef.current = !showAllRef.current;
+      setShowAll(showAllRef.current);
+      return;
+    }
     if (key.name === "return") {
-      // Enter selects from either mode: while filtering, the whole point of
-      // typing four characters is to reach one row and take it.
+      const visible = currentItems();
+      const activeItem = visible[clampDialogSelection(visible, visible.findIndex((item) => item.id === selectedIdRef.current))];
       if (activeItem) onSelect(activeItem.id);
       return;
     }
-
-    // ── filter mode ──
-    if (filtering) {
-      if (key.name === "escape") {
-        setFiltering(false);
-        return;
-      }
-      if (key.name === "backspace") {
-        setQuery(filter.slice(0, -1));
-        return;
-      }
-      if (isFilterKey(seq)) setQuery(filter + seq);
-      return;
-    }
-
-    // ── browse mode ──
     if (key.name === "escape") {
-      // Esc unwinds one step at a time: clear the filter first, leave second.
-      if (filter) {
-        setQuery("");
-        return;
-      }
-      onBack();
+      if (filterRef.current) setQuery("");
+      else onBack();
       return;
     }
     if (key.name === "backspace") {
-      if (filter) setQuery(filter.slice(0, -1));
+      setQuery((current) => Array.from(current).slice(0, -1).join(""));
       return;
     }
-    if (seq === "/") {
-      setFiltering(true);
-      setQuery("");
-      return;
-    }
-    // Unlike the settings screen there is no destructive key to reserve, so
-    // every printable character starts a filter. With forty-odd models under
-    // ten vendors, typing is how anyone actually reaches a row.
     if (isFilterKey(seq)) {
-      setFiltering(true);
-      setQuery(seq);
+      // Functional updates preserve every character in a paste/fast key burst.
+      // A leading slash still opens search; slashes within model IDs are text.
+      setQuery((current) => current === "" && seq === "/" ? "" : current + seq);
     }
   });
 
@@ -344,16 +358,19 @@ export function ModelScreen({
 
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
+      <Cells width={contentWidth} fg={theme.ACCENT}>
+        {`${showAll ? "All models" : "Curated models"} · ${items.length} of ${scopedCatalog.length} · Tab ${showAll ? "curated" : "all models"}${refreshing ? " · refreshing…" : ""}`}
+      </Cells>
       <DialogSelectBody
         items={items}
         cursor={cursor}
         panel={panel}
         query={filter}
-        placeholder="type to filter models"
+        placeholder="Search by model or provider"
         gutter
         isCurrent={(item) => item.current === true}
         renderDetail={renderDetail}
-        emptyText="no models match this filter"
+        emptyText={showAll ? "No matches. Ctrl+U clears search." : "No matches. Tab searches all models; Ctrl+U clears."}
       />
       <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>
         <Cells width={contentWidth} fg={theme.MUTED}>

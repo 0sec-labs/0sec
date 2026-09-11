@@ -31,6 +31,8 @@
     "test:dsh-mcp:e2e": "node scripts/dsh-0sec-mcp.e2e.mjs",
     "test:install-e2e": "bash scripts/install-e2e.sh",
     "test:evolution:e2e": "node scripts/smoke-source-evolution.mjs && node scripts/smoke-lens-evolution.mjs && node scripts/smoke-codebase-learning.mjs && node scripts/smoke-source-citation.mjs",
+    "test:smolvm:e2e": "node scripts/smoke-smolvm.mjs",
+    "test:smolvm:toolbox": "node scripts/smoke-smolvm-toolbox.mjs",
     "test:docs-pointers": "node --test scripts/docs-code-pointers.test.mjs",
     "test:runtime-lock": "node --test scripts/runtime-lock.test.mjs",
     "test:public-source-export": "node --test scripts/create-public-source-export.test.mjs",

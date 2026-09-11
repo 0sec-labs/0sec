@@ -2,7 +2,7 @@
 import { appendFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { CliRenderEvents, createCliRenderer, type CliRenderer } from "@opentui/core";
+import { CliRenderEvents, createCliRenderer, type CliRenderer, type KeyEvent } from "@opentui/core";
 import { AppContext, createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { VERSION, type Finding, type FindingTriageStatus } from "@0sec/shared";
 import type { NativeRuntime, SourceFixResult, SourceFixStatus } from "@0sec/core";
@@ -13,6 +13,11 @@ import { runUnified } from "../commands/run.js";
 import { useTheme, type Theme } from "./theme-context.js";
 import { severityToneFor } from "./themes.js";
 import { fitTuiText, fitTuiUrl } from "./text.js";
+import { useSettings } from "./settings-store.js";
+import { frameAt } from "./animation.js";
+import { SHIMMER_TEXT_INTERVAL_MS } from "./animations.js";
+import { ShimmerText } from "./chat/shimmer.js";
+import { DialogSelect } from "./dialog-select.js";
 import {
   describeFixStatus,
   findingSourcePath,
@@ -121,15 +126,7 @@ interface ShellNav {
   openFindings: () => void;
   openReplay: (scanId?: string) => void;
   openSettings: () => void;
-  /**
-   * Opens the full-screen model picker.
-   *
-   * The chat route's options are carried through so that selecting a model
-   * can re-enter chat with the same target, scope and mode — only the model
-   * changed. `ChatScreen` is unmounted while another route is on screen, so
-   * the selection cannot be handed back to a live component; it is handed to
-   * a fresh one instead.
-   */
+  /** Opens the model picker above the live conversation. */
   openModels: (chatOptions?: ChatScreenOptions) => void;
   openResume: (chatOptions?: ChatScreenOptions) => void;
   /**
@@ -875,6 +872,13 @@ function createShellCommands(shell?: ShellNav): PaletteCommand[] {
       action: () => shell.openModels(),
     },
     {
+      id: "nav-resume",
+      title: "Resume a saved session",
+      category: "Navigate",
+      description: "Find conversations from this project or all projects",
+      action: () => shell.openResume(),
+    },
+    {
       id: "nav-herd",
       title: "Open agent herd",
       category: "Navigate",
@@ -1207,6 +1211,54 @@ function PaletteOverlay({
   );
 }
 
+const SCREENS_WITH_LOCAL_PALETTE: Partial<Record<ConsoleRoute["type"], true>> = {
+  chat: true, launcher: true, ops: true, doctor: true,
+  history: true, findings: true, replay: true, session: true,
+};
+
+/** Supply command navigation to control panes without their own palette. */
+function PanePalette({ shell, children }: { shell: ShellNav; children: React.ReactNode }) {
+  const context = useContext(AppContext);
+  const [open, setOpen] = useState(false);
+  const commands = createShellCommands(shell);
+
+  useEffect(() => {
+    // Capture global shortcuts before a pane can interpret Ctrl+K as plain k.
+    const handle = (key: KeyEvent) => {
+      if (!key.ctrl || (key.name !== "p" && key.name !== "k")) return;
+      key.preventDefault();
+      key.stopPropagation();
+      setOpen((current) => !current);
+    };
+    context.keyHandler?.prependListener("keypress", handle);
+    return () => { context.keyHandler?.off("keypress", handle); };
+  }, [context.keyHandler]);
+
+  return (
+    <>
+      <AppContext.Provider value={open ? { ...context, keyHandler: null } : context}>
+        {children}
+      </AppContext.Provider>
+      {open ? (
+        <DialogSelect
+          title="Commands"
+          placeholder="Search commands"
+          items={commands.map((command) => ({
+            id: command.id, label: command.title, description: command.description,
+          }))}
+          onSelect={(selection) => {
+            const command = commands.find((item) => item.id === selection);
+            if (!command) return;
+            setOpen(false);
+            command.action();
+          }}
+          onCancel={() => setOpen(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
 function parseToolAction(theme: Theme, action: string): {
   kind: "http" | "crawl" | "bash" | "save" | "read" | "run" | "install" | "summary" | "generic";
   title: string;
@@ -1391,9 +1443,11 @@ const BRAND_WORD_FRAMES = [
 
 function useAnimatedBrand(enabled: boolean) {
   const [frame, setFrame] = useState(0);
+  const { reduceMotion } = useSettings();
+  const animate = enabled && !reduceMotion;
 
   useEffect(() => {
-    if (!enabled) {
+    if (!animate) {
       setFrame(0);
       return;
     }
@@ -1403,11 +1457,11 @@ function useAnimatedBrand(enabled: boolean) {
     }, 260);
 
     return () => clearInterval(timer);
-  }, [enabled]);
+  }, [animate]);
 
   return {
     frame,
-    word: BRAND_WORD_FRAMES[frame],
+    word: animate ? BRAND_WORD_FRAMES[frame] : "0sec",
   };
 }
 
@@ -1555,49 +1609,27 @@ function LiveBadge({ label, active = true }: { label: string; active?: boolean }
   );
 }
 
-function ShimmerLabel({ text }: { text: string }) {
-  const theme = useTheme();
-  const [frame, setFrame] = useState(0);
-  const chars = useMemo(() => Array.from(text), [text]);
-  const padding = 10;
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setFrame((current) => (current + 1) % Math.max(chars.length + padding * 2, 1));
-    }, 90);
-    return () => clearInterval(timer);
-  }, [chars.length]);
-
-  return (
-    <box flexDirection="row">
-      {chars.map((char, index) => {
-        const center = frame - padding;
-        const distance = Math.abs(index - center);
-        const fg = distance < 1.5 ? theme.ACCENT : distance < 3.5 ? theme.TEXT : theme.MUTED;
-        return <text key={`${index}-${char}`} width={1} flexShrink={0} fg={fg}>{char}</text>;
-      })}
-    </box>
-  );
-}
 
 function WorkingPulse({ label, detail, maxWidth }: { label: string; detail?: string; maxWidth: number }) {
   const theme = useTheme();
+  const { reduceMotion } = useSettings();
+  const startedAt = useMemo(() => Date.now(), [label]);
   const [frame, setFrame] = useState(0);
-  const contentWidth = Math.max(12, maxWidth);
+  const contentWidth = Math.max(1, maxWidth);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setFrame((current) => (current + 1) % 6);
-    }, 120);
+    const timer = setInterval(
+      () => setFrame((current) => current + 1),
+      reduceMotion ? 1000 : SHIMMER_TEXT_INTERVAL_MS,
+    );
     return () => clearInterval(timer);
-  }, []);
+  }, [reduceMotion]);
 
-  const loader = ["[   ]", "[=  ]", "[== ]", "[===]", "[ ==]", "[  =]"][frame] ?? "[   ]";
-  // The rail cell, its margin and the panel's own horizontal padding are
-  // spent before any text is drawn, and the loader block plus its margin
-  // take another six from the label row. The detail line used to be budgeted
-  // against the full transcript width and ran past the panel edge.
-  const innerWidth = Math.max(8, contentWidth - 4);
+  const animation = frameAt("tool", Date.now() - startedAt, { motion: !reduceMotion });
+  const loader = animation.glyph;
+  const workingLabel = `${label}${animation.elapsedLabel ? ` · ${animation.elapsedLabel}` : ""}`;
+  // Reserve the rail, panel padding, glyph and gap before fitting the label.
+  const innerWidth = Math.max(1, contentWidth - 4);
   const labelWidth = Math.max(1, innerWidth - loader.length - 1);
 
   return (
@@ -1607,7 +1639,11 @@ function WorkingPulse({ label, detail, maxWidth }: { label: string; detail?: str
         <box flexDirection="row" width="100%" minWidth={0}>
           <text width={loader.length} flexShrink={0} fg={theme.ACCENT}>{loader}</text>
           <box width={labelWidth} flexShrink={0} marginLeft={1} minWidth={0}>
-            <ShimmerLabel text={fitTuiText(label, labelWidth)} />
+            {reduceMotion ? (
+              <text fg={theme.MUTED}>{fitTuiText(workingLabel, labelWidth)}</text>
+            ) : (
+              <ShimmerText label={fitTuiText(workingLabel, labelWidth)} frame={frame} base={theme.MUTED} peak={theme.TEXT} />
+            )}
           </box>
         </box>
         {detail ? <text fg={theme.MUTED} wrapMode="word">{fitTuiText(detail, innerWidth)}</text> : null}
@@ -3776,42 +3812,22 @@ function HerdRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) 
   );
 }
 
-/**
- * Routes the full-screen model picker, supplying the console shell around it.
- *
- * Selecting a model re-enters the chat route carrying the chosen id in
- * `ChatScreenOptions`, which is what `ChatScreen` already reads when it builds
- * its runtime. That is the only channel available: `ConsoleApp` renders one
- * route at a time, so the chat screen is unmounted while this one is up and
- * there is no live component to hand the selection back to. The engagement's
- * target, scope, role and autonomy mode ride along unchanged, so the rebuilt
- * chat differs from the old one in exactly the model — and, as with
- * `/settings`, the transcript does not survive the round trip.
- *
- * Like `SettingsRoute`, the command palette is deliberately not mounted here:
- * every printable key on this screen filters the list, so a second
- * `useKeyboard` competing for those keystrokes would make `p` both a filter
- * character and a palette toggle.
- */
+/** Routes model selection back to the always-mounted chat's runtime switch. */
 function ModelRoute({
-  chatOptions,
+  currentModel,
+  onSelect,
   onExit,
   shell,
 }: {
-  chatOptions?: ChatScreenOptions;
+  currentModel?: string;
+  onSelect: (model: string) => void;
   onExit: () => void;
   shell?: ShellNav;
 }) {
   return (
     <ModelScreen
-      currentModel={chatOptions?.model}
-      onSelect={(id) => {
-        if (!shell) {
-          onExit();
-          return;
-        }
-        shell.openChat({ ...chatOptions, model: id });
-      }}
+      currentModel={currentModel}
+      onSelect={onSelect}
       onBack={() => leaveCurrentScreen(shell, onExit)}
       onExit={onExit}
       frame={({ body, hint }) => (
@@ -3847,24 +3863,21 @@ function ResumeRoute({
       <ResumeScreen
         sessions={sessions}
         currentId={undefined}
+        currentCwd={process.cwd()}
         now={Date.now()}
         theme={theme}
         onResume={(id) => {
           const stored = loadSession(id);
-          if (!stored || !shell) {
-            onExit();
-            return;
-          }
+          if (!stored || !shell) return false;
           shell.openChat({
             ...chatOptions,
             model: stored.model ?? chatOptions?.model,
             target: stored.target ?? chatOptions?.target,
             initialMessages: stored.messages as ChatScreenOptions["initialMessages"],
           });
+          return true;
         }}
-        onDelete={(id) => {
-          deleteSession(id);
-        }}
+        onDelete={(id) => deleteSession(id)}
         onBack={() => leaveCurrentScreen(shell, onExit)}
         onExit={onExit}
       />
@@ -4116,6 +4129,7 @@ function ConsoleApp({
   const [chatGeneration, setChatGeneration] = useState(0);
   const chatOptionsRef = useRef(chatOptions);
   chatOptionsRef.current = chatOptions;
+  const chatModelRef = useRef<{ model: string | undefined; select: (id: string) => void } | null>(null);
 
   // The shell-level plugin-host manager (marketplace → live console). Created
   // async (it loads any already-enabled plugins on start); stays null until
@@ -4166,11 +4180,10 @@ function ConsoleApp({
     goBack: () => setRouteIndex((current) => Math.max(0, current - 1)),
     goForward: () => setRouteIndex((current) => Math.min(routes.length - 1, current + 1)),
     openChat: (options) => {
-      // Applying a NEW model is the only reason to rebuild the persistent chat.
-      // Bump the generation so ChatScreen remounts with the new model; every
-      // other openChat (e.g. the palette's "Open chat") keeps the generation and
-      // the existing options, so the live transcript is preserved.
-      if (options && options.model !== undefined && options.model !== chatOptionsRef.current?.model) {
+      // Explicitly resuming a transcript rebuilds chat even when its model is
+      // unchanged. Plain navigation preserves the live conversation and draft.
+      if (options && (options.initialMessages !== undefined ||
+        (options.model !== undefined && options.model !== chatOptionsRef.current?.model))) {
         setChatOptions((prev) => ({ ...prev, ...options }));
         setChatGeneration((generation) => generation + 1);
       }
@@ -4344,6 +4357,7 @@ function ConsoleApp({
         options={chatOptions}
         submitHandle={chatSubmitRef}
         reconnectHandle={chatReconnectRef}
+        modelHandle={chatModelRef}
         pluginHostManager={pluginHostManager ?? undefined}
         evolutionStatus={evolutionStatus}
         onGoBack={shell.goBack}
@@ -4413,7 +4427,17 @@ function ConsoleApp({
   } else if (currentRoute.type === "settings") {
     overlay = <SettingsRoute onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "models") {
-    overlay = <ModelRoute chatOptions={currentRoute.chatOptions} onExit={onExit} shell={shell} />;
+    overlay = (
+      <ModelRoute
+        currentModel={chatModelRef.current?.model ?? currentRoute.chatOptions?.model}
+        onSelect={(id) => {
+          chatModelRef.current?.select(id);
+          shell.openChat();
+        }}
+        onExit={onExit}
+        shell={shell}
+      />
+    );
   } else if (currentRoute.type === "resume") {
     overlay = <ResumeRoute chatOptions={currentRoute.chatOptions} onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "herd") {
@@ -4469,7 +4493,9 @@ function ConsoleApp({
       {baseChat}
       {overlayActive && overlay ? (
         <box position="absolute" top={0} left={0} width="100%" height="100%" zIndex={100}>
-          {overlay}
+          {SCREENS_WITH_LOCAL_PALETTE[currentRoute.type] ? overlay : (
+            <PanePalette key={currentRoute.type} shell={shell}>{overlay}</PanePalette>
+          )}
         </box>
       ) : null}
     </box>

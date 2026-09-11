@@ -14,6 +14,41 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Independently buildable, non-root `toolbox` image target with Node 24 and
+  the existing security/identity/Foxguard inventory. The default distribution
+  target reuses it and adds the CLI. A real offline smolvm qualification checks
+  37 tool startups, Python imports, guest-local Nmap/curl behavior, and Foxguard
+  positive/clean fixtures. Architecture guidance distinguishes OCI packaging,
+  worker isolation, global sandbox gaps, and a measured path to native execution.
+- Opt-in Linux smolvm 1.14.6 execution for source evolution, including approval
+  and pinned future workers. Archive bytes are pinned and copied before boot;
+  source mounts are read-only, workspaces guest-local, and credentials/network
+  access excluded. Host deadlines, cancellation, output caps, and verified
+  teardown fail closed. Docker remains the default. A real microVM qualification
+  script and smolvm mode for the provider-backed source lifecycle are available.
+- `evolve exec` now forwards terminal interrupts to the running worker and waits
+  for its cancellation result instead of abandoning execution on the first signal.
+- Refresh the bundled model picker and pricing with GPT-6 Astra, DeepSeek V4.1
+  Flash, Claude Fable 5.1 / Opus 5 / Sonnet 5, Gemini 3.1 and 3.5–3.8 text
+  models, GLM-5.3-Flash, and Qwen 3.8 Flash / 3.7 Plus / 3.6 Plus and Flash.
+  The offline Qwen catalog also includes the unpriced 3.8 Max preview.
+  Qwen estimates now include published cache-read rates where available.
+  Direct DeepSeek now defaults to its stable
+  `deepseek-flash` API id; existing Azure and Token Plan routes are preserved.
+  GPT-6 requests use the reasoning-model output cap and Responses reasoning
+  defaults. Astra remains opt-in; estimates use base rates, not long-context,
+  cache-write, or off-peak billing tiers.
+- Console interaction improvements: curated/all model browsing, stable detail
+  panes, searchable command navigation across control screens, and model changes
+  that preserve the transcript and unsent draft. Fast input followed by Enter
+  selects the current query rather than the previous highlight.
+  Settings support paste, Unicode editing, immediate value cycling, and clearer
+  changed-state/save feedback. Saved sessions default to the current project,
+  retain recoverable errors, and require explicit, cancellable deletion.
+  Worker monitoring adds search and clearer state labels; live plans prioritize
+  active tasks without overflowing their sidebar. Working indicators honor
+  reduced motion and no longer animate failed startup as connecting.
+  OpenAI model selection retains configured custom API endpoints.
 - Evolution passes recover compatible development feedback from retained
   proposals and evaluation receipts, including after promotion. Proposal and
   receipt digests are checked; held-out and negative-control feedback stays
@@ -112,6 +147,10 @@ on the published npm package and the GitHub Release tag.
   retain version identity and separately budgeted local compute estimates.
 
 ### Fixed
+
+- The toolbox image includes system `sbin` directories on `PATH`, making the
+  packaged John executable available to the non-root CLI. Published-image
+  smoke checks now exercise John startup.
 
 - Source-evolution confidence intervals no longer treat repeated executions of
   the same fixtures as independent evidence; unstable repeats cannot produce

@@ -28,6 +28,7 @@ describe("LlmApiRuntime provider detection", () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.AZURE_OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_BASE_URL;
     delete process.env.AZURE_OPENAI_BASE_URL;
     delete process.env.AZURE_OPENAI_MODEL;
     delete process.env.AZURE_OPENAI_WIRE_API;
@@ -73,6 +74,30 @@ describe("LlmApiRuntime provider detection", () => {
     expect(await rt.isAvailable()).toBe(true);
   });
 
+
+  it.each([undefined, "openai"])("keeps the configured OpenAI endpoint with provider pin %s", async (selectedProvider) => {
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENAI_BASE_URL = "https://gateway.example.test/v1";
+    process.env["0SEC_MODEL"] = "gpt-6-astra";
+    if (selectedProvider) process.env["0SEC_SELECTED_PROVIDER"] = selectedProvider;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        choices: [{ message: { content: "Gateway response" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 2 },
+      }), { headers: { "content-type": "application/json" } }),
+    );
+    try {
+      const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+      const result = await rt.executeNative("sys", [
+        { role: "user", content: [{ type: "text", text: "hello" }] },
+      ], []);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("https://gateway.example.test/v1/chat/completions");
+      expect(result.content).toContainEqual({ type: "text", text: "Gateway response" });
+      expect(result.error).toBeUndefined();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
   it("selects direct DeepSeek Flash 0731 before Azure for its exact API model", async () => {
     process.env.DEEPSEEK_API_KEY = "deepseek-key-123";
     process.env.AZURE_OPENAI_API_KEY = "azure-key-should-not-win";
@@ -737,6 +762,32 @@ describe("LlmApiRuntime chat completions format", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("completes Astra requests with the reasoning-model output cap", async () => {
+    // Test-only access to the fixture's selected model, as with its wire above.
+    const internals = rt as unknown as { model: string };
+    internals.model = "gpt-6-astra";
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, opts: RequestInit) => {
+      const body = JSON.parse(String(opts.body));
+      if ("max_tokens" in body || !(body.max_completion_tokens > 0)) {
+        return new Response("Use max_completion_tokens for GPT-6", { status: 400 });
+      }
+      return Response.json({
+        choices: [{ message: { content: "Astra completed" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+    }));
+
+    const native = await rt.executeNative("system", [
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+    ], []);
+    expect(native.stopReason).toBe("end_turn");
+    expect(native.content).toContainEqual({ type: "text", text: "Astra completed" });
+
+    const legacy = await rt.execute("hello");
+    expect(legacy.output).toContain("Astra completed");
+    expect(legacy.exitCode).toBe(0);
   });
 
   it("converts tool_use to OpenAI tool_calls format", async () => {

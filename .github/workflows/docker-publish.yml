@@ -206,6 +206,8 @@ jobs:
             echo "=== node ==="          && node --version
             echo "=== ripgrep ==="       && rg --version | head -1
             echo "=== nmap ==="          && nmap --version | head -1
+            echo "=== john ==="
+            john
             # AD / cloud-identity tooling.
             # `command -v` is the existence assertion (it exits non-zero when the
             # binary is missing); the piped version banner is informational —

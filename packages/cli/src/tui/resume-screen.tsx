@@ -32,9 +32,9 @@
  *    fat-fingered keystroke, so anything other than the confirm cancels.
  */
 
-import React, { useMemo, useState } from "react";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { TextAttributes } from "@opentui/core";
+import React, { useMemo, useRef, useState } from "react";
+import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
+import { decodePasteBytes, TextAttributes } from "@opentui/core";
 
 import { type Theme } from "./theme-context.js";
 import { Cells } from "./primitives.js";
@@ -45,12 +45,16 @@ import {
   moveDialogSelection,
 } from "./dialog-select-layout.js";
 import type { StoredSessionMeta } from "./session-store.js";
+import { sanitizeTuiText } from "./text.js";
 import {
   clipResumeDetailLines,
   isFilterKey,
   resumeDetailLines,
   resumeFooterHint,
   resumeItems,
+  sessionCategory,
+  CATEGORY_THIS,
+  CATEGORY_OTHER,
   shellChromeRows,
   type ResumeDetailTone,
   type ResumeMode,
@@ -66,10 +70,21 @@ export interface ResumeScreenProps {
   currentId?: string;
   /** Injected clock for the age strings. Never an ambient `Date.now()`. */
   now: number;
+  /**
+   * The console's actual working directory for "This project" scope.
+   * Passed from the route using `process.cwd()` rather than guessed from
+   * session metadata, so the category split is accurate even when there are
+   * no sessions from the current directory yet.
+   */
+  currentCwd?: string;
   /** Enter on a row — hand the id back so the router rebuilds the chat. */
-  onResume: (id: string) => void;
-  /** Confirmed delete of one transcript. Called only after a second `d`. */
-  onDelete: (id: string) => void;
+  onResume: (id: string) => boolean;
+  /**
+   * Confirmed delete of one transcript. Called only after a confirm key on an
+   * armed row. Returns whether the deletion succeeded so the screen only hides
+   * the row locally on success.
+   */
+  onDelete: (id: string) => boolean;
   /** Leave the screen — Esc, once any filter or armed delete is cleared. */
   onBack: () => void;
   /** Leave the console entirely — ctrl+c. */
@@ -96,6 +111,7 @@ export function ResumeScreen({
   sessions,
   currentId,
   now,
+  currentCwd: propCwd,
   onResume,
   onDelete,
   onBack,
@@ -105,33 +121,63 @@ export function ResumeScreen({
   const { width, height } = useTerminalDimensions();
 
   const [filter, setFilter] = useState("");
-  const [filtering, setFiltering] = useState(false);
-  // The id armed for deletion, or null. A second `d` on this id deletes.
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-  // Rows deleted this session are hidden immediately, so the list updates
-  // without waiting on the parent to re-list from disk.
+  const [filtering, setFilteringState] = useState(false);
+  // "project" = only current-cwd sessions; "all" = every session.
+  const [scope, setScope] = useState<"project" | "all">("project");
+  // The id armed for deletion, or null. A second Delete on this id deletes.
+  const [pendingDelete, setPendingDeleteState] = useState<string | null>(null);
+  // Action failures remain visible without closing the session browser.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Rows deleted successfully this session are hidden immediately.
   const [deleted, setDeleted] = useState<ReadonlySet<string>>(() => new Set());
+  // Track the selected session id across filter/list changes.
+  const selectedIdRef = useRef<string | null>(null);
+  // Mutable ref to avoid stale closures in event handlers (usePaste).
+  const pendingDeleteRef = useRef<string | null>(null);
+  const filterRef = useRef("");
+  const filteringRef = useRef(false);
+  const scopeRef = useRef(scope);
+  const deletedRef = useRef(deleted);
+  const baseSelectedRef = useRef(0);
+  const setFiltering = (value: boolean) => {
+    filteringRef.current = value;
+    setFilteringState(value);
+  };
+  const setPendingDelete = (id: string | null) => {
+    pendingDeleteRef.current = id;
+    setPendingDeleteState(id);
+  };
 
-  // The working directory the console is standing in — read from the sessions'
-  // own metadata by matching the current session, so the "This project" split
-  // needs no extra prop. Falls back to the first session's cwd when there is no
-  // current session, which is the directory a fresh console saved into.
-  const currentCwd = useMemo(() => {
-    if (currentId !== undefined) {
-      const active = sessions.find((session) => session.id === currentId);
-      if (active) return active.cwd;
-    }
-    return sessions[0]?.cwd;
-  }, [sessions, currentId]);
+  // The console's real working directory. The prop comes from the route
+  // via `process.cwd()`, so it is accurate even when no session exists for
+  // the current directory yet.
+  const currentCwd = propCwd;
 
   const visibleSessions = useMemo(
     () => sessions.filter((session) => !deleted.has(session.id)),
     [sessions, deleted],
   );
 
+  // Filter to current-cwd sessions when scope is "project".
+  const scopedSessions = useMemo(() => {
+    if (scope === "project" && currentCwd !== undefined) {
+      return visibleSessions.filter(
+        (session) => sessionCategory(session, currentCwd) === CATEGORY_THIS,
+      );
+    }
+    return visibleSessions;
+  }, [visibleSessions, scope, currentCwd]);
+
   const items = useMemo<DialogItem[]>(
-    () => resumeItems({ sessions: visibleSessions, currentId, currentCwd, now, filter }),
-    [visibleSessions, currentId, currentCwd, now, filter],
+    () =>
+      resumeItems({
+        sessions: scopedSessions,
+        currentId,
+        currentCwd,
+        now,
+        filter,
+      }),
+    [scopedSessions, currentId, currentCwd, now, filter],
   );
   const byId = useMemo(() => {
     const map = new Map<string, StoredSessionMeta>();
@@ -153,21 +199,37 @@ export function ResumeScreen({
     return count;
   }, [items]);
 
-  const [selected, setSelected] = useState(0);
+  // Preserve the selected session by identity when items change.
+  const [baseSelected, setBaseSelected] = useState(0);
+  const selected = useMemo(() => {
+    const id = selectedIdRef.current;
+    if (id !== null && items.length > 0) {
+      const idx = items.findIndex((item) => item.id === id);
+      if (idx >= 0) return idx;
+    }
+    if (baseSelected < items.length) return baseSelected;
+    return Math.max(0, items.length - 1);
+  }, [items, baseSelected]);
   // The highlighted row can vanish from under the cursor as the filter narrows
   // or a row is deleted, so the rendered cursor is always the clamped one.
   const cursor = clampDialogSelection(items, selected);
   const activeItem = items.length > 0 && cursor >= 0 ? items[cursor] : undefined;
 
+  // Track the active id for identity preservation.
+  if (activeItem) selectedIdRef.current = activeItem.id;
+
+
   const mode: ResumeMode = pendingDelete ? "confirm-delete" : filtering ? "filter" : "browse";
 
-  // The status line under the list carries the delete confirm. It costs a row
-  // only when armed, and it names the row it will remove so a mistaken arm is
-  // obvious before the second press.
+  // Status/error lines under the list.
   const pendingLabel = pendingDelete
     ? (items.find((item) => item.id === pendingDelete)?.label ?? "this session")
     : "";
-  const statusText = pendingDelete ? `Delete "${pendingLabel}"? press d again to confirm · esc cancel` : "";
+  const statusText = pendingDelete
+    ? `Delete "${pendingLabel}"? press del again to confirm · esc cancel`
+    : deleteError
+      ? deleteError
+      : "";
 
   const contentWidth = Math.max(0, width - 4);
   const bodyRows = Math.max(0, height - shellChromeRows(width) - (statusText ? 1 : 0));
@@ -180,113 +242,135 @@ export function ResumeScreen({
     bodyRows,
   });
 
+  // Whether other-project sessions exist (for empty-state guidance).
+  const hasOtherSessions = useMemo(() => {
+    if (!currentCwd) return false;
+    return visibleSessions.some(
+      (session) => sessionCategory(session, currentCwd) === CATEGORY_OTHER,
+    );
+  }, [visibleSessions, currentCwd]);
+
+  const currentItems = () => filterRef.current === filter && scopeRef.current === scope && deletedRef.current === deleted
+    ? items
+    : resumeItems({
+      sessions: sessions.filter((session) => !deletedRef.current.has(session.id) &&
+        (scopeRef.current === "all" || currentCwd === undefined || sessionCategory(session, currentCwd) === CATEGORY_THIS)),
+      currentId,
+      currentCwd,
+      now,
+      filter: filterRef.current,
+    });
+  const selectedIndex = (visible: DialogItem[]) => {
+    const index = visible.findIndex((item) => item.id === selectedIdRef.current);
+    return clampDialogSelection(visible, index >= 0 ? index : baseSelectedRef.current);
+  };
+  const highlight = (visible: DialogItem[], index: number) => {
+    const next = clampDialogSelection(visible, index);
+    selectedIdRef.current = visible[next]?.id ?? null;
+    baseSelectedRef.current = next;
+    setBaseSelected(next);
+    setPendingDelete(null);
+    setDeleteError(null);
+  };
   const move = (delta: number) => {
-    if (items.length === 0) return;
-    setPendingDelete(null);
-    const dir: 1 | -1 = delta >= 0 ? 1 : -1;
-    let next = cursor < 0 ? 0 : cursor;
-    for (let i = 0; i < Math.abs(delta); i += 1) next = moveDialogSelection(items, next, dir);
-    setSelected(next);
+    const visible = currentItems();
+    if (visible.length === 0) return;
+    const direction = delta >= 0 ? 1 : -1;
+    let next = selectedIndex(visible);
+    for (let i = 0; i < Math.abs(delta); i++) next = moveDialogSelection(visible, next, direction);
+    highlight(visible, next);
   };
-
-  const setQuery = (next: string) => {
+  const setQuery = (query: string) => {
+    filterRef.current = query;
+    setFilter(query);
+    selectedIdRef.current = null;
+    baseSelectedRef.current = 0;
+    setBaseSelected(0);
     setPendingDelete(null);
-    setFilter(next);
-    setSelected(0);
+    setDeleteError(null);
   };
-
   const armOrDelete = () => {
-    if (!activeItem) return;
-    if (pendingDelete === activeItem.id) {
-      // Confirmed: hide it now and tell the router to remove it from disk.
-      const id = activeItem.id;
-      setPendingDelete(null);
-      setDeleted((prev) => {
-        const next = new Set(prev);
-        next.add(id);
-        return next;
-      });
-      onDelete(id);
+    const visible = currentItems();
+    const item = visible[selectedIndex(visible)];
+    if (!item) return;
+    setDeleteError(null);
+    if (pendingDeleteRef.current !== item.id) {
+      setPendingDelete(item.id);
       return;
     }
-    setPendingDelete(activeItem.id);
+    setPendingDelete(null);
+    if (!onDelete(item.id)) {
+      setDeleteError("Failed to delete session — check file permissions");
+      return;
+    }
+    deletedRef.current = new Set(deletedRef.current).add(item.id);
+    setDeleted(deletedRef.current);
+    selectedIdRef.current = null;
   };
 
   useKeyboard((key) => {
-    const seq = typeof key.sequence === "string" ? key.sequence : "";
-
-    if (key.ctrl && key.name === "c") {
-      onExit();
+    const sequence = typeof key.sequence === "string" ? key.sequence : "";
+    if (key.ctrl && key.name === "c") return onExit();
+    if (key.ctrl && key.name === "u") {
+      setQuery("");
+      setFiltering(false);
       return;
     }
-
+    if (key.ctrl || key.meta || key.option) return;
+    if (key.name === "escape") {
+      if (pendingDeleteRef.current) setPendingDelete(null);
+      else if (filteringRef.current) setFiltering(false);
+      else if (filterRef.current) setQuery("");
+      else onBack();
+      return;
+    }
     if (key.name === "up") return move(-1);
     if (key.name === "down") return move(1);
     if (key.name === "pageup") return move(-PAGE_STEP);
     if (key.name === "pagedown") return move(PAGE_STEP);
-
-    // The Delete key is a delete request in either mode — it is not a filter
-    // character, so it never fights type-to-filter.
-    if (key.name === "delete") {
-      armOrDelete();
+    if (key.name === "home") return highlight(currentItems(), 0);
+    if (key.name === "end") {
+      const visible = currentItems();
+      return highlight(visible, visible.length - 1);
+    }
+    if (key.name === "tab") {
+      setPendingDelete(null);
+      setDeleteError(null);
+      scopeRef.current = scopeRef.current === "project" ? "all" : "project";
+      setScope(scopeRef.current);
       return;
     }
-
+    if (key.name === "delete") return armOrDelete();
     if (key.name === "return") {
-      // Enter resumes from either mode: while filtering, the whole point of
-      // typing is to reach one row and take it.
-      if (activeItem) onResume(activeItem.id);
-      return;
-    }
-
-    // ── filter mode ──
-    if (filtering) {
-      if (key.name === "escape") {
-        setFiltering(false);
-        return;
-      }
-      if (key.name === "backspace") {
-        setQuery(filter.slice(0, -1));
-        return;
-      }
-      if (isFilterKey(seq)) setQuery(filter + seq);
-      return;
-    }
-
-    // ── browse mode ──
-    if (key.name === "escape") {
-      // Esc unwinds one step at a time: cancel an armed delete, then clear the
-      // filter, then leave.
-      if (pendingDelete) {
-        setPendingDelete(null);
-        return;
-      }
-      if (filter) {
-        setQuery("");
-        return;
-      }
-      onBack();
+      if (pendingDeleteRef.current) return;
+      const visible = currentItems();
+      const item = visible[selectedIndex(visible)];
+      if (item && !onResume(item.id)) setDeleteError("Could not load session — choose another saved conversation");
       return;
     }
     if (key.name === "backspace") {
-      if (filter) setQuery(filter.slice(0, -1));
+      setQuery(Array.from(filterRef.current).slice(0, -1).join(""));
       return;
     }
-    // `d` is reserved for delete/confirm, exactly as `/settings` reserves `r`
-    // for reset; to type a `d` into the filter, open it with `/` first.
-    if (seq === "d" || seq === "D") {
-      armOrDelete();
-      return;
-    }
-    if (seq === "/") {
+    if (!filteringRef.current && sequence === "/") {
       setFiltering(true);
       setQuery("");
       return;
     }
-    if (isFilterKey(seq)) {
+    if (isFilterKey(sequence)) {
       setFiltering(true);
-      setQuery(seq);
+      setQuery(filterRef.current + sequence);
     }
+  });
+
+  // Pasted text: decode the raw bytes, sanitize, and append to the filter.
+  // Respect pending confirmations — do not start a filter if a delete is armed.
+  usePaste((event) => {
+    const text = sanitizeTuiText(decodePasteBytes(event.bytes));
+    if (!text) return;
+    if (pendingDeleteRef.current) return;
+    setFiltering(true);
+    setQuery(filterRef.current + text);
   });
 
   // The detail pane: what the highlighted session was about, then its metadata,
@@ -315,6 +399,17 @@ export function ResumeScreen({
     );
   };
 
+  // Empty-state guidance text, context-aware.
+  const totalAll = visibleSessions.length;
+  const emptyText = (() => {
+    if (filter) return "no sessions match this filter";
+    if (scopedSessions.length === 0 && scope === "project" && hasOtherSessions && totalAll > 0) {
+      return 'no sessions saved in this project — press Tab to browse all projects';
+    }
+    if (totalAll === 0 && filter.length === 0) return "no saved sessions to resume";
+    return "no sessions to show";
+  })();
+
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
       <DialogSelectBody
@@ -326,18 +421,18 @@ export function ResumeScreen({
         gutter={items.some((item) => item.current === true)}
         isCurrent={(item) => item.current === true}
         renderDetail={renderDetail}
-        emptyText={filter ? "no sessions match this filter" : "no saved sessions to resume"}
+        emptyText={emptyText}
       />
       {statusText ? (
         <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>
-          <Cells width={contentWidth} fg={theme.WARNING}>
+          <Cells width={contentWidth} fg={pendingDelete ? theme.WARNING : theme.ERROR}>
             {statusText}
           </Cells>
         </box>
       ) : null}
       <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>
         <Cells width={contentWidth} fg={theme.MUTED}>
-          {resumeFooterHint(mode, filter.length > 0, items.length > 0)}
+          {resumeFooterHint(mode, filter.length > 0, items.length > 0, scope, scopedSessions.length)}
         </Cells>
       </box>
     </box>

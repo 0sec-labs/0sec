@@ -1,5 +1,5 @@
 export type {
-  EvolutionArtifactKind, EvolutionAttempt, EvolutionCase, EvolutionConfig,
+  EvolutionArtifactKind, EvolutionAttempt, EvolutionBackend, EvolutionCase, EvolutionConfig,
   EvolutionDependencies, EvolutionEdit, EvolutionEvaluation, EvolutionExecution,
   EvolutionFile, EvolutionLane, EvolutionModel, EvolutionProposal, EvolutionRegistry,
   EvolutionRegistryEvent, EvolutionRunResult, EvolutionSandbox, EvolutionSandboxRequest,
@@ -14,5 +14,8 @@ export {
   promoteEvolutionVersion, recordEvolutionVersion, rollbackEvolutionVersion,
   snapshotEvolutionSource, startEvolutionCanary, verifyEvolutionSnapshot,
 } from "./registry.js";
-export { createDockerEvolutionSandbox, resolveEvolutionImage } from "./sandbox.js";
+export {
+  createDockerEvolutionSandbox, createSmolvmEvolutionSandbox, createEvolutionSandbox,
+  resolveEvolutionImage, resolveEvolutionConfigImage,
+} from "./sandbox.js";
 export { proposeEvolutionEdits } from "./rewrite.js";

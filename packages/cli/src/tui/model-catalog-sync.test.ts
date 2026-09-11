@@ -213,4 +213,11 @@ describe("catalog merge (priced core + synced extras)", () => {
     const full = buildFullModelCatalog("novel-xyz", { cachePath });
     expect(full[0].id).toBe("novel-xyz");
   });
+
+  it("keeps a custom active deployment selectable when absent from the catalog", () => {
+    const full = buildFullModelCatalog("custom-deployment-x", { cachePath });
+    expect(full[0].id).toBe("custom-deployment-x");
+    expect(full[0].price).toBe("—");
+    expect(full.filter((model) => model.id === "custom-deployment-x")).toHaveLength(1);
+  });
 });

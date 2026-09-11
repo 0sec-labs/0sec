@@ -83,6 +83,15 @@ describe("filterDialogItems", () => {
     expect(filterDialogItems(list, "nope")).toHaveLength(0);
   });
 
+  it("finds command ids when the display label uses different wording", () => {
+    const list: DialogItem[] = [
+      { id: "models", label: "Choose model" },
+      { id: "resume", label: "Saved conversations" },
+    ];
+    expect(filterDialogItems(list, "models").map((item) => item.id)).toEqual(["models"]);
+    expect(filterDialogItems(list, "resume").map((item) => item.id)).toEqual(["resume"]);
+  });
+
   it("breaks ties by input order", () => {
     const list: DialogItem[] = [
       { id: "b", label: "match b" },
@@ -353,6 +362,14 @@ describe("inline panel", () => {
     const few = computeDialogPanel({ width: 120, height: 40, totalRows: 3, bodyRows: 30 });
     expect(few.visibleRows).toBe(3);
     expect(few.scrolls).toBe(false);
+  });
+
+  it("keeps full detail height when search narrows to one result", () => {
+    const unfiltered = computeDialogPanel({ width: 120, height: 40, bodyRows: 30, totalRows: 60, withDetail: true });
+    const filtered = computeDialogPanel({ width: 120, height: 40, bodyRows: 30, totalRows: 1, withDetail: true });
+    expect(filtered.visibleRows).toBe(unfiltered.visibleRows);
+    expect(filtered.scrolls).toBe(false);
+    expect(filtered.showDetail).toBe(true);
   });
 
   it("keeps the body inside the frame it was given at 80x24 and 120x40", () => {

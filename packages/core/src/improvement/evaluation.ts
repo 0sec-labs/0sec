@@ -3,7 +3,7 @@ import type { ResearchScoreSnapshot } from "../bench/improvement.js";
 import { wilson95 } from "../bench/scorecard.js";
 import { canonicalEvolutionJson, parseEvolutionConfig } from "./config.js";
 import { evolutionDigest, verifyEvolutionSnapshot } from "./registry.js";
-import { createDockerEvolutionSandbox, resolveEvolutionImage } from "./sandbox.js";
+import { createEvolutionSandbox, resolveEvolutionConfigImage } from "./sandbox.js";
 import type {
   EvolutionAttempt, EvolutionConfig, EvolutionDependencies, EvolutionEvaluation,
   EvolutionLane, EvolutionSnapshot,
@@ -46,12 +46,12 @@ export async function evaluateEvolutionCandidate(
 ): Promise<EvolutionEvaluation> {
   const config = parseEvolutionConfig(rawConfig);
   deps.signal?.throwIfAborted();
-  if (!deps.sandbox) config.image = await resolveEvolutionImage(config.image);
+  if (!deps.sandbox) config.image = await resolveEvolutionConfigImage(config);
   const configDigest = evolutionDigest(config);
   if (baseline.digest === candidate.digest) throw new Error("candidate does not change the baseline artifact");
   verifyEvolutionSnapshot(baseline);
   verifyEvolutionSnapshot(candidate);
-  const sandbox = deps.sandbox ?? createDockerEvolutionSandbox();
+  const sandbox = deps.sandbox ?? createEvolutionSandbox(config);
   const attempts: EvolutionEvaluation["attempts"] = { baseline: [], candidate: [] };
   let spent = 0;
   const evaluatorIdentity = {

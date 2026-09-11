@@ -500,6 +500,8 @@ export interface ChatScreenProps {
   submitHandle?: React.MutableRefObject<((text: string) => void) | null>;
   /** Rebuild the live session after Connect saves a selected provider. */
   reconnectHandle?: React.MutableRefObject<((providerId: string) => void) | null>;
+  /** Switch the live runtime without replacing the conversation or composer. */
+  modelHandle?: React.MutableRefObject<{ model: string | undefined; select: (id: string) => void } | null>;
   /**
    * The shell-level plugin-host manager, if the shell wired one. Its `current()`
    * host is handed to the console session so ENABLED marketplace plugins'
@@ -709,6 +711,7 @@ export function ChatScreen({
   onConnectionFailure,
   submitHandle,
   reconnectHandle,
+  modelHandle,
   pluginHostManager,
   evolutionStatus,
 }: ChatScreenProps) {
@@ -774,8 +777,6 @@ export function ChatScreen({
   const [shimmerFrame, setShimmerFrame] = useState(0);
   /** Frame counter for the empty-state logo intro; driven by the ticker below. */
   const [logoFrame, setLogoFrame] = useState(0);
-  /** When the current busy/blocked state began, for elapsed display. */
-  const activitySince = useRef<number>(Date.now());
   /**
    * Masked credential entry. Held in component state only, written
    * straight to the 0600 store, and never appended to the transcript —
@@ -971,6 +972,7 @@ export function ChatScreen({
   const queuedCount = queuedMessages.length;
   const [composer, setComposer] = useState("");
   const [composing, setComposing] = useState(false);
+  const paletteDraftRef = useRef<{ text: string; composing: boolean } | null>(null);
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [slashSelected, setSlashSelected] = useState(0);
   const [pendingScope, setPendingScope] = useState<PendingScope | null>(null);
@@ -1173,6 +1175,16 @@ export function ChatScreen({
     // live draft. A recall re-sets the cursor immediately after calling this.
     historyIndexRef.current = historyRef.current.length;
   }, [setCommandMenuVisible]);
+
+  const restorePaletteDraft = useCallback(() => {
+    const draft = paletteDraftRef.current;
+    if (!draft) return false;
+    paletteDraftRef.current = null;
+    composingRef.current = draft.composing;
+    setComposerText(draft.text);
+    setComposing(draft.composing);
+    return true;
+  }, [setComposerText]);
 
   /**
    * Recall a previously submitted message into the composer. Up walks toward
@@ -1466,6 +1478,51 @@ export function ChatScreen({
       reconnectHandle.current = null;
     };
   }, [reconnectHandle, reconnectProvider]);
+
+  const selectModel = useCallback((requested: string) => {
+    if (busyRef.current) {
+      appendEntry({ kind: "notice", text: "wait for the active turn before switching model", turn: turn.current });
+      return;
+    }
+    const previous = sessionRef.current;
+    if (previous && requested === modelIdRef.current) {
+      appendEntry({ kind: "notice", text: `Model is already ${requested}`, turn: turn.current });
+      return;
+    }
+    let built: { session: ConsoleSession; model: string };
+    try {
+      built = buildSession({
+        model: requested,
+        initialMessages: previous?.messages ?? options?.initialMessages,
+      });
+    } catch (error) {
+      appendEntry({
+        kind: "notice",
+        text: `could not switch to ${requested}; model is unchanged`,
+        detail: error instanceof Error ? error.message : String(error),
+        turn: turn.current,
+      });
+      return;
+    }
+    sessionRef.current = built.session;
+    modelIdRef.current = built.model;
+    setSession(built.session);
+    setModelId(built.model);
+    setStartupError(null);
+    void previous?.cleanup();
+    appendEntry({
+      kind: "notice",
+      text: `Model: ${built.model} (${modelProvider(built.model)})`,
+      detail: `${previous?.messages.length ?? options?.initialMessages?.length ?? 0} prior message(s) carried over.`,
+      turn: turn.current,
+    });
+  }, [appendEntry, buildSession, options?.initialMessages]);
+
+  useEffect(() => {
+    if (!modelHandle) return;
+    modelHandle.current = { model: modelId ?? undefined, select: selectModel };
+    return () => { modelHandle.current = null; };
+  }, [modelHandle, modelId, selectModel]);
 
   useEffect(() => {
     const mgr = pluginHostManager;
@@ -2444,53 +2501,7 @@ export function ChatScreen({
           onNavigate("models");
           return true;
         }
-        if (busy) {
-          appendEntry({
-            kind: "notice",
-            text: "wait for the active turn before switching model",
-            turn: turn.current,
-          });
-          return true;
-        }
-        if (!session) {
-          appendEntry({
-            kind: "notice",
-            text: "runtime is not ready; model is unchanged",
-            turn: turn.current,
-          });
-          return true;
-        }
-        if (requested === modelId) {
-          appendEntry({ kind: "notice", text: `Model is already ${requested}`, turn: turn.current });
-          return true;
-        }
-        // The model is fixed when the runtime is constructed, so switching
-        // means building a new session. Carry the conversation across so an
-        // engagement does not lose its context, and keep the old session
-        // alive until the new one is built — a failed switch must leave the
-        // operator exactly where they were.
-        const previous = session;
-        let built: { session: ConsoleSession; model: string };
-        try {
-          built = buildSession({ model: requested, initialMessages: previous.messages });
-        } catch (error) {
-          appendEntry({
-            kind: "notice",
-            text: `could not switch to ${requested}; model is unchanged`,
-            detail: error instanceof Error ? error.message : String(error),
-            turn: turn.current,
-          });
-          return true;
-        }
-        setSession(built.session);
-        setModelId(built.model);
-        void previous.cleanup();
-        appendEntry({
-          kind: "notice",
-          text: `Model: ${built.model} (${modelProvider(built.model)})`,
-          detail: `${previous.messages.length} prior message(s) carried over.`,
-          turn: turn.current,
-        });
+        selectModel(requested);
         return true;
       }
       case "mode": {
@@ -2687,6 +2698,7 @@ export function ChatScreen({
     pendingFeedback,
     scopeLabel,
     scopeRules,
+    selectModel,
     session,
     setPendingFeedback,
     target,
@@ -3456,12 +3468,15 @@ export function ChatScreen({
       return;
     }
     if (key.ctrl && (key.name === "p" || key.name === "k")) {
+      if (restorePaletteDraft()) return;
+      paletteDraftRef.current = { text: composerRef.current, composing: composingRef.current };
       composingRef.current = true;
       setComposing(true);
       setComposerText("/");
       return;
     }
     if (key.name === "escape") {
+      if (restorePaletteDraft()) return;
       if (commandMenuOpenRef.current && composerRef.current.trimStart().startsWith("/")) {
         setCommandMenuVisible(false);
         return;
@@ -3621,10 +3636,12 @@ export function ChatScreen({
         } else if (disposition === "send") {
           void send(input);
         }
-        composingRef.current = false;
-        setComposerText("");
-        setComposing(false);
-        setCommandMenuVisible(false);
+        if (!restorePaletteDraft()) {
+          composingRef.current = false;
+          setComposerText("");
+          setComposing(false);
+          setCommandMenuVisible(false);
+        }
         return;
       }
       // Line editing. The composer is append-only — there is no caret to
@@ -3840,7 +3857,7 @@ export function ChatScreen({
   useEffect(() => {
     if (reviewOpen && gateOpen) setReviewOpen(false);
   }, [gateOpen, reviewOpen]);
-  const animationKind: AnimationKind | null = gateOpen
+  const animationKind: AnimationKind | null = startupError ? null : gateOpen
     ? "awaiting-operator"
     : runningTool
       ? "tool"
@@ -3851,6 +3868,8 @@ export function ChatScreen({
             ? "streaming"
             : "thinking"
           : null;
+  // Reset before painting so a new activity never inherits the previous timer.
+  const activitySince = useMemo(() => Date.now(), [animationKind]);
   // animTick is read only to make the frame recompute on each interval.
   void animTick;
   // The loading shimmer is alive only while a turn is genuinely WORKING —
@@ -3886,8 +3905,9 @@ export function ChatScreen({
     activeEntryId: busy ? entries[entries.length - 1]?.id : undefined,
   };
   const animation = animationKind
-    ? frameAt(animationKind, Date.now() - activitySince.current, {
+    ? frameAt(animationKind, Date.now() - activitySince, {
         label: animationKind === "tool" ? runningTool ?? undefined : undefined,
+        motion: !settings.reduceMotion && animationKind !== "awaiting-operator",
       })
     : null;
 
@@ -3897,15 +3917,10 @@ export function ChatScreen({
     if (!animationKind) return;
     const timer = setInterval(
       () => setAnimTick((n) => n + 1),
-      frameIntervalMs(animationKind),
+      settings.reduceMotion || animationKind === "awaiting-operator" ? 1000 : frameIntervalMs(animationKind),
     );
     return () => clearInterval(timer);
-  }, [animationKind]);
-
-  // Restart the elapsed clock whenever the kind of activity changes.
-  useEffect(() => {
-    activitySince.current = Date.now();
-  }, [animationKind]);
+  }, [animationKind, settings.reduceMotion]);
 
   // One shared ticker for every shimmering label, at the shimmer cadence. Only
   // runs while `shimmerActive`, so a settled or idle surface costs no repaints.
@@ -4061,7 +4076,7 @@ export function ChatScreen({
       </box>
       <box flexGrow={1} minWidth={0}>
         {shimmerActive ? (
-          <ShimmerText label={workingLineFitted} frame={shimmerFrame} base={MUTED} peak={ERROR} />
+          <ShimmerText label={workingLineFitted} frame={shimmerFrame} base={MUTED} peak={TEXT} />
         ) : (
           <text fg={MUTED}>{workingLineFitted}</text>
         )}
@@ -4096,7 +4111,11 @@ export function ChatScreen({
       ? "runtime unavailable"
       : queueLabel
         ? queueLabel
-        : "type to chat or / for commands";
+        : busy
+          ? "type a follow-up · enter interrupts and sends"
+          : !session
+            ? "connecting · type to queue a message"
+            : "type to chat or / for commands";
     return (
       <ComposerInput
         composing={composing}

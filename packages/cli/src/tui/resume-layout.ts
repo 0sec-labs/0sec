@@ -339,18 +339,24 @@ export function resumeFooterHint(
   mode: ResumeMode,
   hasFilter = false,
   hasSessions = true,
+  scope: "project" | "all" = "project",
+  sessionCount?: number,
 ): string {
+  const count = sessionCount !== undefined ? `${sessionCount} session${sessionCount === 1 ? "" : "s"}` : undefined;
+
   switch (mode) {
     case "filter":
-      return "type to filter · enter/esc done · backspace delete";
+      return "type to filter · enter resume · esc cancel · backspace delete";
     case "confirm-delete":
-      return "d or del confirm delete · esc cancel";
+      return "del confirm delete · esc cancel";
     default:
       return [
         "up/down move",
         hasSessions ? "enter resume" : undefined,
-        hasSessions ? "d delete" : undefined,
+        "del delete",
         "/ filter",
+        `tab ${scope === "project" ? "all projects" : "project scope"}`,
+        count,
         hasFilter ? "esc clear filter" : "esc back",
         "ctrl+c exit",
       ]

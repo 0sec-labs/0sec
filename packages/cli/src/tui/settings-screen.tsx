@@ -38,13 +38,14 @@
  *    `$HOME` is worse than one that refuses to open.
  */
 
-import React, { useMemo, useState } from "react";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { TextAttributes } from "@opentui/core";
+import React, { useMemo, useRef, useState } from "react";
+import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
+import { decodePasteBytes, TextAttributes } from "@opentui/core";
 
 import { Cells } from "./primitives.js";
-import { setSettings, useSettings } from "./settings-store.js";
+import { getSettings, setSettings, useSettings } from "./settings-store.js";
 import { useTheme, type Theme } from "./theme-context.js";
+import { sanitizeTuiText } from "./text.js";
 import { DialogSelectBody, type DialogItem } from "./dialog-select.js";
 import {
   clampDialogSelection,
@@ -132,6 +133,18 @@ function toneColor(tone: SettingsDetailTone, theme: Theme): string | undefined {
   }
 }
 
+function settingsDialogItems(rows: SettingsRow[], settings: TuiSettings): DialogItem[] {
+  return rows
+    .filter((row): row is Extract<SettingsRow, { kind: "setting" }> => row.kind === "setting")
+    .map((row) => ({
+      id: row.def.key,
+      label: row.def.label,
+      meta: settingValueLabel(row.def, settingValue(settings, row.def)),
+      category: row.group,
+      current: isSettingModified(settings, row.def),
+    }));
+}
+
 export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   const { width, height } = useTerminalDimensions();
   const theme = useTheme();
@@ -143,7 +156,14 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   const settings = useSettings();
   const [filter, setFilter] = useState("");
   const [filtering, setFiltering] = useState(false);
+  const filterRef = useRef("");
+  const filteringRef = useRef(false);
+  const setFilterMode = (value: boolean) => {
+    filteringRef.current = value;
+    setFiltering(value);
+  };
   const [selected, setSelected] = useState(0);
+  const selectedRef = useRef(0);
   const [pending, setPending] = useState<PendingReset | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -153,6 +173,7 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   // shows every match".
   const groups = useMemo(() => settingsGroups(SETTING_DEFS), []);
   const [activeGroup, setActiveGroup] = useState<string>(() => groups[0] ?? "");
+  const activeGroupRef = useRef(activeGroup);
   const searchMode = filter.length > 0;
 
   // `buildSettingsRows` does the domain work — grouping by the table's group,
@@ -167,19 +188,7 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
     () => buildSettingsRows(SETTING_DEFS, filter, searchMode ? undefined : activeGroup),
     [filter, searchMode, activeGroup],
   );
-  const items = useMemo<DialogItem[]>(
-    () =>
-      settingsRows
-        .filter((row): row is Extract<SettingsRow, { kind: "setting" }> => row.kind === "setting")
-        .map((row) => ({
-          id: row.def.key,
-          label: row.def.label,
-          meta: settingValueLabel(row.def, settingValue(settings, row.def)),
-          category: row.group,
-          current: isSettingModified(settings, row.def),
-        })),
-    [settingsRows, settings],
-  );
+  const items = useMemo(() => settingsDialogItems(settingsRows, settings), [settingsRows, settings]);
   const defByKey = useMemo(() => {
     const map = new Map<string, SettingDef>();
     for (const def of SETTING_DEFS) map.set(def.key, def);
@@ -202,8 +211,10 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   // The highlighted row can vanish from under the cursor as the filter narrows,
   // so the rendered cursor is always the clamped one.
   const cursor = clampDialogSelection(items, selected);
-  const activeItem = items.length > 0 ? items[cursor] : undefined;
-  const activeDef = activeItem ? defByKey.get(activeItem.id) : undefined;
+  const modifiedCount = useMemo(
+    () => SETTING_DEFS.reduce((count, def) => count + (isSettingModified(settings, def) ? 1 : 0), 0),
+    [settings],
+  );
 
   const mode: SettingsMode = pending
     ? pending.kind === "all"
@@ -222,7 +233,7 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
       : `Reset "${pending.label}" to ${pending.value}? y confirm / n cancel`
     : notice
       ? notice.text
-      : "";
+      : `${items.length} setting${items.length === 1 ? "" : "s"} · ${modifiedCount} changed · changes save automatically`;
   const statusTone = pending ? theme.WARNING : notice?.tone === "error" ? theme.ERROR : theme.MUTED;
 
   const contentWidth = Math.max(0, width - 4);
@@ -276,32 +287,57 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
     });
   };
 
-  const change = (delta: 1 | -1) => {
-    if (!activeDef) return;
-    commit(cycleSetting(settings, activeDef.key, delta));
-  };
-
-  const move = (delta: number) => {
-    if (items.length === 0) return;
-    const dir: 1 | -1 = delta >= 0 ? 1 : -1;
-    let next = cursor;
-    for (let i = 0; i < Math.abs(delta); i += 1) next = moveDialogSelection(items, next, dir);
+  const currentItems = () => filterRef.current === filter && activeGroupRef.current === activeGroup
+    ? items
+    : settingsDialogItems(
+      buildSettingsRows(SETTING_DEFS, filterRef.current, filterRef.current ? undefined : activeGroupRef.current),
+      getSettings(),
+    );
+  const highlight = (next: number) => {
+    selectedRef.current = next;
     setSelected(next);
   };
 
-  const setQuery = (next: string) => {
-    setFilter(next);
-    setSelected(0);
+  const change = (delta: 1 | -1) => {
+    const visible = currentItems();
+    const item = visible[clampDialogSelection(visible, selectedRef.current)];
+    const activeDef = item ? defByKey.get(item.id) : undefined;
+    if (!activeDef) return;
+    commit(cycleSetting(getSettings(), activeDef.key, delta));
   };
+
+  const move = (delta: number) => {
+    const visible = currentItems();
+    if (visible.length === 0) return;
+    const dir: 1 | -1 = delta >= 0 ? 1 : -1;
+    let next = clampDialogSelection(visible, selectedRef.current);
+    for (let i = 0; i < Math.abs(delta); i += 1) next = moveDialogSelection(visible, next, dir);
+    highlight(next);
+  };
+
+  const setQuery = (next: string) => {
+    filterRef.current = next;
+    setFilter(next);
+    highlight(0);
+  };
+
+  usePaste((event) => {
+    if (pending) return;
+    const text = sanitizeTuiText(decodePasteBytes(event.bytes));
+    if (!text) return;
+    setFilterMode(true);
+    setQuery(filterRef.current + text);
+  });
 
   // Switch the active tab and reset the cursor to the new group's first setting,
   // so the selection is always valid for the group on screen.
   const switchTab = (dir: 1 | -1) => {
     if (groups.length === 0) return;
-    const at = Math.max(0, groups.indexOf(activeGroup));
+    const at = Math.max(0, groups.indexOf(activeGroupRef.current));
     const next = ((at + dir) % groups.length + groups.length) % groups.length;
-    setActiveGroup(groups[next] ?? activeGroup);
-    setSelected(0);
+    activeGroupRef.current = groups[next] ?? activeGroupRef.current;
+    setActiveGroup(activeGroupRef.current);
+    highlight(0);
   };
 
   useKeyboard((key) => {
@@ -312,13 +348,20 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
       onExit();
       return;
     }
+    if (key.ctrl && key.name === "u") {
+      setPending(null);
+      setQuery("");
+      setFilterMode(false);
+      return;
+    }
+    if (key.ctrl || key.meta) return;
 
     // ── confirm gate ──
     // Nothing is reset without passing through here. Anything that is not an
     // explicit yes cancels, so a stray keystroke can only ever be a no.
     if (pending) {
       if (key.name === "return" || seq === "y" || seq === "Y") {
-        commit(pending.kind === "all" ? resetAllSettings() : resetSetting(settings, pending.key));
+        commit(pending.kind === "all" ? resetAllSettings() : resetSetting(getSettings(), pending.key));
         return;
       }
       setPending(null);
@@ -331,47 +374,42 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
     if (key.name === "down") return move(1);
     if (key.name === "pageup") return move(-PAGE_STEP);
     if (key.name === "pagedown") return move(PAGE_STEP);
+    if (key.name === "home") return highlight(0);
+    if (key.name === "end") return highlight(Math.max(0, currentItems().length - 1));
+    if (key.name === "left") return change(-1);
+    if (key.name === "right") return change(1);
 
     // ── filter mode ──
     // Every printable character types here, `r` and `R` included; that is the
     // whole point of having an explicit mode, since browse mode has to give
     // those two letters to reset.
-    if (filtering) {
-      if (key.name === "escape" || key.name === "return") {
-        setFiltering(false);
+    if (filteringRef.current) {
+      if (key.name === "escape") {
+        setFilterMode(false);
         return;
       }
+      if (key.name === "return") return change(1);
       if (key.name === "backspace") {
-        setQuery(filter.slice(0, -1));
+        setQuery(Array.from(filterRef.current).slice(0, -1).join(""));
         return;
       }
-      if (seq.length === 1 && seq.charCodeAt(0) >= 0x20 && seq.charCodeAt(0) !== 0x7f) {
-        setQuery(filter + seq);
+      if (isFilterKey(seq) || seq === "r" || seq === "R") {
+        setQuery(filterRef.current + seq);
       }
       return;
     }
 
-    // ── tab switching ──
-    // Tab / Shift-Tab and Left / Right move between group tabs, but only in
-    // tabbed mode: a live filter owns the body, so its tab bar is inert and the
-    // arrows fall through to nothing.
+    // Tab selects a group; left/right always edit the highlighted value.
     if (key.name === "tab") {
-      if (!searchMode) switchTab(key.shift ? -1 : 1);
+      if (!filterRef.current) switchTab(key.shift ? -1 : 1);
       return;
     }
-    if (key.name === "left") {
-      if (!searchMode) switchTab(-1);
-      return;
-    }
-    if (key.name === "right") {
-      if (!searchMode) switchTab(1);
-      return;
-    }
+    // A cross-group search keeps its query until explicitly cleared.
 
     // ── browse mode ──
     if (key.name === "escape") {
       // Esc unwinds one step at a time: clear the filter first, leave second.
-      if (filter) {
+      if (filterRef.current) {
         setQuery("");
         return;
       }
@@ -380,10 +418,13 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
     }
     if (key.name === "return" || isSpace) return change(1);
     if (key.name === "backspace") {
-      if (filter) setQuery(filter.slice(0, -1));
+      if (filterRef.current) setQuery(Array.from(filterRef.current).slice(0, -1).join(""));
       return;
     }
     if (seq === "r") {
+      const visible = currentItems();
+      const item = visible[clampDialogSelection(visible, selectedRef.current)];
+      const activeDef = item ? defByKey.get(item.id) : undefined;
       if (!activeDef) return;
       setPending({
         kind: "one",
@@ -398,13 +439,13 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
       return;
     }
     if (seq === "/") {
-      setFiltering(true);
+      setFilterMode(true);
       setQuery("");
       return;
     }
     if (isFilterKey(seq)) {
-      setFiltering(true);
-      setQuery(seq);
+      setFilterMode(true);
+      setQuery(filterRef.current + seq);
     }
   });
 

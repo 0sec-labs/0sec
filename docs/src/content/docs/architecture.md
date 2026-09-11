@@ -323,6 +323,96 @@ interface over a different provider:
 path-specific; see [Configuration](/configuration/) and [API Keys](/api-keys/)
 for the current resolution rules.
 
+## Execution isolation and toolbox packaging
+
+The LLM adapter above is not an execution sandbox. Keep three separate choices:
+
+| Layer | Responsibility | Current choice |
+|---|---|---|
+| Controller | Provider authentication, scope, budgets, approvals, evidence and version selection | 0sec's TypeScript harness |
+| Toolbox artifact | Filesystem containing tools, runtimes and dependencies | OCI image, provisioned before execution |
+| Execution engine | Host/guest boundary, mounts, networking, resource limits and teardown | Docker or opt-in local smolvm for evolution workers |
+
+**OCI does not mean Docker execution.** It is the open image format that both
+Docker and smolvm consume. Smolvm boots the image in a microVM with a separate
+guest kernel; Docker containers share their execution host's kernel. A local
+archive avoids a registry or Docker daemon during smolvm execution.
+
+[Upstream smolvm](https://github.com/smol-machines/smolvm) also supports unpacked
+root filesystems, Smolfiles and packed `.smolmachine` artifacts. Those are viable
+upstream provisioning options, not additional formats qualified by 0sec's
+current archive-pinning adapter. A hand-maintained mutable VM is not a substitute
+for an immutable, reproducible worker artifact.
+
+### Choose the image for the workload
+
+- **Small runtime image:** useful for bounded Node source-evolution fixtures.
+  It is not the pentest toolbox.
+- **Toolbox image:** the Dockerfile's `toolbox` target contains the declared
+  static-analysis, web-testing and identity tools without the 0sec application.
+- **Distribution image:** the `runtime` target adds the bundled CLI to that same
+  toolbox. This remains the default Dockerfile output.
+
+The toolbox is an explicit inventory, not a promise to contain every security
+tool. Optional wordlists, browsers, privileged networking and specialized
+kernel/binary environments need their own provisioning and qualification.
+Installation of a network tool does not authorize or enable target access.
+See [Improvement Plane](/improvement-plane/#local-smolvm-backend) for local
+provisioning and execution checks.
+
+### Global sandboxing: required boundary, not a shipped switch
+
+The desired default is **a trusted controller outside the guest, with
+model-directed effects inside a scoped guest executor**. Putting the entire CLI
+and its provider credentials into the same guest as arbitrary model-generated
+commands isolates execution from the host but exposes those credentials to the
+worker. Keep provider credentials in the controller instead.
+
+A global guarantee requires every model-directed process, PTY, filesystem,
+HTTP/browser and external-tool route to cross the same enforced boundary.
+Changing just `bash` or selecting `backend: "smolvm"` for evolution is not that
+guarantee. General console and scan tools still have host execution paths.
+
+Keep offline evolution and engagement workers separate: evolution gets no
+network or engagement credentials; an engagement worker needs explicit target
+egress policy and narrowly scoped engagement capabilities. Neither should
+inherit host home directories, Docker sockets or SSH-agent access by default.
+Persistent PTYs, artifact export, cancellation, and worker restart must preserve
+that boundary without a host fallback.
+
+E2B can remain a separate cloud placement option. Local qualification does not
+establish equivalent cloud configuration, isolation or operational behavior.
+
+## Rust: adopt the boundary before a rewrite
+
+Codex did migrate from TypeScript to Rust. OpenAI's
+[May 2025 announcement](https://github.com/openai/codex/discussions/1174)
+names four motivations: installation without a Node prerequisite, native
+security bindings, lower memory consumption without runtime garbage collection,
+and an extensible wire protocol. These are engineering goals, not evidence that
+changing languages improves security findings or model reasoning.
+
+The current [TypeScript Codex SDK](https://github.com/openai/codex/tree/main/sdk/typescript)
+still provides a TypeScript integration surface by spawning the native CLI and
+exchanging JSONL events. The useful lesson for 0sec is a stable protocol boundary
+between clients, orchestration and execution—not that every component must be
+rewritten together.
+
+**Decision: retain the TypeScript harness; evaluate a small native execution
+supervisor before considering a full rewrite.** A separate process with a
+versioned protocol is preferable to placing new native failure modes directly
+inside the credential-bearing controller. Candidate responsibilities are process
+ownership, PTYs, OS confinement, resource accounting and confirmed teardown.
+Rust does not itself provide any of those isolation guarantees.
+
+Before committing to a port, measure representative CLI startup, peak memory,
+controller CPU, worker preparation, cancellation latency and sustained output
+handling. Separate provider wait time and image import from controller overhead.
+Require behavior parity for scope, credentials, sessions, evidence and rollback,
+then demonstrate a measured improvement or a concrete OS capability the current
+implementation lacks. No 0sec-versus-Rust performance benchmark has established
+that a full harness rewrite is currently warranted.
+
 ## MCP integration
 
 0sec speaks MCP three ways:

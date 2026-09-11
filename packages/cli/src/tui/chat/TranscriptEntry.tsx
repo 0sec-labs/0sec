@@ -559,7 +559,7 @@ export function renderEntry(
       return finish(
         <box key={entry.id} flexDirection="column" minWidth={0} marginTop={display.spacing}>
           {shimmerRunning ? (
-            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
+            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={TEXT}  />
           ) : (
             <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{compactLine}</text>
           )}
@@ -582,7 +582,7 @@ export function renderEntry(
           <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{icon}</text>
           <text fg={MUTED}>{toolPrefix}</text>
           {shimmerRunning ? (
-            <ShimmerText label={toolName} frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
+            <ShimmerText label={toolName} frame={display.shimmerFrame!} base={MUTED} peak={TEXT}  />
           ) : (
             <text fg={failed ? ERROR : TEXT} attributes={failed ? TextAttributes.BOLD : undefined}>{toolName}</text>
           )}
@@ -622,7 +622,7 @@ export function renderEntry(
       return finish(
         <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
           {shimmerRunning ? (
-            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
+            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={TEXT}  />
           ) : (
             <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{compactLine}</text>
           )}
@@ -641,7 +641,7 @@ export function renderEntry(
             <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{glyph}</text>
             <text fg={MUTED}> </text>
             {shimmerRunning ? (
-              <ShimmerText label="evidence / subagent" frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
+              <ShimmerText label="evidence / subagent" frame={display.shimmerFrame!} base={MUTED} peak={TEXT}  />
             ) : (
               <text fg={BRAND}>evidence / subagent</text>
             )}
@@ -702,7 +702,7 @@ export function renderEntry(
         </box>
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
           {shimmerThinking ? (
-            <ShimmerText label="thinking" frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
+            <ShimmerText label="thinking" frame={display.shimmerFrame!} base={MUTED} peak={TEXT}  />
           ) : (
             <text fg={MUTED}>thinking</text>
           )}
@@ -855,7 +855,7 @@ export function renderFold(
       </box>
       <box flexGrow={1} minWidth={0}>
         {shimmerFold ? (
-          <ShimmerText label={summaryFitted} frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
+          <ShimmerText label={summaryFitted} frame={display.shimmerFrame!} base={MUTED} peak={TEXT}  />
         ) : (
           <text fg={MUTED}>{summaryFitted}</text>
         )}

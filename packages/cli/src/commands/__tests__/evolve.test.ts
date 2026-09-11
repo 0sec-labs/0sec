@@ -99,6 +99,24 @@ describe("evolution CLI failure boundaries", () => {
     expect(JSON.parse(output[0]!).execution.exitCode).toBeNull();
   });
 
+  it("interrupts a running exec and waits for cleanup before reporting interruption", async () => {
+    let cleaned = false;
+    const listenersBefore = process.listenerCount("SIGTERM");
+    vi.mocked(executeEvolutionVersion).mockImplementation(async (_config, _runId, _input, deps) => {
+      const signal = deps?.signal;
+      if (!signal) throw new Error("execution was not cancellable");
+      const stopped = new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+      process.emit("SIGTERM");
+      await stopped;
+      cleaned = true;
+      return { versionId: "pinned-worker", execution: { exitCode: null, stdout: "", stderr: "", durationMs: 1, timedOut: false, error: "cancelled" } };
+    });
+    await invoke(["exec", "--config", configFile(), "--run-id", "scan", "--input", "{}", "--json"]);
+    expect(cleaned).toBe(true);
+    expect(process.exitCode).toBe(3);
+    expect(process.listenerCount("SIGTERM")).toBe(listenersBefore);
+  });
+
   it("rejects a malformed watch limit instead of silently succeeding without running", async () => {
     await invoke(["run", "--config", configFile(), "--watch", "--max-passes", "2x", "--json"]);
     expect(process.exitCode).toBe(2);

@@ -450,16 +450,17 @@ export type SettingsMode = "browse" | "filter" | "confirm-reset" | "confirm-rese
 export function settingsFooterHint(mode: SettingsMode, hasFilter = false): string {
   switch (mode) {
     case "filter":
-      return "type to filter · enter/esc done · backspace delete";
+      return "type/paste search · up/down move · left/right or enter change · ctrl+u clear · esc browse";
     case "confirm-reset":
     case "confirm-reset-all":
       return "y confirm · n or esc cancel";
     default:
       return [
         "up/down move",
-        "tab or left/right group",
+        "left/right change",
+        "tab group",
         "enter/space change",
-        "/ filter",
+        "/ search",
         "r reset",
         "shift+r reset all",
         hasFilter ? "esc clear filter" : "esc back",
@@ -477,10 +478,10 @@ export function settingsFooterHint(mode: SettingsMode, hasFilter = false): strin
  * explicit way to filter for anything beginning with `r`.
  */
 export function isFilterKey(sequence: unknown): boolean {
-  if (typeof sequence !== "string" || sequence.length !== 1) return false;
+  if (typeof sequence !== "string" || Array.from(sequence).length !== 1) return false;
   if (sequence === "r" || sequence === "R") return false;
-  const code = sequence.charCodeAt(0);
-  return code >= 0x20 && code !== 0x7f;
+  const code = sequence.codePointAt(0)!;
+  return code >= 0x20 && !(code >= 0x7f && code <= 0x9f);
 }
 
 /**

@@ -13,12 +13,19 @@ export interface EvolutionCase {
   expected: unknown;
 }
 
+/** Isolation provider for source evaluations; omitted backend retains Docker. */
+export type EvolutionBackend = "docker" | "smolvm";
+
 /** Operator-owned contract. Neither a generated patch nor a target can edit it. */
 export interface EvolutionConfig {
   schemaVersion: 1;
   sourceRoot: string;
   storePath: string;
   image: string;
+  /** Backend isolation provider: "docker" (default) or "smolvm". */
+  backend?: EvolutionBackend;
+  /** Path to the smolvm toolbox archive; required when backend is "smolvm". */
+  imageArchive?: string;
   sourcePaths: string[];
   editablePaths: string[];
   kind: EvolutionArtifactKind;

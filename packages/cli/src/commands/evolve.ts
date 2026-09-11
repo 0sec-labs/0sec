@@ -387,8 +387,17 @@ export function registerEvolveCommand(program: Command): void {
     .action(async (opts: { config: string; runId: string; input: string; json?: boolean }) => {
       const out = (l: string) => console.log(l);
       const err = (l: string) => console.error(l);
+      const abortController = new AbortController();
+      const onInterrupt = () => {
+        err(chalk.yellow("\nExecution interrupted; signalling the running worker."));
+        abortController.abort();
+        process.removeListener("SIGINT", onInterrupt);
+        process.removeListener("SIGTERM", onInterrupt);
+      };
 
       try {
+        process.on("SIGINT", onInterrupt);
+        process.on("SIGTERM", onInterrupt);
         const config = loadEvolutionConfigFile(opts.config);
 
         let input: unknown;
@@ -398,17 +407,17 @@ export function registerEvolveCommand(program: Command): void {
           throw new Error("--input must be a valid JSON string");
         }
 
-        const executionResult = await executeEvolutionVersion(config, opts.runId, input);
+        const executionResult = await executeEvolutionVersion(config, opts.runId, input, { signal: abortController.signal });
 
         const exec = executionResult.execution;
-        const hasError = exec.error !== undefined || exec.timedOut || exec.exitCode !== 0;
-        if (hasError) {
+        const hasError = abortController.signal.aborted || exec.error !== undefined || exec.timedOut || exec.exitCode !== 0;
+        if (hasError && !abortController.signal.aborted) {
           err(chalk.red(`Execution produced an error (exit code: ${exec.exitCode ?? "null"}, timedOut: ${exec.timedOut})`));
           if (exec.error) err(chalk.red(`  ${exec.error}`));
         }
 
         formatExecResult(executionResult.versionId, executionResult, Boolean(opts.json), out);
-        process.exitCode = hasError ? EXIT_RUNTIME_ERROR : EXIT_OK;
+        process.exitCode = abortController.signal.aborted ? EXIT_INTERRUPT : hasError ? EXIT_RUNTIME_ERROR : EXIT_OK;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (opts.json) {
@@ -416,7 +425,10 @@ export function registerEvolveCommand(program: Command): void {
         } else {
           err(chalk.red(`Exec failed: ${message}`));
         }
-        process.exitCode = EXIT_RUNTIME_ERROR;
+        process.exitCode = abortController.signal.aborted ? EXIT_INTERRUPT : EXIT_RUNTIME_ERROR;
+      } finally {
+        process.removeListener("SIGINT", onInterrupt);
+        process.removeListener("SIGTERM", onInterrupt);
       }
     });
 

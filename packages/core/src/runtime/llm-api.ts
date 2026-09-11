@@ -619,7 +619,7 @@ function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
 
 function defaultReasoningEffort(model: string): string | undefined {
   const lower = model.toLowerCase();
-  if (lower.includes("gpt-5") || /^o[134]/.test(lower)) return "medium";
+  if (/gpt-[56](?:[-.]|$)/.test(lower) || /^o[134]/.test(lower)) return "medium";
   return undefined;
 }
 
@@ -682,7 +682,7 @@ const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const FREE_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
 const DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com";
-const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash";
+const DEEPSEEK_DEFAULT_MODEL = "deepseek-flash";
 /** Alibaba Token Plan serves this exact DeepSeek revision id under the qwen
  *  provider (credit-billed; see the worker's QWEN_TOKEN_PLAN_MODEL_IDS). The
  *  id must never fall through to direct DeepSeek — their balances are
@@ -853,7 +853,7 @@ export function resolveFailoverProvider(
     case "openai": {
       const key = process.env.OPENAI_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: "https://api.openai.com/v1", wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", wireApi: "chat_completions" };
     }
     case "anthropic": {
       const key = process.env.ANTHROPIC_API_KEY;
@@ -1424,9 +1424,9 @@ function parseCodexAzureConfig(): {
 function providerForModel(model: string | undefined): ApiProvider | undefined {
   if (!model) return undefined;
   const m = model.toLowerCase();
-  // Direct DeepSeek uses the exact lower-case stable API id. Azure exposes
-  // a separately cased deployment id for Flash, which is handled below.
-  if (model === DEEPSEEK_DEFAULT_MODEL) {
+  // Direct DeepSeek's stable V4.1 id and still-accepted V4 Flash API id.
+  // Preserve the latter's precedence over the separately cased Azure deployment.
+  if (model === DEEPSEEK_DEFAULT_MODEL || model === "deepseek-v4-flash") {
     return process.env.DEEPSEEK_API_KEY ? "deepseek" : undefined;
   }
   // Azure Foundry deployment ids must win when the worker injects a direct
@@ -1731,7 +1731,7 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     return {
       provider: "openai",
       apiKey: openaiKey,
-      baseUrl: "https://api.openai.com/v1",
+      baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       defaultModel: DEFAULT_OPENAI_MODEL,
       wireApi: "chat_completions",
     };
@@ -2168,12 +2168,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
   /**
    * Chat-completions param name for the token cap. Newer OpenAI model
-   * families (gpt-5.*, o1/o2/o3) rejected the legacy `max_tokens` field
+   * families (gpt-5/6, o1/o2/o3) reject the legacy `max_tokens` field
    * and require `max_completion_tokens`. Older models still accept the
    * legacy name, so we flip based on model prefix.
    */
   private get maxTokensParamKey(): "max_tokens" | "max_completion_tokens" {
-    return /^gpt-5|^o[1-3](?:[-_]|$)/i.test(this.model)
+    return /^gpt-[56](?:[-.]|$)|^o[1-3](?:[-_]|$)/i.test(this.model)
       ? "max_completion_tokens"
       : "max_tokens";
   }

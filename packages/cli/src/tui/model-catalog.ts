@@ -130,6 +130,10 @@ export function buildFullModelCatalog(
 ): CatalogModel[] {
   const priced = buildModelCatalog(currentModel);
   const extras = catalogExtras(opts);
-  return [...priced, ...extras].sort(compareCatalogRows(currentModel));
+  const models = [...priced, ...extras];
+  if (currentModel && !models.some((model) => model.id === currentModel)) {
+    models.push({ id: currentModel, provider: modelProvider(currentModel), price: "—" });
+  }
+  return models.sort(compareCatalogRows(currentModel));
 }
 

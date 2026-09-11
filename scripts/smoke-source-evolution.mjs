@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-/** Real provider + Docker lifecycle. Requires built packages and node:22-alpine.
+/** Real provider + isolated worker lifecycle. Requires built packages and a
+ * provisioned node:22-alpine image (Docker) or local image archive (smolvm).
  * Deliberately small credential-finder benchmark, not a general security claim.
  * No host execution of generated source, injected model, or isolation fallback.
  */
@@ -8,16 +9,22 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { maybeLoadCodexAuth } from "../packages/cli/dist/codex-auth.js";
 import {
   approveEvolutionCandidate, loadEvolutionRegistry, parseEvolutionConfig,
   resolveEvolutionImage, rollbackEvolutionVersion, runEvolution,
 } from "../packages/core/dist/improvement/index.js";
 import { createEvolvedFinder } from "../packages/core/dist/stages/evolved-finder.js";
+import { resolveSmolvmImage } from "../packages/core/dist/runtime/smolvm.js";
 
 maybeLoadCodexAuth();
 process.env["0SEC_DISABLE_HUNT_MEMORY"] = "1";
 process.env["0SEC_CLOUD_SINK"] = "";
+const backend = process.env["0SEC_EVOLUTION_BACKEND"] ?? "docker";
+assert(["docker", "smolvm"].includes(backend), "0SEC_EVOLUTION_BACKEND must be docker or smolvm");
+const imageArchive = process.env["0SEC_SMOLVM_IMAGE_ARCHIVE"];
+if (backend === "smolvm") assert(imageArchive, "smolvm requires 0SEC_SMOLVM_IMAGE_ARCHIVE");
 const root = mkdtempSync(join(tmpdir(), "0sec-source-e2e-"));
 const sourceRoot = join(root, "source");
 const storePath = join(root, "store");
@@ -34,12 +41,17 @@ const cleanup = () => {
 };
 process.on("exit", cleanup);
 const controller = new AbortController();
-const deadline = setTimeout(() => controller.abort(new Error("Source evolution E2E exceeded its ten-minute deadline")), 600000);
+const deadlineMs = backend === "smolvm" ? 1_200_000 : 600_000;
+const deadline = setTimeout(() => controller.abort(new Error(`Source evolution E2E exceeded its ${deadlineMs / 60000}-minute deadline`)), deadlineMs);
 
 try {
-  assert.notEqual(process.getuid?.(), 0, "run as a non-root user with Docker access");
-  execFileSync("docker", ["info", "--format", "{{.ServerVersion}}"], { timeout: 10000, stdio: "pipe" });
-  const image = await resolveEvolutionImage("node:22-alpine");
+  assert.notEqual(process.getuid?.(), 0, "run as a non-root user with access to the selected runtime");
+  if (backend === "docker") {
+    execFileSync("docker", ["info", "--format", "{{.ServerVersion}}"], { timeout: 10000, stdio: "pipe" });
+  }
+  const image = backend === "smolvm"
+    ? await resolveSmolvmImage(imageArchive)
+    : await resolveEvolutionImage("node:22-alpine");
   mkdirSync(sourceRoot);
   const worker = String.raw`import { readFileSync } from 'node:fs';
 const input = JSON.parse(readFileSync(0, 'utf8'));
@@ -72,6 +84,7 @@ console.log(JSON.stringify({schemaVersion:'0sec.finder.output/v1', findings}));
   ];
   const config = parseEvolutionConfig({
     schemaVersion: 1, kind: "source", sourceRoot, storePath, image,
+    ...(backend === "smolvm" ? { backend, imageArchive, memoryMb: 2048, cpus: 2 } : {}),
     sourcePaths: ["finder.mjs"], editablePaths: ["finder.mjs"], command: ["node", "finder.mjs"], cases,
     model: process.env["0SEC_MODEL"] || "gpt-5.6-luna",
     objective: "Improve literal credential detection for password, passwd, secret, token, apiKey, and api_key assignments. Detect only nonempty quoted string assignments to credential keys, never ordinary names, environment reads, or empty strings. Preserve the existing output schema and finding title, severity, analysis, and line-number convention. Generalize the recognition logic rather than matching fixture identities.",
@@ -102,6 +115,17 @@ console.log(JSON.stringify({schemaVersion:'0sec.finder.output/v1', findings}));
   assert.equal(after.findings.length, 1);
   assert.equal(after.findings[0].status, "discovered");
   assert.equal(after.findings[0].reviewAnnotation.startLine, 1);
+  const configPath = join(root, "evolution.json");
+  writeFileSync(configPath, JSON.stringify(config));
+  const cliExecution = JSON.parse(execFileSync(process.execPath, [
+    fileURLToPath(new URL("../packages/cli/dist/index.js", import.meta.url)),
+    "evolve", "exec", "--config", configPath, "--run-id", "cli-qualification",
+    "--input", JSON.stringify(cases[3].input), "--json",
+  ], { encoding: "utf8", timeout: 90000, maxBuffer: 1024 * 1024 }));
+  assert.equal(cliExecution.versionId, newFinder.versionId);
+  assert.equal(cliExecution.execution.exitCode, 0);
+  assert.equal(cliExecution.execution.error, undefined);
+  assert.deepEqual(JSON.parse(cliExecution.execution.stdout), cases[3].expected);
   console.error("[source-evolution] resuming with the promoted version and retained development history");
   const resumed = await runEvolution({
     ...config, maxIterations: 1,
@@ -119,7 +143,7 @@ console.log(JSON.stringify({schemaVersion:'0sec.finder.output/v1', findings}));
   assert.equal((await newFinder.find(target, input)).findings.length, 1, "captured engagements retain their exact version after rollback");
   assert.equal(readFileSync(join(sourceRoot, "finder.mjs"), "utf8"), worker, "active source checkout must remain unchanged");
   assert.equal(loadEvolutionRegistry(storePath).activeId, oldFinder.versionId);
-  console.log(JSON.stringify({ outcome: "passed", model: config.model, image, cases: cases.length, repeats: config.repeats, canaryTrials: config.canaryTrials, modelCostUsd: result.modelCostUsd + resumed.modelCostUsd, evaluationCostUsd: result.evaluationCostUsd + approval.evaluationCostUsd + resumed.evaluationCostUsd, baselineVersion: oldFinder.versionId, evolvedVersion: newFinder.versionId, deployedFindings: after.findings.length, resumedPass: true, engagementPinning: true, rollback: true }));
+  console.log(JSON.stringify({ outcome: "passed", backend, model: config.model, image, cases: cases.length, repeats: config.repeats, canaryTrials: config.canaryTrials, modelCostUsd: result.modelCostUsd + resumed.modelCostUsd, evaluationCostUsd: result.evaluationCostUsd + approval.evaluationCostUsd + resumed.evaluationCostUsd, baselineVersion: oldFinder.versionId, evolvedVersion: newFinder.versionId, deployedFindings: after.findings.length, resumedPass: true, engagementPinning: true, rollback: true }));
 } catch (error) {
   console.error(JSON.stringify({ outcome: "failed", error: error instanceof Error ? error.message : String(error) }));
   process.exitCode = 1;

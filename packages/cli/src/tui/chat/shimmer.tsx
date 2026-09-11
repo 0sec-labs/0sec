@@ -4,21 +4,8 @@ import { parseHex } from "../themes.js";
 import { sanitizeTuiText } from "../text.js";
 import { shimmerText, type ShimmerTextOptions } from "../animations.js";
 
-/**
- * The render half of the text shimmer (`shimmerText` in animations.ts owns the
- * pure per-character intensities). A running LOADING label — the thinking
- * indicator, a running tool-call row, a running subagent row — sits at a muted
- * base while a bright band sweeps across it, the "alive while working" feel from
- * oh-my-pi. animations.ts stays theme-free and returns intensities; THIS module
- * blends `base` (intensity 0) up to `peak` (intensity 1) and coalesces adjacent
- * equal-tone characters into runs, mirroring `logoRowRuns` so the label paints
- * as a handful of explicitly-sized `<text>`s rather than one node per character.
- *
- * Every run is `flexShrink={0}` with an explicit width equal to its character
- * count (the TUI's width model — see `fitTuiText`), and the caller has already
- * fitted the label to the cells it owns, so the run widths sum to the fitted
- * length and never overflow their row (the chat-layout invariant).
- */
+/** Shared working-text shimmer, rendered as one native styled text row. */
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** Clamp a channel and format it as a two-digit hex byte. */
 function toHexByte(value: number): string {
@@ -61,24 +48,21 @@ export function shimmerRuns(
 ): ShimmerRun[] {
   const text = sanitizeTuiText(label);
   if (text.length === 0) return [];
+  if (opts?.reduceMotion) return [{ text, fg: base }];
   const intensities = shimmerText(text.length, frame, opts);
+  const colors = [base, blendHex(base, peak, 0.25), blendHex(base, peak, 0.5), blendHex(base, peak, 0.75), peak];
   const runs: ShimmerRun[] = [];
-  for (let i = 0; i < text.length; i += 1) {
-    const quantised = Math.round((intensities[i] ?? 0) * 4) / 4;
-    const fg = blendHex(base, peak, quantised);
+  // Never split a surrogate pair or combining sequence between color runs.
+  for (const { segment, index } of GRAPHEMES.segment(text)) {
+    const fg = colors[Math.round((intensities[index] ?? 0) * 4)]!;
     const last = runs[runs.length - 1];
-    if (last && last.fg === fg) last.text += text.charAt(i);
-    else runs.push({ text: text.charAt(i), fg });
+    if (last && last.fg === fg) last.text += segment;
+    else runs.push({ text: segment, fg });
   }
   return runs;
 }
 
-/**
- * A single row of shimmer runs. `label` must already be fitted to the cells it
- * is allowed to occupy; each run is drawn at its exact character width so the
- * row's children never over-subscribe it. Under `reduceMotion` every intensity
- * is 0, so the whole label renders flat at `base` — the honest still frame.
- */
+/** Native spans share text measurement, so color changes cannot shift glyphs. */
 export function ShimmerText({
   label,
   frame,
@@ -96,18 +80,10 @@ export function ShimmerText({
 }) {
   const runs = shimmerRuns(label, frame, base, peak, opts);
   return (
-    <box flexDirection="row" flexShrink={0} minWidth={0}>
+    <text wrapMode="none" attributes={attributes}>
       {runs.map((run, index) => (
-        <text
-          key={index}
-          width={run.text.length}
-          flexShrink={0}
-          fg={run.fg}
-          attributes={attributes}
-        >
-          {run.text}
-        </text>
+        <span key={index} fg={run.fg}>{run.text}</span>
       ))}
-    </box>
+    </text>
   );
 }
