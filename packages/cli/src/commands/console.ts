@@ -337,6 +337,7 @@ export function registerConsoleCommand(program: Command): void {
           target: focusedTarget,
           scope,
           dbPath: opts.dbPath,
+          model: opts.model ?? resumedModel,
           role,
           initialPrompt: findingPrompt,
           maxToolIterations,
