@@ -51,11 +51,9 @@ on the published npm package and the GitHub Release tag.
   worker transcripts preserve their scrollable extent through detail and size
   changes without leaking layout state into the Main conversation.
 
-- Rebuilt the unreleased desktop as a dedicated project-and-session workspace,
-  separate from the operations dashboard. Adds session tabs, a command palette,
-  progressive conversation and approval views, system/light/dark appearance,
-  and native UI-preference persistence across changing sidecar ports. Desktop
-  remains a development build, not a published product release.
+- Native desktop development is paused. Root desktop launch and packaging
+  shortcuts are removed, and the macOS packaging workflow is archived.
+  Desktop source and CLI-required dashboard components are retained.
 
 - YOLO console sessions can acquire public HTTPS Git repositories for local
   review without authorizing their hosting services as testing targets.
