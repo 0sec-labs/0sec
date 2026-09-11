@@ -7,7 +7,7 @@ tableOfContents:
 ---
 
 Find the command, arguments, and options for your task. This reference covers
-**53 top-level commands** and their registered subcommands.
+**56 top-level commands** and their registered subcommands.
 
 For a worked example, start with [Scan Workflows](/scan-workflows/),
 [Console](/console/), or [Research Workflows](/research-workflows/).
@@ -2556,6 +2556,55 @@ Write a program's structured_scopes to ~/.0sec/scopes/<handle>.json
 | --- | --- | --- |
 | `--out <path>` | — | Override the output path |
 
+### login
+
+Sign in to 0sec Cloud through the browser. This uses the same login flow as `auth login`; your own provider credentials work without a Cloud account.
+
+```text
+0sec login [options]
+```
+
+Signing in authenticates the CLI. Hosted inference also requires organization access, an enabled service, and available funds.
+
+Guide: [Cloud authentication](/api-keys/).
+
+| Option | Registered default | Description |
+| --- | --- | --- |
+| `--host <url>` | — | Cloud host (default https://cloud.0.security) |
+| `--token <value>` | — | Skip the browser flow and persist this token directly |
+
+### models
+
+Read the configured Cloud host's inference catalog and base rates. `--json` prints the returned model array.
+
+```text
+0sec models [options]
+```
+
+Requires Cloud credentials. An empty catalog means no models are available to this account. Credit charges also depend on peak multipliers and provider usage receipts.
+
+Guide: [Hosted models](/getting-started/#hosted-models-draft).
+
+| Option | Registered default | Description |
+| --- | --- | --- |
+| `--json` | — | Output raw JSON instead of a formatted table |
+
+### balance
+
+Read the inference account balance in USD equivalent. `--json` prints the account response.
+
+```text
+0sec balance [options]
+```
+
+Requires Cloud credentials. This command reads the balance; it does not purchase or grant credits. Managed scans and review credits have separate accounting.
+
+Guide: [Cloud authentication](/api-keys/).
+
+| Option | Registered default | Description |
+| --- | --- | --- |
+| `--json` | — | Output raw JSON instead of a formatted line |
+
 ### auth
 
 Authenticate with a configured 0sec control plane.
@@ -2580,7 +2629,7 @@ Log in through the browser, or supply a credential with `--token`.
 
 | Option | Registered default | Description |
 | --- | --- | --- |
-| `--host <url>` | — | Cloud host (default https://cloud.0sec.ai) |
+| `--host <url>` | — | Cloud host (default https://cloud.0.security) |
 | `--token <value>` | — | Skip the browser flow and persist this token directly |
 
 #### auth logout

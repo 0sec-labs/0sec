@@ -14,6 +14,20 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Cloud sign-in, BYOK credentials, and provider subscriptions are separate
+  connection choices. Cancelling sign-in returns to the current conversation;
+  changing the provider or model applies to the next chat. Login alone does not
+  establish model availability or a funded account.
+- Interactive YOLO sessions request approval for uncovered targets and retain
+  the same conversation after approval. Explicit exclusions, denied hosts,
+  private-address checks, and revoked tool authority remain enforced.
+- Main and worker transcripts share expandable command and output views.
+  The composer uses compact status icons; cancellation keeps partial output
+  without adding a persistent interruption notice.
+- Child runtimes inherit the parent's resolved provider configuration.
+  Scoped harness shutdown drains work before disposal and reports incomplete
+  cleanup. Restarting an engine does not reconstruct active harness state.
+
 - Executable TypeScript plugins, reusable skills, and agent programs can be
   created during a session, composed through tool/model brokers, retained
   across restarts, replaced, and rolled back. Evaluated source evolution can
