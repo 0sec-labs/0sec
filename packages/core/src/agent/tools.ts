@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { isAbsolute, resolve, join } from "node:path";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 import type {
   Finding,
   AttackResult,
@@ -34,7 +34,7 @@ import {
   type OastVerdict,
 } from "../oast/index.js";
 import type { ScopePolicy } from "../scope/scope.js";
-import { extractUrls } from "../scope/scope.js";
+import { extractUrls, normalizeScopeHostname } from "../scope/scope.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import {
   classifyResponse,
@@ -1345,30 +1345,25 @@ function validateScopedCommand(tokens: string[], scopePath?: string): string[] {
   });
 }
 
-function normalizeLoopbackHost(hostname: string): string {
-  if (hostname === "::1") return "127.0.0.1";
-  return hostname.toLowerCase();
-}
+const privateNetworks = new BlockList();
+for (const [address, prefix] of [
+  ["10.0.0.0", 8], ["127.0.0.0", 8], ["169.254.0.0", 16],
+  ["172.16.0.0", 12], ["192.168.0.0", 16],
+] as const) privateNetworks.addSubnet(address, prefix, "ipv4");
+privateNetworks.addAddress("::", "ipv6");
+privateNetworks.addAddress("::1", "ipv6");
+privateNetworks.addSubnet("fc00::", 7, "ipv6");
+privateNetworks.addSubnet("fe80::", 10, "ipv6");
 
-function isPrivateIpv4(hostname: string): boolean {
-  const normalized = normalizeLoopbackHost(hostname);
-  if (isIP(normalized) !== 4) return false;
-
-  const [a, b] = normalized.split(".").map((part) => Number(part));
-  return a === 10
-    || a === 127
-    || (a === 169 && b === 254)
-    || (a === 172 && b >= 16 && b <= 31)
-    || (a === 192 && b === 168);
-}
-
-function isPrivateIpv6(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  return normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe80:");
+function isPrivateAddress(hostname: string): boolean {
+  const address = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  const family = isIP(address);
+  // BlockList also matches IPv4-mapped IPv6 against the IPv4 subnets.
+  return family !== 0 && privateNetworks.check(address, family === 4 ? "ipv4" : "ipv6");
 }
 
 function isLocalHostname(hostname: string): boolean {
-  const normalized = normalizeLoopbackHost(hostname);
+  const normalized = normalizeScopeHostname(hostname);
   return normalized === "localhost" || normalized.endsWith(".localhost");
 }
 
@@ -1385,10 +1380,10 @@ function validateTargetUrl(
     throw new Error(`Unsupported protocol for http_request: ${candidate.protocol}`);
   }
 
-  const hostname = candidate.hostname.toLowerCase();
-  const baseHostname = base.hostname.toLowerCase();
-  const baseIsLocal = isLocalHostname(baseHostname) || isPrivateIpv4(baseHostname) || isPrivateIpv6(baseHostname);
-  const candidateIsLocal = isLocalHostname(hostname) || isPrivateIpv4(hostname) || isPrivateIpv6(hostname);
+  const hostname = normalizeScopeHostname(candidate.hostname);
+  const baseHostname = normalizeScopeHostname(base.hostname);
+  const baseIsLocal = isLocalHostname(baseHostname) || isPrivateAddress(baseHostname);
+  const candidateIsLocal = isLocalHostname(hostname) || isPrivateAddress(hostname);
 
   // Absolute private/internal-network guard (SSRF rail). This is the ONE
   // check scope can never lift: an approved scope must not become a path
@@ -2876,7 +2871,7 @@ export class ToolExecutor {
    * Async-local state also keeps nested/concurrent executable-agent calls
    * from borrowing another call's correlation id or cancellation signal.
    */
-  private readonly _executionContext = new AsyncLocalStorage<{ correlationId?: string; signal?: AbortSignal }>();
+  private readonly _executionContext = new AsyncLocalStorage<{ correlationId?: string; signal?: AbortSignal; assertAuthority?: () => void }>();
   private get _correlationId(): string | null {
     return this._executionContext.getStore()?.correlationId ?? null;
   }
@@ -3109,14 +3104,22 @@ export class ToolExecutor {
    * call persists. Restored (not just cleared) on exit so a nested dispatch
    * can't strand a stale id.
    */
-  async execute(call: ToolCall, opts?: { correlationId?: string; signal?: AbortSignal }): Promise<ToolResult> {
-    const signal = opts?.signal ?? this._executionContext.getStore()?.signal;
-    return this._executionContext.run({ correlationId: opts?.correlationId, signal }, async () => {
+  async execute(call: ToolCall, opts?: { correlationId?: string; signal?: AbortSignal; assertAuthority?: () => void }): Promise<ToolResult> {
+    const inherited = this._executionContext.getStore();
+    const signal = opts?.signal ?? inherited?.signal;
+    const ownAuthority = opts?.assertAuthority;
+    const inheritedAuthority = inherited?.assertAuthority;
+    const assertAuthority = ownAuthority && inheritedAuthority && ownAuthority !== inheritedAuthority
+      ? () => { inheritedAuthority(); ownAuthority(); }
+      : ownAuthority ?? inheritedAuthority;
+    return this._executionContext.run({ correlationId: opts?.correlationId, signal, assertAuthority }, async () => {
     try {
       signal?.throwIfAborted();
+      assertAuthority?.();
       const scopedAuditVerdict = await this._evaluateScopedAuditGate(call);
       if (scopedAuditVerdict) return scopedAuditVerdict;
       signal?.throwIfAborted();
+      assertAuthority?.();
 
       // Coverage-gate accounting (#audit-laziness). Counted BEFORE dispatch
       // so a tool that throws still contributes to the "total tool calls"
@@ -3368,6 +3371,9 @@ export class ToolExecutor {
     return {
       ...bound,
       signal: execution?.signal ?? bound.signal,
+      ...(bound.invokeTool ? { invokeTool: (...args: Parameters<NonNullable<typeof bound.invokeTool>>) =>
+        this._executionContext.run(execution ?? {}, () => bound.invokeTool!(...args)),
+      } : {}),
       onEvent: (event: unknown) => {
         this._executionContext.run(execution ?? {}, () => {
           this.persistToolArtifact(toolName, { executable: event });
