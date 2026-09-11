@@ -330,8 +330,10 @@ See [self-evolution](/improvement-plane/) for details.
 
 ## Console credential store
 
-Use `/connect` or `/providers` to save an API key. ChatGPT Codex uses device
-sign-in and its own auth file instead.
+In the hosted-enabled CLI candidate, `/connect` offers **0sec Cloud → Sign in**,
+**Use my own API key**, and a separate **Provider subscription** section.
+Cloud uses browser authorization; ChatGPT Codex uses device sign-in and its
+own auth file. Local and direct-provider workflows need no Cloud account.
 
 Keys are stored in plaintext at `~/.0sec/credentials.json` by default, with
 `0600` file and `0700` directory permissions. Explicit environment values win.
@@ -339,6 +341,8 @@ See [credential storage](/api-keys/#console-credential-store).
 
 In `/model`, **Tab** opens the full catalog. Check credentials and account access.
 Treat missing price data as unknown.
+For an existing chat, `/connect` and `/model` configure the next `/new-chat`.
+The current runtime, conversation and live harness stay unchanged.
 
 ## Cloud authentication
 
@@ -348,14 +352,14 @@ Treat missing price data as unknown.
 |------------|-------------|
 | `0sec auth login` | Opens a browser at `<host>/cli-auth?session=…`, polls for a scoped token, and persists it to `~/.0sec/cloud.env`. |
 | `0sec auth login --token <value>` | Manual credential path for self-hosted or recovery use. |
-| `0sec auth login --host <url>` | Override the default cloud host (`https://cloud.0sec.ai`). |
+| `0sec auth login --host <url>` | Override the default cloud host (`https://cloud.0.security` in the hosted-enabled CLI candidate). |
 | `0sec auth logout` | Deletes `~/.0sec/cloud.env` and `~/.0cloud/credentials.json`. |
 | `0sec auth status` | Loads credentials and pings the cloud health endpoint. |
 
 Credentials are resolved in this order (first match wins):
 
 1. **Environment variables** — `0SEC_CLOUD_TOKEN` (required) + `0SEC_CLOUD_HOST`
-   (optional, defaults to `https://cloud.0sec.ai`).
+   (optional, defaults to `https://cloud.0.security` in the hosted-enabled CLI candidate).
 2. **File** — `~/.0sec/cloud.env` (line-by-line `KEY=VALUE`). The file **must**
    be `chmod 600`. Contains `0SEC_CLOUD_TOKEN=…` and optionally
    `0SEC_CLOUD_HOST=…`.

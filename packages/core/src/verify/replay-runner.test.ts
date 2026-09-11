@@ -16,7 +16,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VerificationResultSchema, type Finding, type PocStep } from "@0sec/shared";
@@ -343,6 +343,26 @@ describe("assertion evaluation — pass + fail per kind", () => {
 });
 
 describe("sandbox replay runners", () => {
+  it("rejects an option-shaped Docker image before invoking the container engine", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-docker-image-boundary-"));
+    try {
+      const docker = writeFakeExecutable(runDir, "fake-docker", "touch docker-invoked");
+      const result = await new DockerRunner({ dockerBinary: docker }).exec(
+        {
+          id: "option-image",
+          kind: "exploit",
+          summary: "untrusted image cannot become a Docker flag",
+          action: { type: "docker", image: "--privileged", args: ["--help"] },
+        },
+        { runDir, stepTimeoutMs: 1_000 },
+      );
+      expect(existsSync(join(runDir, "docker-invoked"))).toBe(false);
+      expect(result.launchError).toBeTruthy();
+    } finally {
+      rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+
   it("builds a credential-free, hardened, offline Docker invocation", async () => {
     const runDir = mkdtempSync(join(tmpdir(), "0sec-docker-runner-"));
     const docker = writeFakeExecutable(

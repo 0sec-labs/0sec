@@ -213,6 +213,10 @@ on the published npm package and the GitHub Release tag.
 
 ### Fixed
 
+- Craft helpers pass model-provided paths as literal arguments rather than
+  shell text. Replay container launches validate image references and keep
+  mount paths and command arguments separate from shell syntax.
+
 - Windows Cloud sign-in passes the browser URL as data to a fixed launcher
   command, so URL metacharacters are not interpreted as shell commands.
 
@@ -242,7 +246,7 @@ on the published npm package and the GitHub Release tag.
   multiply linked files. Deep-review also checks resolved subsystem paths
   against the prepared source tree before exposing source to a finder.
 - Foxguard integration now consumes native v1 JSON reports instead of silently
-  dropping their findings. The npm fallback is pinned to v0.12.0; provisioned
+  dropping their findings. The npm fallback is pinned to v0.13.0; provisioned
   binaries are used directly, and multi-path scans use valid CLI invocations.
 - Installers, container builds, and scanner CI provision a checksum-verified
   FoxGuard companion from a shared version/hash pin; the default installer

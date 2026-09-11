@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { craftStepBudget, runCraftScan, type CraftScanOptions } from "./craft-scan.js";
@@ -336,5 +336,51 @@ describe("runCraftScan generator deadline", () => {
         summary: "candidate generator failed before self-test",
       }),
     ]));
+  });
+});
+
+describe("runCraftScan read-only path handling", () => {
+  it("lists a literal model-selected directory without executing shell substitutions", async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-literal-path-"));
+    roots.push(sourceRoot);
+    writeFileSync(join(sourceRoot, "target.c"), "int target(void) { return 0; }\n");
+    const marker = join(sourceRoot, "unrequested-effect");
+    const requestedPath = `$(touch ${marker})`;
+    const directory = join(sourceRoot, requestedPath);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "literal-directory-entry"), "fixture\n");
+    let observedToolResult = "";
+    vi.spyOn(LlmApiRuntime.prototype, "executeNative")
+      .mockResolvedValueOnce({
+        content: [{
+          type: "tool_use",
+          id: "list-literal-path",
+          name: "list_dir",
+          input: { path: requestedPath },
+        }],
+        stopReason: "tool_use",
+        usage: { inputTokens: 1, outputTokens: 1 },
+        durationMs: 1,
+      } as never)
+      .mockImplementationOnce(async (_system, messages) => {
+        observedToolResult = JSON.stringify(messages);
+        return {
+          content: [{ type: "text", text: "Finished examining the directory." }],
+          stopReason: "end_turn",
+          usage: { inputTokens: 1, outputTokens: 1 },
+          durationMs: 1,
+        } as never;
+      });
+
+    await runCraftScan({
+      target: { sourceRoot, description: "local fixture", language: "c", taskId: "fixture:literal-path" },
+      runtime: "api",
+      model: "gpt-5.5",
+      maxSteps: 2,
+      evaluatePoc: vi.fn(async () => ({ triggered: false, output: "" })),
+    });
+
+    expect(existsSync(marker)).toBe(false);
+    expect(observedToolResult).toContain("literal-directory-entry");
   });
 });

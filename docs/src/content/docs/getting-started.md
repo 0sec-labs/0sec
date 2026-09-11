@@ -59,6 +59,16 @@ For a real scan, mount scope and persist any output you need before using
 
 ## Configure a provider
 
+In the hosted-enabled CLI candidate, run `0sec` to open chat, then `/connect`.
+Choose **0sec Cloud → Sign in**, **Use my own API key**, or
+**Provider subscription**. Cloud sign-in opens your browser; **Esc** returns
+to chat. The full terminal interface requires Bun.
+
+Use `/model` to select a model. If a chat already has a runtime, connection
+and model changes apply when you start `/new-chat`; the existing chat stays
+on its original connection. A saved Cloud login still needs service access,
+an available model and sufficient credit.
+
 <a id="hosted-models-draft"></a>
 
 ### Hosted models

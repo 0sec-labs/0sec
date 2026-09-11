@@ -30,7 +30,7 @@ available, falling back to the readline console otherwise.
 # Start with a role (tool set)
 0sec console --role discovery --target https://example.com --scope ./scope.json
 
-# Start in YOLO mode (no per-action prompts, requires configured scope)
+# Start in YOLO mode with an initial engagement scope
 0sec console --yolo --scope ./scope.json --target https://example.com
 
 # Resume the most recent saved session
@@ -67,8 +67,7 @@ available, falling back to the readline console otherwise.
 
 A [`--scope` file](/scope/) is required for the Node readline fallback. Under
 the Bun TUI it is optional — the TUI can request session-only scope extensions
-interactively. YOLO mode requires a configured scope with at least one
-`in_scope` entry regardless of runtime.
+interactively, including in YOLO mode. Explicit exclusions still apply.
 
 ### Review previous work
 
@@ -150,6 +149,10 @@ The console auto-detects available runtimes. The runtime is determined by
 
 ## First interaction
 
+For Cloud sign-in, your own API key, or a subscription connection, follow the
+[interactive setup guide](/getting-started/). Connection and model changes apply
+to a new chat, not the runtime of an existing conversation.
+
 When the TUI launches:
 
 - **Home screen** — 0sec brand mark, engagement panel, composer (text input)
@@ -178,13 +181,13 @@ auto-scrolls to newest content. **PageUp** / **PageDown** (or **Ctrl+Up** /
 | Replay | `/replay` | Event-level turn replay for a completed scan |
 | Settings | `/settings`, `/config`, `/prefs` | Console display settings (persist across sessions) |
 | Theme | `/theme`, `/themes` | Colour theme live preview |
-| Model | `/model`, `/models` | Switch the active LLM model mid-session |
+| Model | `/model`, `/models` | Select the model for a new chat |
 | Resume | `/resume`, `/sessions` | Saved chat-session list browser |
 | Herd | `/herd`, `/workers` | Active subagent worker overview |
 | Market | `/market`, `/marketplace` | Extension marketplace |
-| Connect | `/connect`, `/login`, `/auth` | Provider credential entry |
+| Connect | `/connect`, `/login`, `/auth` | Cloud sign-in, API-key and subscription connections |
 | Usage | `/usage`, `/cost`, `/tokens` | Token, cost, and context-window usage for this chat session |
-| Provider | `/providers` | Provider connection and OAuth pane |
+| Provider | `/providers` | Read-only provider connection status |
 | Scope | `/scope` | Current engagement scope view |
 | Back | `/back` | Navigate to the previous screen |
 
