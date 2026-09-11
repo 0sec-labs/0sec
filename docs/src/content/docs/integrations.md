@@ -3,13 +3,12 @@ title: Integrations
 description: MCP server, HackerOne, plugins, report export, Docker, CI, and cloud auth integrations.
 ---
 
-0sec ships several integration surfaces for embedding into toolchains, CI
-pipelines, and discovery workflows. This page documents the shipped surfaces.
+For organization credentials, see [Cloud auth](/integrations/#cloud-auth).
 
 ## MCP Server
 
 The MCP server (`0sec mcp-server`) exposes 0sec's live-attack tools through the
-[Model Context Protocol](https://modelcontextprotocol.io) over stdio — any MCP
+[Model Context Protocol](https://modelcontextprotocol.io) over stdio. Any MCP
 client (Claude Desktop, Cline, Continue, etc.) can drive a 0sec target session.
 
 **Source:** `packages/cli/src/commands/mcp-server.ts`
@@ -45,8 +44,7 @@ client (Claude Desktop, Cline, Continue, etc.) can drive a 0sec target session.
 
 ### Exposed tools
 
-The MCP server exposes these 11 live-attack tools by default (use `--tools` to
-select a subset):
+Use `--tools` to select from these live-attack tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -95,7 +93,7 @@ The MCP server supports the same engagement hardening as the scan path. When
 - Full request jitter is applied to all rate-limit buckets
 
 An explicit `--rate-limit` value is clamped to the posture's ceiling. The
-posture can only make the session **quieter** than the flag.
+posture clamps, never increases, the configured rate.
 
 The server records an `engagement_posture_applied` event on the scan for
 auditability.
@@ -163,9 +161,9 @@ discovery and scope enumeration.
 ### Credentials
 
 Credentials are loaded from a `h1.env` file (see [Configuration](/configuration/)
-for the expected path). The H1 API uses Basic auth with a username + API token
-generated on the HackerOne site. Unlike [cloud auth](/integrations/#cloud-auth),
-there is no login flow — the loader reads what you put in `h1.env`.
+for the expected path). The H1 API uses Basic auth with a username and API token
+generated on the HackerOne site. The loader reads what you put in `h1.env`;
+there is no login flow.
 
 ### Exit codes
 
@@ -194,7 +192,7 @@ there is no login flow — the loader reads what you put in `h1.env`.
 
 ## Cloud auth
 
-`0sec auth` manages 0sec-cloud credentials via a browser-based OAuth flow.
+`0sec auth` manages scoped organization credentials. For 0sec Cloud availability and operator-host setup, see [Getting started](/getting-started/#hosted-models-draft). Local API-key and subscription use require no 0sec account.
 
 **Source:** `packages/cli/src/commands/auth.ts`
 
@@ -220,7 +218,7 @@ Credentials persist to `~/.0sec/cloud.env` (mode `0600`) with the format:
 ```
 
 On logout both `~/.0sec/cloud.env` and `~/.0cloud/credentials.json` are
-removed. Cloud auth uses Bearer tokens, not Basic auth.
+removed. Cloud auth uses Bearer tokens.
 
 ### Manual token path
 
@@ -234,9 +232,7 @@ This skips the browser flow entirely and persists the token immediately.
 
 ## Report formats
 
-0sec can emit results in several machine-readable and human-readable formats.
-`scan`, `review`, and `audit` accept `--format`; available formats and short
-aliases are command-specific. Their default is terminal output, not JSON.
+`scan`, `review`, and `audit` accept `--format` and default to terminal output. Supported formats and aliases vary by command.
 
 **Source:** `packages/cli/src/formatters/`
 
@@ -346,8 +342,8 @@ docker build --build-arg INSTALL_SECLISTS=1 -t 0sec:full .
 0sec supports two plugin mechanisms:
 
 - **Model-authored executable plugins** — TypeScript code submitted by the
-  model at runtime, executed in isolated Docker containers or smolvm microVMs. These
-  are the primary self-extension path, enabled by default for non-verifier
+  model at runtime, executed in isolated Docker containers or smolvm microVMs.
+  This is the primary self-extension path, enabled by default for non-verifier
   agents (operator can opt out via `allowModelSelfExtension: false`).
 - **Third-party operator plugins** — CLI-managed plugins from the operator
   marketplace. Scaffolded; no marketplace ships.
@@ -384,11 +380,9 @@ delegation tools (`spawn_agent`, `spawn_agents`), or control tools
 (`self_extend`, `apply_patch`, `write_file`). Nested invocations share a
 single broker call budget and are limited to depth 4.
 
-Manifest `parameters` is a properties bag, for example
-`{"value":{"type":"number"}}`, with `required` declared beside it—not a complete
-`{"type":"object","properties":...}` schema. Source uses Node 24's native
-TypeScript stripping; use erasable TypeScript syntax and provision dependencies
-in the toolbox rather than assuming a full TypeScript compiler runs on admission.
+Manifest `parameters` contains property schemas, such as
+`{"value":{"type":"number"}}`; declare `required` beside it.
+Node 24 strips erasable TypeScript syntax. Provision dependencies in the toolbox.
 
 #### Lifecycle
 
@@ -414,13 +408,13 @@ For the model-facing lifecycle, use `self_extend` with `action` set to `submit`,
 `list`, `evolve`, or `rollback`. Point `0SEC_PLUGIN_EVOLUTION_CONFIG` at an
 operator-owned [source-evolution config](/improvement-plane/#config-shape) to
 expose the `default` evaluation profile. It must use the same backend and pinned
-image as the executable. Without a profile, creation and replacement work,
-but measured evolution is unavailable rather than silently approved.
+image as the executable. Creation and replacement work without a profile;
+measured evolution requires one.
 
 YOLO removes per-action prompts within the configured scope; it does not let
 generated code replace its evaluator, inherit provider credentials, or expand
-host authorization. Direct submissions remain structurally admitted—not
-evidence of improved security performance.
+host authorization. Direct submissions are structurally admitted; measured
+evolution requires the improvement loop.
 
 #### Storage
 
@@ -443,10 +437,9 @@ For smolvm, configure `0SEC_SMOLVM_IMAGE_ARCHIVE`. The image is resolved to an i
 on first use; resumed/promoted versions retain that digest, not a retagged
 reference.
 
-This backend isolates executable plugins and their evolution workers, not the
-entire CLI or every built-in tool. The controller and authorized host tools
-remain outside the guest. Each invocation starts a fresh guest; smolvm adds VM
-startup overhead, and there is no warm-VM pool.
+The backend isolates executable plugins and evolution workers. The controller
+and authorized host tools execute outside it. Every invocation starts a fresh
+guest; smolvm incurs VM startup overhead.
 
 #### Version lifecycle diagram
 
@@ -471,9 +464,9 @@ evolve            │
 
 **Source:** `packages/cli/src/commands/plugin.ts`
 
-**Status:** Scaffolded (stages 4-5 of the design) but no real marketplace ships.
-The default registry endpoint is intentionally empty. Plugins can be loaded from
-local filesystem paths for development.
+**Status:** Scaffolded. No marketplace ships. The default registry endpoint is
+intentionally empty. Plugins can be loaded from local filesystem paths for
+development.
 
 #### Subcommands
 
@@ -626,18 +619,16 @@ The selected mode controls prerequisites, result shape, and exit-code meanings.
 
 ### Results, exit codes, and runners
 
-Do not apply one universal exit-code table to every verification path. Follow
+Exit codes, results, and runners are mode-specific. Follow
 [Scan Workflows](/scan-workflows/) for choosing the mode,
 [Verification Results](/verification-result/) for deterministic replay statuses,
 and [Kernel VM Verification](/kernel-vm/) for QEMU prerequisites.
 
-Local, Docker, and kernel execution are not interchangeable safety boundaries.
-Only use the runner and fixture options registered by the selected command;
-an SDK runner type is not automatically a CLI option.
+Local, Docker, and kernel execution have distinct safety boundaries.
+Use only the runner and fixture options registered by the selected command. An
+SDK runner type is not automatically a CLI option.
 
 ## Report export
-
-Scan reports can be exported and shared:
 
 ```bash
 # SARIF for code scanning
@@ -654,7 +645,7 @@ Scan reports can be exported and shared:
 
 JSON, Markdown, and SARIF are emitted as formatted output. HTML and PDF reports
 are written to timestamped files under the system temporary directory; the CLI
-prints the generated path. `scan` does **not** register `--report-path`.
+prints the generated path. `scan` has no `--report-path` flag.
 Copy the emitted HTML/PDF file to your desired destination before temporary
 files are cleaned up. Redirecting stdout does not relocate that report.
 

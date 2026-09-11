@@ -44,8 +44,7 @@ credential priority.
 
 For Azure, also set `AZURE_OPENAI_BASE_URL` and `AZURE_OPENAI_MODEL` unless 0sec
 can read them from an Azure-backed `~/.codex/config.toml`. For the Responses API,
-the base URL must include `/openai/v1`. 0sec fails fast on incomplete Azure config
-rather than guessing defaults.
+the base URL must include `/openai/v1`. Incomplete Azure configuration fails before execution.
 
 For ChatGPT Codex, run `codex login`, then either rely on
 `~/.codex/auth.json` or use
@@ -85,9 +84,8 @@ env 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..." \
 
 ### Codex runtime parity matrix
 
-Codex routing depends on the entry point and its available credentials. Source
-review can use the installed CLI; live-target subscription calls use the direct
-provider. Do not infer that installing a binary alone authorizes every surface.
+Codex routing depends on the entry point and credentials. Source review can use
+the authenticated CLI; live-target subscription calls use the direct provider.
 
 | Surface                                | Command                                                      | Supported via direct provider |
 |----------------------------------------|--------------------------------------------------------------|--------------------------------|
@@ -100,8 +98,7 @@ provider. Do not infer that installing a binary alone authorizes every surface.
 | Linux kernel review                    | `0sec review ./linux --profile linux-kernel --runtime codex` | yes                          |
 | C/C++ library review                   | `0sec review ./lib --profile c-library --runtime codex`    | yes                            |
 
-Managed-cloud runtime availability is a separate deployment policy; see
-[0cloud](/roadmap/#0cloud) rather than assuming local capabilities are all hosted.
+Managed runtime availability follows the separate [0cloud deployment policy](/roadmap/#0cloud).
 
 ## Scan modes
 
@@ -277,9 +274,8 @@ Settings are resolved per-key, highest-priority first:
 2. **Global** — `~/.0sec/tui-settings.json` is the per-user base.
 3. **Default** — built-in defaults shown below.
 
-A missing, corrupt, or hand-broken file can't break the console: on load it's
-normalised against the schema (unknown keys dropped, bad values reset to
-defaults), and saving rewrites it from the normalised object.
+On load, settings are normalized against the schema: unknown keys are dropped
+and invalid values reset to defaults. Saving writes the normalized object.
 
 ### Security-gated import
 
@@ -341,12 +337,12 @@ Keys are stored in plaintext at `~/.0sec/credentials.json` by default, with
 `0600` file and `0700` directory permissions. Explicit environment values win.
 See [credential storage](/api-keys/#console-credential-store).
 
-In `/model`, **Tab** opens the full catalog. Check credentials and account access
-before selecting a model; an unknown price isn't zero.
+In `/model`, **Tab** opens the full catalog. Check credentials and account access.
+Treat missing price data as unknown.
 
 ## Cloud authentication
 
-0sec-cloud authentication is managed with the `0sec auth` command:
+`0sec auth` manages organization credentials:
 
 | Subcommand | Description |
 |------------|-------------|
@@ -482,11 +478,9 @@ and tool call with its result. That means **target hostnames, approved scope,
 untriaged findings, and raw request/response bodies**, which can include cookies,
 bearer tokens, and anything a tool echoed.
 
-**Secrets are deliberately not scrubbed.** A scrubber over free-form tool output
-can't be complete, and a partial scrub is worse than none — it advertises a
-guarantee it can't keep, and would corrupt the evidence a resume needs.
-Transcripts are **not encrypted**; protection is filesystem permissions plus your
-ability to delete them. Nothing is transmitted anywhere — local disk only.
+Secrets are not scrubbed. A partial scrub over free-form output would corrupt
+resume evidence. Transcripts are not encrypted. Protection is filesystem
+permissions. Stored on local disk only.
 
 ## Static analyzer selection
 
@@ -620,11 +614,11 @@ sides is `inconclusive` (exit 1); failure to reproduce the vulnerable side is
 and express the exploit condition through assertions. Results include both sides;
 `vulnerable.json`, `patched.json`, and `result.json` are retained with artifacts.
 
-Local execution runs trusted PoC code **on the host**, not in a sandbox. It checks
-the exact Node/engine version and host platform/architecture, but does not capture
-external tools or services. Digests detect corruption, not malicious authorship.
-Review bundles before execution and before sharing: allowlisted sources, finding
-metadata, and process output can contain secrets.
+Local replay executes trusted PoC code **on the host**. It checks the Node/engine
+version and platform/architecture; external tools and services remain outside the
+snapshot. Digests establish file integrity, while authorship requires separate
+review. Check bundles for secrets before execution or sharing, including source,
+finding metadata, and process output.
 
 For Docker, set `"runner": "docker"` in the plan and provide
 `docker_shell_image` / `docker_http_image` for the action types used, each as a full
@@ -637,7 +631,7 @@ HTTP actions. Notes are not executable bundle steps.
 Shell `cwd` is relative to the mounted workspace; absolute paths and traversal
 outside it are rejected before a container is launched.
 
-The `0sec: Docker replay` CI workflow runs real containers, not a Docker CLI mock.
+The `0sec: Docker replay` CI workflow runs real containers.
 It covers isolation, writable workspaces, relative cwd and escape rejection,
 pinned-image execution, timeout cleanup, scoped HTTP, and vulnerable/patched
 negative controls. To run the same checks against the default local Docker daemon:
@@ -674,10 +668,10 @@ The runtime layers that keep a provider failure from silently corrupting a scan:
 | `0SEC_LLM_429_MAX_RETRY_WAIT_MS` | `300000` | Cumulative 429 backoff cap (ms). Falls back to `0SEC_LLM_MAX_RETRY_WAIT_MS` when unset. Bound server-guided `Retry-After` waits. |
 | `0SEC_SUPPRESS_PROVIDER_STARTUP_LOG` | unset | Set to `1` to suppress the "Provider: …" startup banner line. |
 
-Auth errors (**401/403**) are never retried: the agent loop exits immediately, and
-the pipeline surfaces an **honest failure** — `warnings[]` carries the provider
-error and the run is marked failed, never a clean "0 findings". Package audits add
-a per-file circuit breaker (3 identical-signature failures abort the rest).
+Auth errors (**401/403**) are never retried: the agent loop exits immediately,
+`warnings[]` carries the provider error, and the run is marked failed, never
+clean "0 findings". Package audits add a per-file circuit breaker (3
+identical-signature failures abort the rest).
 
 ### Provider failover chain
 
@@ -687,7 +681,7 @@ advances to the next entry whose credentials are present in the environment.
 
 ## Execution backends
 
-Backend selection is command-specific, not a global console isolation switch:
+Backend selection is command-specific. It does not provide global console isolation:
 
 - Source evolution defaults to Docker. Set `backend: "smolvm"` and a local
   `imageArchive` in its config to use qualified Linux microVM workers. See
@@ -745,8 +739,7 @@ cost/token usage. Useful for wrappers, CI parsers, and the cloud path.
 
 ## Example: opt-in verification gates
 
-Enable additional gates, then inspect which actually ran and what evidence they
-produced. More flags are not a guarantee of accuracy or disclosure readiness.
+After enabling gates, inspect their execution records and evidence before accepting a finding.
 
 ```bash
 env \

@@ -1,17 +1,17 @@
 ---
-title: FP Reduction Moat
+title: False-positive reduction
 description: Measured behavior of 0sec's 11-layer triage pipeline across benchmark slices, plus layer-by-layer implementation notes and references.
 ---
 
-> **Update 2026-04-12:** This page reflects the 21-profile ablation and follow-up reruns after EGATS was removed from default moat aliases. The measured effect remains slice-dependent: strong on XBOW black-box, a precision/recall trade on XBOW white-box, and variance-sensitive on npm-bench at current sample size. See the [2026-04-11 ablation results log](/research/2026-04-11-ablation/) for full tables and caveats, [0sec#72](https://github.com/0sec-labs/0sec/issues/72) for run tracking, and [0sec#116](https://github.com/0sec-labs/0sec/issues/116) for the EGATS profile change.
+Measured from the 21-profile ablation (2026-04-11) and follow-up reruns after EGATS was removed from default moat aliases. The measured effect is slice-dependent: strong on XBOW black-box, a precision/recall trade on XBOW white-box, and variance-sensitive on npm-bench at current sample size. See the [2026-04-11 ablation results log](/research/2026-04-11-ablation/) for full tables, [0sec#72](https://github.com/0sec-labs/0sec/issues/72) for run tracking, and [0sec#116](https://github.com/0sec-labs/0sec/issues/116) for the EGATS profile change.
 
-0sec's triage pipeline is a stack of independent filters, each tuned for a different failure mode. Every layer is open-source, every layer is toggleable via feature flags, and each layer is represented in benchmarked profiles. This page documents measured outcomes, implementation details, and configuration surfaces.
+0sec's triage pipeline is a stack of independent filters, each tuned for a different failure mode. Every layer is open-source, toggleable via feature flags, and represented in benchmarked profiles.
 
-> **Where to read next:** the [Finding Triage ML](/research/finding-triage-ml/) page is the design doc with the feature-list, datasets, and planned Layer-2 CodeBERT fine-tune. The [Triage Dataset](/research/triage-dataset/) and [Feature Extractor](/research/feature-extractor/) pages document the new data foundation directly. The [Architecture](/architecture/) page shows how the triage stage slots into the overall pipeline.
+Related: [Finding Triage ML](/research/finding-triage-ml/) (design doc), [Triage Dataset](/research/triage-dataset/), [Feature Extractor](/research/feature-extractor/), [Architecture](/architecture/) (pipeline slot).
 
 ## External references
 
-Every disclosed production triage system converges on the same shape: **rules + reachability + neural + memory**. The numbers:
+Published triage systems combine rules, reachability, neural models, and memory:
 
 | System | Disclosed FP reduction | What they do |
 |--------|------------------------|--------------|
@@ -20,7 +20,7 @@ Every disclosed production triage system converges on the same shape: **rules + 
 | Snyk DeepCode AI | 84% MTTR reduction | Symbolic AI + multiple fine-tuned models in an ensemble. |
 | GitHub Security Lab taskflow-agent | ~30 real vulns surfaced (open-source reference) | GPT-4.1 with 7+ YAML subtasks per alert — the reference architecture for structured decomposition. |
 | VulnBERT (Guanni Qu, Pebblebed) | 92.2% recall / 1.2% FPR on kernel commits | Hybrid: CodeBERT + 51 handcrafted features fused via cross-attention. Ablation: features alone 76.8%/15.9%, CodeBERT alone 84.3%/4.2%, hybrid 92.2%/1.2%. |
-| 0sec triage stack | Open-source and auditable by construction | Dataset pipeline + handcrafted features + reachability + oracles + structured verify + memories + debate, all visible in code and toggleable per layer. |
+| 0sec triage stack | See the per-slice ablation below | Dataset, features, reachability, oracles, verification, memories, and debate with per-layer controls. |
 
 ### Research papers we implemented directly
 
@@ -46,9 +46,7 @@ The headline numbers from the 21-run ablation matrix dispatched on 2026-04-11. E
 | `moat-only` (moat layers, stable features off) | 41/50 (82%) | **25** | $26.89 | $0.66 |
 | `moat` (everything on) | 41/50 (82%) | **25** | $21.82 | $0.53 |
 
-**Interpretation.** Turning on the full 11-layer moat *cuts findings by 63%* (67 → 25), *loses 2 flags* (44 → 41), and *costs 1.6× more per flag*. This is a Pareto tradeoff.
-
-Note that `moat` and `moat-only` produce identical flag count and finding count. The stable features (early_stop, loop_detection, context_compaction, script_templates, progress_handoff) don't change the outcome when stacked on top of the moat layers.
+Full moat cuts findings 63% (67 → 25), loses 2 flags (44 → 41), and costs 1.6× more per flag. `moat` and `moat-only` produce identical flag/finding counts — stable features don't change the outcome on top of moat layers.
 
 ### XBOW black-box, limit=25 (4 profiles)
 
@@ -59,7 +57,7 @@ Note that `moat` and `moat-only` produce identical flag count and finding count.
 | `moat-only` | 18/25 (72%) | **13** | $11.22 | $0.62 |
 | **`moat`** | **19/25** (76%) | 14 | **$10.04** | **$0.53** |
 
-**Interpretation.** On this black-box slice, `moat` dominates `none`: more flags, fewer findings, and lower cost per flag.
+On black-box, `moat` dominates `none`: more flags, fewer findings, lower cost per flag.
 
 ### npm-bench (5 profiles)
 
@@ -71,9 +69,7 @@ Note that `moat` and `moat-only` produce identical flag count and finding count.
 | `moat` | 0.956 | 1.00 | 0.19 | 27/27 | 27/27 | 22/27 |
 | `default` | 0.956 | 1.00 | 0.19 | 27/27 | 27/27 | 22/27 |
 
-**Interpretation (batch 1).** `default` and `moat` are identical on this run. Batch-1 attribution suggested the FPR shift from `none` to `default` came from stable features. Follow-up reruns showed meaningful variance, so this attribution should be treated as provisional until repeated runs are available.
-
-Also worth noting: **100% TPR across every profile.** Every malicious package and every vulnerable package in the 81-package set is caught regardless of which triage layers are on. The earlier `npm-bench-latest.json` snapshot showing F1=0.444 was on a different 30-package slice and no longer reflects reality — see [0sec#111](https://github.com/0sec-labs/0sec/issues/111).
+`default` and `moat` are identical on this run. Batch-1 attribution suggested the FPR shift from `none` to `default` came from stable features. Follow-up reruns showed significant variance — provisional until repeated runs. 100% TPR across every profile — every malicious/vulnerable package caught regardless of triage layers. The earlier `npm-bench-latest.json` snapshot (F1=0.444) was on a different 30-package slice — see [0sec#111](https://github.com/0sec-labs/0sec/issues/111).
 
 ### Single-feature isolation on stubborn-14 (white-box)
 
@@ -96,32 +92,22 @@ To figure out which moat layer causes the flag losses in white-box, each one was
 
 `egats` has been flagged for disable-by-default in [0sec#116](https://github.com/0sec-labs/0sec/issues/116).
 
-### Takeaways
+<span id="takeaways"></span>
 
-1. **No single static policy wins on all three slices.** The moat helps on black-box XBOW, costs 2 flags on white-box XBOW, and is a batch-1 no-op on npm-bench. A static feature-flag system applied at the scan level can't optimize all three simultaneously. This is the direct motivation for learned dynamic routing — see [0sec#113](https://github.com/0sec-labs/0sec/issues/113).
-2. **The attack agent baseline is strong without triage.** 86% on the first 50 XBOW white-box challenges with triage disabled, and 100% recall on npm-bench across profiles in this run.
-3. **`egats` is the regressing layer in this isolation run.** Keep disabled by default and opt-in for research.
-4. **npm-bench FPR attribution needs repeat runs.** Batch-1 results pointed at stable features; batch-2 reruns showed high variance at this sample size.
-5. **Per-layer telemetry is now on.** Every finding produced after 2026-04-11 carries a `layerVerdicts` array that logs which layer touched it and what it did. That's the supervision signal for the learned-routing model in [0sec#113](https://github.com/0sec-labs/0sec/issues/113). See [0sec#112](https://github.com/0sec-labs/0sec/issues/112) for the instrumentation commit.
+1. No single static policy wins on all three slices. The moat helps on black-box XBOW, costs 2 flags on white-box XBOW, and is a batch-1 no-op on npm-bench. Direct motivation for learned dynamic routing — see [0sec#113](https://github.com/0sec-labs/0sec/issues/113).
+2. The attack agent baseline is 86% on the first 50 XBOW white-box challenges with triage disabled, and 100% recall on npm-bench across profiles.
+3. `egats` is the regressing layer in this isolation run. Keep disabled by default and opt-in for research.
+4. npm-bench FPR attribution needs repeat runs — batch-2 showed high variance at this sample size.
+5. Per-layer telemetry (`layerVerdicts`) is live on findings after 2026-04-11 — supervision signal for learned routing ([0sec#113](https://github.com/0sec-labs/0sec/issues/113)). See [0sec#112](https://github.com/0sec-labs/0sec/issues/112) for the instrumentation commit.
 
 ## Data foundation
 
-Before the live runtime layers even matter, 0sec now has a reproducible
-training-data pipeline:
+0sec now has a reproducible training-data pipeline:
 
 - [Triage Dataset](/research/triage-dataset/) — JSONL generation from XBOW,
   npm-bench, and verified local scans
 - [Feature Extractor](/research/feature-extractor/) — the 45 handcrafted
   features carried in every row
-
-That gives a 12-part architecture summary:
-
-1. dataset pipeline
-2. 11 shipped runtime triage layers
-
-This matters because the moat is not only the online verification stack.
-It is also the offline ability to build, label, ablate, and retrain with
-fully auditable data.
 
 ## Runtime stack (11 shipped layers)
 
@@ -170,90 +156,61 @@ Each layer rejects or downgrades a fraction of the false positives that survived
 | 9 | Triage memories | `triage/memories.ts` | Semgrep Assistant ~96% auto-triage (with user feedback) | Historical triage |
 | 10 | Adversarial debate | `triage/adversarial.ts` | Anthropic debate reference | Finding + target |
 
-**Historical target statement (pre-ablation):** drive raw false positives toward single-digit FPR while retaining high recall.
+The full stack reduces findings substantially on XBOW, with slice-dependent recall/cost tradeoffs. Public SAST reference numbers are directional context, not directly comparable to agent-generated web exploitation findings.
 
-> **Measured effect (see "Measured results" above):** the full moat stack reduces findings substantially on XBOW, with slice-dependent recall/cost tradeoffs. Public SAST reference numbers are directional context, but are not directly comparable to agent-generated web exploitation findings.
+<span id="why-the-stack-ordering-matters"></span>
+### Layer order
 
-### Why the stack ordering matters
+Layers 1-3 are free (no LLM cost). Layers 4-5 need a live target or local tool but no LLM spend. Layers 6-10 spend LLM tokens only on findings that survived the free layers.
 
-Layers 1-3 are free (no LLM cost). Anything rejected here saves LLM spend on the later layers.
+| # | Layer | Cost | Effect |
+|---|-------|------|--------|
+| 1 | Holding-it-wrong | microsecond, ~100% precision when it fires | Pure blocklist removes library-API-as-vuln |
+| 2 | Features | regex/string ops, sub-millisecond | Fast prior: ~16% FPR alone (VulnBERT ablation) |
+| 3 | Reachability | milliseconds (grep over source tree) | Kills findings in dead code |
+| 4 | Oracles | deterministic exploit attempt | Verified = accept, zero LLM cost |
+| 5 | Multi-modal (foxguard) | independent scanner, no LLM | Agreement doubles confidence |
+| 6 | Structured verify | 4-step decomposition + category addendums | GitHub Security Lab reference architecture |
+| 7 | Consensus | majority vote, early termination | Converts single-shot variance into stable verdict |
+| 8 | PoV gate | mini agent loop | "No executable exploit = no finding" |
+| 9 | Memories | SQLite store lookup | Known FP patterns auto-reject without verify |
+| 10 | Debate | two-agent adversarial | Tie-breaker for unresolved cases |
 
-- **Layer 1 (holding-it-wrong)** is pure blocklist — microsecond cost, ~100% precision when it fires.
-- **Layer 2 (features)** is regex and string ops — sub-millisecond, provides a fast prior for later layers.
-- **Layer 3 (reachability)** is grep over the source tree — milliseconds, kills findings in dead code.
+<span id="why-this-is-auditable"></span>
+## Audit records
 
-Layers 4-5 require either a live target (oracles) or a local tool (foxguard) but no LLM spend.
+Every moat component is inspectable:
 
-- **Layer 4 (oracles)** attempts the exploit deterministically. Verified = accept with zero LLM cost.
-- **Layer 5 (multi-modal)** is a second, fully independent scanner. Agreement doubles the confidence; disagreement flags review.
+- dataset collector: `packages/benchmark/src/triage-data-collector.ts`
+- feature layer: `packages/core/src/triage/feature-extractor.ts`
+- runtime layers: `packages/core/src/triage/`
+- dedicated tests
+- LLM-backed layers independently toggleable via `0SEC_FEATURE_*` flags
 
-Layers 6-10 spend LLM tokens, but only on findings that survived the free layers.
+<span id="our-implementation-notes"></span>
+## Implementation notes
 
-- **Layer 6 (structured verify)** is a 4-step decomposition with category-specific addendums — the GitHub Security Lab reference architecture.
-- **Layer 7 (consensus)** converts single-shot variance into a stable majority vote, with early termination once a verdict can't be overturned.
-- **Layer 8 (PoV gate)** enforces "no executable exploit = no finding" — the hardest filter in the stack.
-- **Layer 9 (memories)** recycles prior human triage decisions so known FP patterns auto-reject without any verify cost.
-- **Layer 10 (debate)** is the final tie-breaker, reserved for cases the rest of the stack couldn't resolve.
+<span id="every-layer-ships-as-a-feature-flag"></span>
 
-## Why this is auditable
+Each layer ships as a feature flag (`0SEC_FEATURE_*` in `packages/core/src/agent/features.ts`), enabling independent A/B testing against the XBOW benchmark.
 
-Every part of the moat is inspectable:
+<span id="dataset-pipeline"></span>
 
-- the dataset collector is in `packages/benchmark/src/triage-data-collector.ts`
-- the feature layer is in `packages/core/src/triage/feature-extractor.ts`
-- the runtime layers live under `packages/core/src/triage/`
-- the stack has dedicated tests
-- the LLM-backed layers are independently toggleable with `0SEC_FEATURE_*`
-  flags
+The moat has an offline data-generation surface in addition to live runtime filters. The collector emits labeled rows from benchmark flag extraction, npm-bench package verdicts, and blind-verify statuses in the local SQLite DB. See [Triage Dataset](/research/triage-dataset/) for the JSONL schema and [issue #67](https://github.com/0sec-labs/0sec/issues/67).
 
-This is materially different from commercial systems where the reachability
-engine, feedback store, or model pipeline is invisible.
+<span id="conservative-by-default"></span>
 
-## Our implementation notes
+Uncertainty policies vary by layer. Reachability returns `reachable: true` with low confidence when patterns give no verdict. Memories reject strong matches above a configurable threshold. Consensus defaults ties to `rejected`, with a caller opt-out.
 
-### Every layer ships as a feature flag
+<span id="foxguard--0sec-cross-validation"></span>
+<span id="zero-proprietary-dependencies"></span>
 
-See `packages/core/src/agent/features.ts`. Flags:
-
-- `0SEC_FEATURE_REACHABILITY_GATE`
-- `0SEC_FEATURE_MULTIMODAL`
-- `0SEC_FEATURE_POV_GATE`
-- `0SEC_FEATURE_CONSENSUS_VERIFY`
-- `0SEC_FEATURE_TRIAGE_MEMORIES`
-- `0SEC_FEATURE_DEBATE`
-
-This lets us A/B test each layer independently in CI against the XBOW benchmark and measure its marginal FP reduction.
-
-### Dataset pipeline
-
-The moat now has an offline data-generation surface in addition to the live
-runtime filters. The collector can emit labeled rows from:
-
-- benchmark flag extraction
-- npm-bench package verdicts
-- blind-verify statuses in the local SQLite DB
-
-See [Triage Dataset](/research/triage-dataset/) for the JSONL schema and
-[issue #67](https://github.com/0sec-labs/0sec/issues/67) for the
-paper-plan that uses it.
-
-### Conservative by default
-
-Every layer errs toward **keeping** findings when it's not confident. Reachability returns `reachable: true` with low confidence when its grep-based first pass can't reach a verdict. Memories only auto-reject on strong matches above a tunable score threshold. Consensus defaults ties to `rejected` but the caller can opt out. The stack is designed so each layer adds precision without costing recall on the next.
-
-### foxguard × 0sec cross-validation
-
-A second scanner (`foxguard`) can be used for independent cross-validation. This provides a rules-based signal alongside 0sec's agentic signal and supports disagreement-based triage workflows.
-
-### Zero proprietary dependencies
-
-- Reachability gate is grep/pattern-based — no LSP server, no compiled call graph, no Code API license.
-- Feature extractor is regex — no embedding model, no GPU.
-- Oracles use `fetch` and `createServer` — no external exploit framework.
-- Multi-modal runs foxguard via `execFile` — no vendor API.
-- Memories use the existing SQLite store — no vector DB.
-
-Everything here can run on a developer laptop, in CI, or in an air-gapped environment.
+These components use open-source dependencies:
+- Reachability: grep and patterns.
+- Features: regular expressions.
+- Oracles: `fetch` and `createServer`.
+- Multi-modal checks: FoxGuard via `execFile`.
+- Memories: the existing SQLite store.
 
 ## Related
 

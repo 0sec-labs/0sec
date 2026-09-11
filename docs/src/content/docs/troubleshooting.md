@@ -3,10 +3,6 @@ title: Troubleshooting
 description: Common installation, runtime, configuration, and diagnostic issues with the 0sec CLI.
 ---
 
-This guide covers real error scenarios encountered during installation,
-configuration, scanning, and result handling. Cross-references point to detailed
-reference pages for each area.
-
 ## Installation
 
 ### Binary download fails
@@ -82,10 +78,9 @@ node --version
 nvm install 24
 ```
 
-If the bun-compiled binary is used (downloaded via `install.sh`), Node.js is
-**not required** — the binary is self-contained and includes its own runtime.
-The Node version check only applies when running from source
-(`node packages/cli/dist/index.js`).
+The bun-compiled binary (downloaded via `install.sh`) is self-contained and does
+not require Node.js. The Node version check only applies when running from
+source (`node packages/cli/dist/index.js`).
 
 ### No API runtime configured
 
@@ -131,7 +126,7 @@ export AZURE_OPENAI_MODEL="gpt-4o"
 ### `0sec doctor` shows no CLI runtimes found
 
 CLI runtimes (`claude`, `codex`, `gemini`) are optional. The `api` runtime is
-the default and works with any supported provider key. If you want a CLI runtime:
+the default and works with any supported provider key. To install a CLI runtime:
 
 ```bash
 npm i -g @anthropic-ai/claude-code   # Claude Code CLI
@@ -139,7 +134,7 @@ npm i -g @openai/codex               # Codex CLI
 npm i -g @google/gemini-cli          # Gemini CLI
 ```
 
-Then verify:
+Verify:
 
 ```bash
 0sec doctor
@@ -174,8 +169,8 @@ Exit code 2 from scan-related commands indicates bad configuration:
 - An invalid `0SEC_ENGAGEMENT_RATE_RPS` value
 - A malformed scope file `engagement` block
 
-The error message printed to stderr identifies the exact issue. Fix it and
-re-run — the scan never starts on a bad posture config.
+The error message on stderr identifies the exact issue. Fix it and re-run. The
+scan never starts on a bad posture config.
 
 ### Scope rejection
 
@@ -185,8 +180,8 @@ When a target is out of scope:
 --target https://example.com is out of scope per ./scope.json: ...
 ```
 
-This means the target URL doesn't match any `in_scope` entry in your scope JSON
-file, or matches a `out_of_scope` deny rule (deny takes precedence). See
+The target URL does not match any `in_scope` entry in the scope JSON file, or
+matches an `out_of_scope` deny rule (deny takes precedence). See
 [Scope & Authorization](/scope/) for scope syntax.
 
 ### Cloud auth failure
@@ -202,7 +197,7 @@ file, or matches a `out_of_scope` deny rule (deny takes precedence). See
 | `3` | Network error (host unreachable, DNS failure) |
 | `1` | Other error |
 
-Run `0sec auth login` to re-authenticate, or use `--token` for the manual path:
+For an operator-provided host, retry `0sec auth login` or use the manual token path below. See [0sec Cloud setup](/getting-started/#hosted-models-draft) for availability.
 
 ```bash
 0sec auth login --host https://control-plane.example.com --token "your-token"
@@ -249,24 +244,24 @@ By default, the Codex runtime reads tokens from `~/.codex/auth.json`. Override:
 env 0SEC_CHATGPT_AUTH_FILE="/path/to/auth.json" 0sec scan ...
 ```
 
-`0SEC_CODEX_AUTH_JSON_PATH` is a deprecated spelling — prefer
+`0SEC_CODEX_AUTH_JSON_PATH` is a deprecated spelling. Prefer
 `0SEC_CHATGPT_AUTH_FILE`.
 
 ### OpenRouter routing
 
 OpenRouter acts as a fallback when direct provider credentials are absent for a
-given model family. If you intend to use OpenRouter exclusively, set only
+given model family. To use OpenRouter exclusively, set only
 `OPENROUTER_API_KEY` and no other provider keys.
 
 ## Scan and review
 
 ### Deep review produces no findings
 
-A review with no findings may mean:
+Possible causes:
 
-- **Trivially clean code** — no vulnerability patterns matched
-- **Provider could not analyze** — the configured model may lack the capability.
-  Try a different model or runtime (`--runtime claude`, `--model claude-sonnet-4`)
+- **No matching evidence** — the analysis found no vulnerability patterns; review coverage before drawing conclusions
+- **Provider could not analyze** — try a different model or runtime
+  (`--runtime claude`, `--model claude-sonnet-4`)
 - **Scope too narrow** — `--changed-only --diff-base <sha>` limits the review to
   diff lines. Remove `--changed-only` for a full review
 - **Budget exhausted** — `--cost-ceiling` hit before analysis completed. Increase
@@ -274,7 +269,7 @@ A review with no findings may mean:
 
 ### Scan times out
 
-The default timeout is 5 minutes (300000ms). Increase with `--timeout`:
+`scan --timeout` sets the request timeout in milliseconds (default `30000`). To increase it:
 
 ```bash
 0sec scan --target https://example.com --scope ./scope.json --timeout 600000
@@ -307,9 +302,9 @@ The [Docker image](/integrations/#docker-image) includes ripgrep pre-installed.
 
 ### Results format not supported
 
-`--format` accepts `json` (default), `sarif`, `html`, `pdf`, `markdown`,
-`terminal`, `timeline`, or `replay`. If you pass an unsupported format, the CLI
-prints the valid options.
+`scan`, `review`, and `audit` default to `terminal`. Their registered formats are
+`terminal`, `json`, `md`, `html`, `sarif`, and `pdf`. Check
+[Commands](/commands/) for the selected command's options.
 
 ```bash
 0sec scan --target http://127.0.0.1:8080 --scope ./scope.json --format pdf
@@ -341,7 +336,7 @@ docker run --rm ghcr.io/0sec-labs/0sec:latest review .
 
 ### Permission errors on mounted volumes
 
-The container runs as the `ubuntu` user (uid 1000). When mounting source code:
+The container runs as `ubuntu` (uid 1000). Prefer a mount with matching ownership or narrowly granted read access. The `chmod` example below exposes source to every local user; avoid it for private code.
 
 ```bash
 # If your files are owned by uid 1000, they work directly:
@@ -361,7 +356,7 @@ at `/opt/ad-tools`. Their console scripts are symlinked to `/usr/local/bin/`:
 docker run --rm --entrypoint bash ghcr.io/0sec-labs/0sec:latest -c 'which secretsdump.py'
 ```
 
-The system Python interpreter (`python3`) is deliberately NOT the venv one, so
+The system Python interpreter (`python3`) is deliberately not the venv one, so
 the agent's helper scripts can import the apt-managed `requests` and `bs4`.
 
 ## Database and state
@@ -419,7 +414,7 @@ The `--finding-intent` flag accepts one of three values:
 |--------|----------|
 | `investigate` (default) | Assess evidence, no source file modifications |
 | `verify` | Independent impact assessment, minimum reproduction |
-| `draft_fix` | Source root cause → patch + regression test (never applies) |
+| `draft_fix` | Source root cause to patch and regression test (never applied) |
 
 Invalid values produce:
 
@@ -428,8 +423,6 @@ Invalid --finding-intent '...'; expected one of investigate, verify, draft_fix.
 ```
 
 ## Known gaps
-
-These are not bugs but documented limitations:
 
 | Gap | Details |
 |-----|---------|
@@ -448,13 +441,13 @@ These are not bugs but documented limitations:
 | `0sec h1 auth` | HackerOne API credential validity |
 | `0sec --version` / `0 --version` | CLI version |
 | `0sec config show` | Effective layered configuration (global + project) |
-| `0sec scan --target <url> --dry-run` | Validate scope, credentials, and config without executing |
+| `0sec scan --target <url> --dry-run` | Preview `--emit pr` publication commands only; the scan still executes |
 
 ## See also
 
 - [Configuration](/configuration/) — runtime modes, scan modes, depth settings
 - [API Keys](/api-keys/) — supported providers and setup
-- [Console](/console/) — interactive chat cockpit
+- [Console](/console/) — interactive chat
 - [Scan Workflows](/scan-workflows/) — available scan modes and strategies
 - [Scope & Authorization](/scope/) — scope JSON files and target format
 - [Budget Management](/budget-management/) — cost ceilings, rate limiting

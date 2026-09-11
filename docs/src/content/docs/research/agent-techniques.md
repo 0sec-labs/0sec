@@ -3,7 +3,7 @@ title: Agent Techniques Reference
 description: Evidence-based techniques for improving autonomous pentesting agents, with implementation details and expected impact.
 ---
 
-A catalog of every technique we have evaluated for improving 0sec's autonomous pentesting agents. Each entry includes the source evidence, expected impact, implementation status, and enough detail to ship it.
+Techniques evaluated for improving 0sec's autonomous pentesting agents. Each entry includes source evidence, expected impact, implementation status, and enough detail to ship it.
 
 ## Shipped Techniques
 
@@ -65,8 +65,8 @@ A catalog of every technique we have evaluated for improving 0sec's autonomous p
 ```
 
 **Key details:**
-- `firedPatterns` set prevents the same pattern signature from triggering twice. This is important -- repeated warnings cause the agent to fixate on the warning itself.
-- The warning text instructs a "COMPLETELY DIFFERENT approach" rather than a minor variation, which testing showed is more effective at breaking the cycle.
+- `firedPatterns` prevents the same signature from triggering twice.
+- The warning requests a "COMPLETELY DIFFERENT approach".
 - History is bounded to `windowSize * 2 = 12` entries to keep memory constant.
 
 ---
@@ -92,8 +92,8 @@ A catalog of every technique we have evaluated for improving 0sec's autonomous p
 **Key details:**
 - Multiple recompactions allowed per session (counter-based, not the old one-shot flag) so long sessions stay under the token budget.
 - Role alternation is maintained after compaction (user/assistant/user/...) to satisfy the API contract.
-- The summary is inserted as a user message so the model treats it as ground truth, not its own prior reasoning.
-- `save_finding` calls found in the middle are preserved verbatim in the summary (not just the regex-extracted lines).
+- Compaction inserts the summary as a user message. Its claims still require verification.
+- `save_finding` calls in the compacted middle are preserved verbatim.
 
 ---
 
@@ -145,7 +145,8 @@ A catalog of every technique we have evaluated for improving 0sec's autonomous p
 
 ---
 
-## Not Yet Implemented
+<span id="not-yet-implemented"></span>
+## Planned techniques
 
 ### Context Relay / Cognitive Refresh
 

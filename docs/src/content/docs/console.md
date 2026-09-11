@@ -3,9 +3,9 @@ title: Console
 description: The 0sec interactive chat console — talk to the engine, run tools, manage sessions, and navigate every surface from one terminal UI.
 ---
 
-`0sec console` is a single conversational cockpit where an operator talks to the
-engine and invokes every 0sec tool (recon, web pentest, source/package scan,
-variant hunt, verify, patch-gen) from one prompt.
+`0sec console` opens an interactive chat session with the 0sec engine. From one
+prompt the operator invokes every tool (recon, web pentest, source/package scan,
+variant hunt, verify, patch-gen).
 
 Two front-ends share the same engine session (`createConsoleSession` from
 `@0sec/core`):
@@ -150,21 +150,19 @@ The console auto-detects available runtimes. The runtime is determined by
 
 ## First interaction
 
-When the TUI launches you see:
+When the TUI launches:
 
-- The **home screen** with the 0sec brand mark, an engagement panel, and a composer
-  (text input area) centred on the screen.
-- A **status bar** at the bottom showing the active model, mode, working directory,
-  and cost/token counters (when enabled).
-- A **header** row showing `0sec`, the engagement target, and an optional objective.
+- **Home screen** — 0sec brand mark, engagement panel, composer (text input)
+  centred on the screen.
+- **Status bar** — active model, mode, working directory, cost/token counters
+  (when enabled).
+- **Header** — `0sec`, engagement target, optional objective.
 
-Type a message and press **Enter** to send it to the engine. The engine streams
-its response token-by-token into the transcript. Tool calls appear as bordered
-cards showing the command or edit, its output, and the exit code (controlled by
-the `richToolCards` setting).
-
-The transcript is auto-scrolled to the newest content. **PageUp** / **PageDown**
-(or **Ctrl+Up** / **Ctrl+Down**) scroll through history.
+Type a message and press **Enter** to send it. The engine streams its response
+token-by-token. Tool calls appear as bordered cards showing the command or edit,
+output, and exit code (controlled by `richToolCards` setting). The transcript
+auto-scrolls to newest content. **PageUp** / **PageDown** (or **Ctrl+Up** /
+**Ctrl+Down**) scrolls through history.
 
 ## Screens
 
@@ -404,11 +402,11 @@ Categories: engagement, findings, verification, connect, settings, evolution, au
 
 ### Session persistence
 
-Every conversation is saved to `~/.0sec/console-sessions/<id>.json` with
-owner-only permissions (`0o600`). Each saved session includes the full message
-transcript (model and operator turns), the model and target used, a preview
-(first message, truncated to 120 chars), an optional summary, timestamp, and
-turn count.
+Saved conversations are persisted to `~/.0sec/console-sessions/<id>.json` with
+owner-only permissions (`0o600`). Each saved session includes recorded operator
+and assistant turns, the model and target used, a preview (first message,
+truncated to 120 chars), an optional summary, timestamp, and turn count.
+Interrupted partial assistant generations are not saved.
 
 ### Resume
 
@@ -468,7 +466,7 @@ a saved session's context without the TUI.
 
 ## Transcript vs replay
 
-The console distinguishes two views into past data:
+The console has two views into past data:
 
 | Aspect | **Transcript** | **Replay** |
 |--------|----------------|------------|
@@ -563,9 +561,9 @@ confirmation. A failed save remains explicitly marked as session-only.
 ## Working feedback and live plans
 
 Working feedback distinguishes connecting, thinking, streaming, tool execution,
-and waiting for operator input. A failed startup is **unavailable**, not an
-endless connecting spinner. During a turn, the composer explains that entering
-a follow-up interrupts the current turn and sends the queued message.
+and waiting for operator input. A failed startup is **unavailable**. During a
+turn, entering a follow-up interrupts the current turn and sends the queued
+message.
 
 Enable **Reduce motion** in settings for static activity glyphs, logo, and
 highlights; elapsed time remains visible. Working highlights keep their text

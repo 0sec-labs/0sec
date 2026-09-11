@@ -124,13 +124,11 @@ printf '%s\n' '{"in_scope":["app.example.com"]}' > scope.json
   --scope ./scope.json --runtime api --depth quick --cost-ceiling 2
 ```
 
-Replace `app.example.com` in **both** places with a target you own or have explicit
-permission to test. Scope is not permission by itself. This run requests a quick
-web assessment with a USD 2 ceiling; that is a limit, not an estimated price.
-Model/tool availability and target access determine how far it can get.
+Replace `app.example.com` with a target you own or have explicit permission to
+test. USD 2 is the spending ceiling; actual cost varies.
+Model/tool availability and target access determine coverage.
 
-The CLI reports progress and findings. Review any failures or incomplete
-coverage before interpreting an empty result. [Scan Workflows](/scan-workflows/)
+Review failures and incomplete coverage before interpreting empty results. [Scan Workflows](/scan-workflows/)
 covers saved runs, outputs, resuming, and verification.
 
 With Docker, mount the scope file and pass its container path:
@@ -180,8 +178,8 @@ Treat downloaded code as untrusted and use a disposable environment.
 | `default` | The normal investigation budget. |
 | `deep` | More investigation budget for a deliberate deeper run. |
 
-Depth is not a fixed test count or wall-clock duration. Template limits and agent
-turn budgets differ by execution path; see [Budget Management](/budget-management/).
+Depth sets template limits and agent turn budgets. Test coverage and duration vary
+by target. See [Budget Management](/budget-management/).
 
 ```bash
 0sec scan --target https://app.example.com --mode web --scope ./scope.json --depth deep

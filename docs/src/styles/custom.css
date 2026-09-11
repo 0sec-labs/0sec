@@ -324,6 +324,14 @@ pre {
   padding-block: 1rem 0.5rem;
 }
 
+.docs-preview-label {
+  display: inline-block;
+  margin-bottom: 0.75rem;
+  color: var(--sl-color-gray-2);
+  font-size: var(--sl-text-sm);
+  font-weight: 600;
+}
+
 
 .docs-hero h1 {
   font-size: clamp(2rem, 3vw, 2.75rem);

@@ -3,24 +3,19 @@ title: TypeScript/Rust Boundary
 description: Why 0sec should keep TypeScript for orchestration while moving deterministic engines such as FoxGuard into Rust behind stable contracts.
 ---
 
-0sec should not be rewritten wholesale from TypeScript to Rust right now.
-
-The stronger architecture is a hybrid boundary:
+0sec should use a hybrid TypeScript/Rust architecture:
 
 - **TypeScript owns orchestration.** Agent loops, provider adapters, prompt assembly, event streaming, CLI/cloud contracts, dashboard integration, and JSON-heavy workflows stay where iteration speed is highest.
 - **Rust owns engines.** FoxGuard, deterministic analyzers, parsers, sandboxed runners, SARIF/CBOM-heavy transforms, and other hot or trust-sensitive components move behind stable command-line, JSON, SARIF, or native bindings.
 
-Rust can be a differentiator. A rewrite is not a differentiator by itself.
-
 ## Decision
 
-Keep 0sec's control plane in TypeScript while treating FoxGuard as the first Rust engine in a larger engine boundary.
+Keep 0sec's control plane in TypeScript while treating FoxGuard as the first Rust engine in a larger engine boundary. The next milestone is making FoxGuard's default static-lead role measurable enough that Semgrep can stay as an explicit compatibility path instead of the primary source scanner.
 
-The next milestone is not "port 0sec to Rust." It is "make FoxGuard's default static-lead role measurable enough that Semgrep can stay as an explicit compatibility path instead of the primary source scanner."
+<span id="why-typescript-stays-in-the-control-plane"></span>
+## TypeScript control plane
 
-## Why TypeScript stays in the control plane
-
-0sec's current moat is not raw scanner speed. It is the agent control flow around evidence:
+0sec's differentiator is agent control flow around evidence:
 
 - provider routing and model quirks
 - shell-first execution
@@ -30,11 +25,10 @@ The next milestone is not "port 0sec to Rust." It is "make FoxGuard's default st
 - benchmark loops
 - CLI, docs, and cloud-facing schemas
 
-Those parts change often. They also sit naturally in the Node/TypeScript ecosystem: OpenAI-compatible SDKs, streaming APIs, npm package inspection, YAML/JSON config, dashboard contracts, and fast test iteration.
+Those parts change often and sit naturally in the Node/TypeScript ecosystem: OpenAI-compatible SDKs, streaming APIs, npm package inspection, YAML/JSON config, dashboard contracts, and fast test iteration. A Rust rewrite would rebuild the least differentiated layer while slowing down benchmark and product iteration.
 
-A Rust rewrite would spend a lot of effort rebuilding the least differentiated layer while slowing down benchmark and product iteration.
-
-## Why Rust should grow
+<span id="why-rust-should-grow"></span>
+## Rust components
 
 Rust is valuable where 0sec needs to be fast, deterministic, memory-safe, and easy to trust locally:
 
@@ -91,8 +85,4 @@ Until then, a full rewrite is premature.
 
 ## Product framing
 
-The buyer-facing differentiator is not "written in Rust." It is:
-
 > 0sec combines an autonomous pentest agent with auditable, deterministic local engines.
-
-That is stronger than either a pure TypeScript agent or a pure Rust scanner.

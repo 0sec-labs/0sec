@@ -5,8 +5,8 @@ draft: true
 pagefind: false
 ---
 
-**0cloud is not released.** This is draft planning material, not a supported
-product workflow. Verify it against the released product before publishing.
+**0cloud is not released.** This is draft planning material. It will be verified
+against the released product before publishing.
 
 Scope describes what may be tested. Reachability and credentials describe what
 can be tested. Agree on both before execution; a reachable system is not
@@ -39,8 +39,8 @@ represent every user boundary.
 
 For each identity, record its intended role, tenant, permitted actions, and
 expiry. Describe SSO, MFA, session expiry, IP restrictions, or other controls
-that may prevent automated access. Agree on the supported access path rather
-than disabling security controls broadly.
+that may prevent automated access. Agree on the supported access path. Do not
+disable security controls broadly.
 
 Keep secrets out of public issues and initial contact forms. Arrange credential
 transfer with the team, then revoke temporary access at the agreed end of the

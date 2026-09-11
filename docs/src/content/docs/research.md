@@ -12,10 +12,10 @@ For benchmark scores, methodology, and competitor comparisons, see
 [Benchmarks](/benchmark/). For mechanism docs (agent loop, triage, verification),
 see [Architecture](/architecture/).
 
-**Looking for practical workflows?** Start with
-[Research Workflows](/research-workflows/) — variant hunting, deep review,
+For practical workflows (variant hunting, deep review,
 specification checks, fuzzing, kernel evidence, binary analysis, and the
-distinction between live execution and imported evidence. The pages below
+distinction between live execution and imported evidence), start with
+[Research Workflows](/research-workflows/). The pages below
 document design rationale and experiment history.
 
 ## Essays & rationale
@@ -34,7 +34,8 @@ Shipped agent loop features: early-stop retry, exploit templates, loop detection
 
 Head-to-head testing of gpt-5.4, Kimi K2.5, Qwen3 Coder, DeepSeek, GLM, and free OpenRouter models. Cost, speed, and flag extraction across XBOW challenges.
 
-### [FP Reduction Moat](/research/fp-reduction-moat/)
+<span id="fp-reduction-moat"></span>
+### [False-positive reduction](/research/fp-reduction-moat/)
 
 False-positive reduction stack, measured effects per benchmark slice, layer ordering rationale, and how the dataset and feature foundation supports the shipped runtime layers.
 
@@ -44,13 +45,12 @@ Why 0sec uses TypeScript for orchestration while moving deterministic engines su
 
 ## Self-evolving harnesses
 
-The engineering target is not merely a growing tool list. It is an agent that
-can author and select alternative implementations, activate them during a task,
+The engineering target is an agent that can author and select alternative implementations, activate them during a task,
 retain useful learned skills, and recover when an experiment fails. See
 [Improvement Plane](/improvement-plane/) for implementation status and
 [Architecture](/architecture/#plugin-first-self-evolution) for runtime boundaries.
 
-These sources address complementary mechanisms; they are not interchangeable
+These sources address complementary mechanisms and are not interchangeable
 proofs that 0sec improves autonomously:
 
 | Source | What informs the design | What it does not establish |
@@ -65,23 +65,22 @@ proofs that 0sec improves autonomously:
 | [Chord's lifecycle plan](https://github.com/earendil-works/pi/blob/main/packages/chord/PLANNING.md) | Explicit dependency ordering, stable service handles, and resource ownership | Graph-transactional reload or post-cutover rollback; its plan explicitly excludes both for shape-preserving replacement |
 
 **Cordis and Chord are different projects.** Cordis's formal context discipline
-and Chord's application-neutral service host should not be cited as the same
-implementation. Upstream implementation plans and APIs can change.
+differs from Chord's application-neutral service host. Upstream implementation plans and APIs can change.
 
 **Evo-Harness complements code evolution; it does not implement it.** Its
 natural-language-only learning loop turns failed or negatively reviewed executions
 into candidates carrying a lesson, trigger, evidence, and scope hint. A curator
-chooses ADD, MERGE, REVISE, or SKIP rather than appending every memory; later tasks
+chooses ADD, MERGE, REVISE, or SKIP; later tasks
 receive bounded relevant guidance. General cross-task lessons remain distinct
 from topic-specific procedures. For 0sec, this informs curation within the existing
 skills and [revision-aware hunt memory](/improvement-plane/#revision-aware-codebase-learning),
 not another registry or a claim that this curator is already implemented.
 Retain provenance and scope, invalidate stale codebase knowledge, and evaluate
 future-task usefulness separately from successful memory writes. The paper reports
-three-run averages, including Opus 4.6 on TerminalBench2 improving from 62.92% to
-73.03%; self-generated judgment instead regressed CL-Bench from 29.54% to 27.96%
-and SWE-bench Lite from 63.67% to 61.67%. External feedback matters, richer
-diagnostics are not uniformly better, and solver/evolver pairings can regress.
+three-run averages: Opus 4.6 on TerminalBench2 improved from 62.92% to
+73.03%; self-generated judgment regressed CL-Bench from 29.54% to 27.96%
+and SWE-bench Lite from 63.67% to 61.67%. External feedback is not uniformly
+beneficial, and solver/evolver pairings can regress.
 Neither these aggregate results nor individual retained skills establish causal
 gains in 0sec, executable-code safety, or a free evolution allowance.
 
@@ -123,7 +122,8 @@ Design for an append-only execution journal and an orchestrator that separates w
 Dated, archival records of specific experiments. Kept for transparency and
 auditability — not necessarily current guidance.
 
-### [2026-05-09 Control Flow, Not Prompts](/research/2026-05-09-control-flow-not-prompts/)
+<span id="2026-05-09-control-flow-not-prompts"></span>
+### [2026-05-09 Control-flow audit](/research/2026-05-09-control-flow-not-prompts/)
 
 Audit of the agent loop against the "agents need control flow, not more prompts"
 thesis, and the five deterministic-chokepoint fixes it produced.

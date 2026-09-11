@@ -5,17 +5,14 @@ draft: true
 pagefind: false
 ---
 
-**0cloud is not released and remains in development.** This page is a
-contributor draft, not a product announcement or an onboarding guide.
+**0cloud remains in development.** These unpublished contributor notes cover planned managed testing.
 
 The public documentation currently covers the [0sec CLI](/getting-started/).
 The product's release status belongs in the [roadmap](/roadmap/#0cloud).
 
 ## Draft material
 
-The preparation and evidence-review notes below are retained for future
-documentation work. They do not establish available features, an invite-only
-service, access arrangements, or delivery commitments.
+These planning notes establish no current access or delivery commitments.
 
 - [Engagement preparation](/cloud/getting-started/)
 - [Scope and access considerations](/cloud/scope-and-access/)

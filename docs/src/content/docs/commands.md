@@ -1,6 +1,6 @@
 ---
 title: Commands
-description: Complete 0sec CLI command and subcommand reference, including registered options, aliases, defaults, and workflow boundaries.
+description: 0sec CLI commands, arguments, options, aliases, and registered defaults.
 tableOfContents:
   minHeadingLevel: 2
   maxHeadingLevel: 2
@@ -57,19 +57,19 @@ a handler may resolve configuration or require an explicit value. Inverse
 `--no-*` options show the underlying positive boolean default. See
 [Configuration](/configuration/) for environment and runtime resolution.
 
-- No arguments opens the Bun interactive interface; Node prints installation guidance. See [Console](/console/).
-- `0 -r [id]` / `0 --resume [id]` route to console-session resume; `0 -c` / `0 --continue` reopen the newest console session; `0 -p` / `0 --print` run a single console prompt. These are not scan-resume aliases.
-- Bare targets are routed where recognizable. Prefer an explicit command in automation; ambiguous input is refused rather than guessed.
-- Every command supports `--help`. Options belong to the documented command, not to all commands globally.
-- Scope, provider authentication, target authentication, filesystem access, and execution isolation are different controls. Start with [Scope & Authorization](/scope/).
-- A completed command is not necessarily a reproduced finding. Read each workflow’s outcome semantics; verification exit codes vary by path.
-- A report export, plugin invocation, disclosure action, or queued worker can perform external writes or execute code. Inspect its inputs and permissions before running it.
+- With no arguments, Bun opens the interactive interface and Node prints installation guidance. See [Console](/console/).
+- `0 -r [id]` / `0 --resume [id]` resume a console session; `0 -c` / `0 --continue` reopen the newest conversation; `0 -p` / `0 --print` run one console prompt. Scan sessions use `0sec resume`.
+- Use explicit commands in automation. Recognizable bare targets are routed automatically; ambiguous input is refused.
+- Every command supports `--help`. Its options apply to that command.
+- Scope, provider authentication, target authentication, filesystem access, and execution isolation have independent controls. See [Scope & Authorization](/scope/).
+- Check the workflow's outcome and verification status after a command completes. Verification exit codes vary by path.
+- Before exporting reports, invoking plugins, preparing disclosures, or running queued work, check the inputs and permissions. These actions can write externally or execute code.
 
 ## Interactive & setup
 
 ### console
 
-Interactive chat console — talk to the engine and drive the full tool registry (recon, web, source-scan, variant-hunt, verify, patch-gen) from one prompt.
+Run chat with the full tool registry: recon, web, source-scan, variant-hunt, verify, and patch-gen.
 
 ```text
 0sec console [options]
@@ -99,7 +99,7 @@ Guide: [Read the workflow](/console/).
 
 #### Slash commands
 
-See [Console](/console/) for the actual slash-command surface and readline differences.
+See [Console](/console/) for slash commands and readline support.
 
 #### Keybindings
 
@@ -123,7 +123,7 @@ The canonical settings reference is [Configuration](/configuration/).
 
 ### tui
 
-Open the unified engagement control plane (Bun-only)
+Open the interactive engagement interface (Bun-only).
 
 ```text
 0sec tui
@@ -135,7 +135,7 @@ Guide: [Read the workflow](/console/).
 
 ### dashboard
 
-Run a local mission-control dashboard for scans and findings
+Open a local dashboard for scans and findings.
 
 ```text
 0sec dashboard [options]
@@ -176,7 +176,7 @@ Subcommands: [show](#config-show) · [export](#config-export) · [import](#confi
 
 #### config show
 
-Show the effective config with the source layer (default/global/project) per key
+Show each setting's effective value and source: default, global, or project.
 
 ```text
 0sec config show
@@ -184,7 +184,7 @@ Show the effective config with the source layer (default/global/project) per key
 
 #### config export
 
-Write the effective (or --global) config as shareable JSON (stdout if no file)
+Export effective configuration as JSON. Use `--global` for the global layer. Output goes to stdout unless a file is supplied.
 
 ```text
 0sec config export [options] [file]
@@ -230,7 +230,7 @@ Subcommands: [list](#theme-list) · [install](#theme-install) · [apply](#theme-
 
 #### theme list
 
-List built-in and installed themes (marks the active + default)
+List built-in and installed themes, marking the active and default themes.
 
 ```text
 0sec theme list
@@ -238,7 +238,7 @@ List built-in and installed themes (marks the active + default)
 
 #### theme install
 
-Fetch + validate + write a theme from the configured registry (installs data; runs no code)
+Download and validate a theme from the configured registry. Installation writes data and executes no code.
 
 ```text
 0sec theme install [options] <id>
@@ -271,7 +271,7 @@ Set the console theme (a built-in name or an installed id)
 
 #### theme export
 
-Emit a built-in or installed theme as a shareable theme manifest JSON (stdout if no file)
+Export a built-in or installed theme as a JSON manifest. Output goes to stdout unless a file is supplied.
 
 ```text
 0sec theme export <id> [file]
@@ -319,7 +319,7 @@ Run autonomous pentest against a URL, web app, or MCP server
 0sec scan [options]
 ```
 
-Live HTTP/HTTPS/MCP targets require an engagement policy even when `--require-scope` is omitted. Use [Scope & Authorization](/scope/). `--dry-run` applies only to PR emission; it does **not** prevent the scan from executing. `--race` is for benchmark/CTF workflows. An explicit rate specification can override the conservative scan profile’s fallback rate.
+Live HTTP/HTTPS/MCP targets require an engagement policy, including when `--require-scope` is omitted. See [Scope & Authorization](/scope/). `--dry-run` previews PR emission; the scan still executes. Use `--race` for benchmark/CTF workflows. An explicit rate can override the conservative profile's fallback rate.
 
 Guide: [Read the workflow](/scan-workflows/).
 
@@ -373,19 +373,27 @@ Guide: [Read the workflow](/scan-workflows/).
 | Basic | `{"type":"basic","username":"test-user","password":"test-password"}` |
 | Header | `{"type":"header","name":"X-API-Key","value":"test-key"}` |
 
-#### `--api-spec` — OpenAPI / Swagger import
+<span id="--api-spec--openapi--swagger-import"></span>
 
-Seeds endpoint knowledge; does not replace authorization. See [Recipes](/recipes/).
+#### `--api-spec`: OpenAPI / Swagger import
 
-#### `--race` — best-of-N strategy racing
+Import endpoint knowledge. Target authorization is still required. See [Recipes](/recipes/).
 
-Benchmark/CTF-oriented strategy racing, not a normal live-target audit setting.
+<span id="--race--best-of-n-strategy-racing"></span>
 
-#### `--egats` — Evidence-Gated Attack Tree Search
+#### `--race`: best-of-N strategy racing
 
-Opt-in hypothesis-tree search; not a default verification guarantee. See [Finding Triage](/triage/).
+Use strategy racing for benchmark and CTF targets. Keep it off for normal live-target audits.
 
-#### `--cost-ceiling` — hard spend guardrail
+<span id="--egats--evidence-gated-attack-tree-search"></span>
+
+#### `--egats`: Evidence-Gated Attack Tree Search
+
+Enable hypothesis-tree search. Findings still require verification. See [Finding Triage](/triage/).
+
+<span id="--cost-ceiling--hard-spend-guardrail"></span>
+
+#### `--cost-ceiling`: spend limit
 
 See [Budget Management](/budget-management/) for spend versus turn limits and partial outcomes.
 
@@ -434,7 +442,7 @@ Deep source code security review of a repository
 0sec review [options] <repo>
 ```
 
-Static leads and AI review are not proof of runtime exploitation. `--changed-only` affects static leads/prioritization; it is not a filesystem sandbox around the model. Target credentials are not configured with `review --auth` (that option does not exist).
+Static and AI review produce leads that need runtime verification. `--changed-only` controls static leads and prioritization; model filesystem access is unchanged. `review --auth` is unsupported.
 
 Guide: [Read the workflow](/scan-workflows/).
 
@@ -487,11 +495,11 @@ Guide: [Read the workflow](/scan-workflows/).
 
 #### Review profiles
 
-Profiles select specialized review behavior and prerequisites. See [Scan Workflows](/scan-workflows/) and [Research Workflows](/research-workflows/). Static kernel review does not itself boot a VM or prove a crash.
+Profiles select review behavior and prerequisites. See [Scan Workflows](/scan-workflows/) and [Research Workflows](/research-workflows/). Static kernel review leaves VM execution and crash reproduction to a separate step.
 
 ### file-review
 
-Whole-repo file-level security review: regex scan → coverage gate → batched AI investigation (refusal audit, field repair) → optional static revalidation. Resumable: exit code 3 means a cost/duration limit stopped the run at a checkpoint — re-run the same command to continue.
+Review repository files with regex scanning, a coverage gate, batched AI investigation (refusal audit and field repair), and optional static revalidation. Exit code 3 marks a cost or duration checkpoint; rerun the same command to continue.
 
 ```text
 0sec file-review [options] <target>
@@ -520,7 +528,7 @@ Guide: [Read the workflow](/research-workflows/).
 
 ### deep-review
 
-Seedless DEPTH review of a source tree: enumerate candidate files, re-hunt each through the profile's specialized finder lenses, and gate survivors through the multi-lens verify quorum. Emits LEADS to verify (not confirmed bugs). Exit 0=sweep completed (with or without leads), 2=skipped (no files / over the review cap), 3=error (bad flags / unreadable target / all finders failed).
+Run a seedless DEPTH review: enumerate source files, apply profile-specific finder lenses, and check candidates with a multi-lens verification quorum. Results are leads requiring further verification. Exit 0: sweep completed, with or without leads. Exit 2: skipped because no files qualified or the review cap was exceeded. Exit 3: bad flags, unreadable target, or all finders failed.
 
 ```text
 0sec deep-review [options] <target>
@@ -604,7 +612,7 @@ Resume a previous scan from persisted state
 0sec resume [options] <scanId>
 ```
 
-Resume needs the original persisted state and supported target routing. Authorization and credentials must still be valid; saved state does not grant permission. See [Scan Workflows](/scan-workflows/) before resuming a live target.
+Resume requires the original persisted state, supported target routing, and valid authorization and credentials. See [Scan Workflows](/scan-workflows/) before resuming a live target.
 
 Guide: [Read the workflow](/scan-workflows/).
 
@@ -645,7 +653,7 @@ Browse and manage persisted findings
 0sec findings [options]
 ```
 
-Human triage (`new`, `accepted`, `suppressed`) is independent of verification state. Accepting a finding is an operator decision, not a reproduction or fix-verification step.
+Human triage (`new`, `accepted`, `suppressed`) and verification have independent states. Accepting a finding records the operator's decision; reproduction and fix verification remain separate steps.
 
 Guide: [Read the workflow](/scan-workflows/).
 
@@ -836,13 +844,13 @@ Mark a finding as false positive and auto-create a memory
 
 ### timeline
 
-Export a scan's immutable pipeline-event audit trail as a chronological, MITRE ATT&CK- and ATLAS-tagged forensic record — UTC ISO-8601 timestamps, per-event action summaries, ready to hand to a client SOC for detection cross-referencing.
+Export an immutable scan timeline with UTC ISO-8601 timestamps, action summaries, and MITRE ATT&CK/ATLAS tags for SOC cross-referencing.
 
 ```text
 0sec timeline [options] <scanId>
 ```
 
-The scan ID is looked up in the selected database. For a run-local database, pass `--db-path ~/.0sec/runs/<scan-id>/state.db` (adjust for your state directory). This command does not automatically search all run databases.
+The scan ID is resolved only in the selected database. For run-local storage, pass `--db-path ~/.0sec/runs/<scan-id>/state.db`, adjusted for your state directory.
 
 Guide: [Read the workflow](/engagements/).
 
@@ -866,7 +874,7 @@ Deterministically replay a finding's PoC steps and emit a verification_result JS
 0sec verify [options] [finding]
 ```
 
-Verification has distinct fixture, structured-step, kernel, and bundle paths. Their status schemas and exit codes differ. See [Verification Results](/verification-result/) and [Scan Workflows](/scan-workflows/); never infer a universal verdict from exit code alone.
+Fixture, structured-step, kernel, and bundle verification use different status schemas and exit codes. Read the verdict for the chosen path in [Verification Results](/verification-result/) and [Scan Workflows](/scan-workflows/).
 
 Guide: [Read the workflow](/verification-result/).
 
@@ -937,7 +945,7 @@ Subcommands: [evidence-pack](#disclose-evidence-pack) · [track](#disclose-track
 
 #### disclose evidence-pack
 
-Assemble a DRAFT vendor-notification (what/where/impact/repro/remediation) from a single finding JSON. Emits the mandatory 'DRAFT — NOT SENT' banner. Never sends. #928
+Create a vendor-notification draft from one finding JSON: issue, location, impact, reproduction, and remediation. Includes the mandatory 'DRAFT — NOT SENT' banner and sends nothing. #928
 
 ```text
 0sec disclose evidence-pack [options] <finding.json>
@@ -956,7 +964,7 @@ Assemble a DRAFT vendor-notification (what/where/impact/repro/remediation) from 
 
 #### disclose track
 
-Drive the disclosure tracking state machine. With no --record, opens a fresh draft record; with --record + --to, applies one legal transition. Records intent only — sends nothing.
+Create a disclosure record, or apply one legal transition with `--record` and `--to`. Records intent and sends nothing.
 
 ```text
 0sec disclose track [options] <findingId>
@@ -978,7 +986,7 @@ Drive the disclosure tracking state machine. With no --record, opens a fresh dra
 
 #### disclose review
 
-Render a local reproducibility manifest for a verified finding. The manifest is deterministic, redacted, and safe for human inspection. Never sends or publishes anything.
+Render a deterministic, redacted local reproducibility manifest for human inspection. Sends and publishes nothing.
 
 ```text
 0sec disclose review [options] <finding.json>
@@ -1037,7 +1045,7 @@ Guide: [Read the workflow](/kernel-vm/).
 
 #### Real kernel VM verification
 
-Importing a crash log is not a new reproduction. See [Kernel VM Verification](/kernel-vm/) for execution prerequisites and evidence gates.
+Imported crash logs record a prior run. For a new reproduction, follow [Kernel VM Verification](/kernel-vm/) and its execution and evidence requirements.
 
 ### db
 
@@ -1122,7 +1130,7 @@ Run passive mobile intake; indicators remain hypotheses and only scoped adapters
 
 #### research linux-matrix
 
-Import externally executed vulnerable-vs-patched boot logs; 0sec validates and hashes them but does not execute boots
+Validate and hash vulnerable-vs-patched boot logs from externally executed runs. This command performs no boots.
 
 ```text
 0sec research linux-matrix [options]
@@ -1154,7 +1162,7 @@ Run a supplied Linux kernel reproducer through the shared N-boot evidence gate
 
 ### hunt
 
-Hunt a bug CLASS across a source tree, seeded by a proven fix: generate variant candidate sites from the fix, fan finders out over them, and gate each finding through an adversarial skeptic. Emits LEADS to verify (not confirmed 0-days). Exit 0=lead(s), 1=none, 2=no candidates, 3=error.
+Hunt variants of a bug class using a proven fix. Generate candidate sites, run finders, and check their leads with an adversarial skeptic. Leads require verification before a 0-day claim. Exit 0: leads found; 1: none found; 2: no candidates; 3: error.
 
 ```text
 0sec hunt [options]
@@ -1195,7 +1203,7 @@ Guide: [Read the workflow](/research-workflows/).
 
 ### recency-hunt
 
-Recency flywheel: hunt the kernelCTF freshness window. git-diff a fresh linux-next range → drop non-unpriv-reachable files → classify each diff SEMANTIC (lifetime/refcount/lock change) vs COSMETIC (reshuffle) → run the refined invariant engine on semantic files → adversarial verify → ranked report. Emits LEADS (verify novelty/reachability before disclosure). Exit 0=survivor(s), 1=none, 2=empty window, 3=error.
+Hunt the kernelCTF freshness window in a linux-next diff. Exclude files unreachable by unprivileged users, classify changes as semantic (lifetime, refcount, locking) or cosmetic, then run the invariant engine and adversarial verification on semantic changes. The ranked leads require novelty and reachability checks before disclosure. Exit 0: survivors; 1: none; 2: empty window; 3: error.
 
 ```text
 0sec recency-hunt [options]
@@ -1229,7 +1237,7 @@ Guide: [Read the workflow](/research-workflows/).
 
 ### assumption-hunt
 
-Seedless ASSUMPTION-MINING hunt: mine the implicit relied-on preconditions each function makes, cross-check enforced-vs-relied (no LLM), then scan for reachable callers that reach a relied-on subject WITHOUT establishing its precondition. Emits CANDIDATES to disprove (not confirmed bugs). Exit 0 = ran (with or without a candidate), 3 = error.
+Mine implicit function preconditions without a seed. Compare relied-on and enforced conditions without an LLM, then find reachable callers that omit a required precondition. Output contains candidates to disprove. Exit 0: completed, with or without candidates; 3: error.
 
 ```text
 0sec assumption-hunt [options] <source-root>
@@ -1268,7 +1276,7 @@ Guide: [Read the workflow](/research-workflows/).
 
 ### memsafety
 
-Userspace / Rust memory-safety scan (Monty-mode): clone a source tree, build a fuzz/sanitizer harness, run the closed fuzz loop, and emit reproduced-memcorruption findings. Exit 0=loop completed (with or without crashes), 2=skipped (no build system detected or execution prerequisite unavailable), 3=error (bad flags / unreadable target).
+Scan userspace or Rust code for memory-safety faults in Monty mode. Clone the source, build a fuzz/sanitizer harness, run the fuzz loop, and report reproduced memory corruption. Exit 0: loop completed, with or without crashes; 2: skipped because the build system or execution prerequisite is unavailable; 3: bad flags or unreadable target.
 
 ```text
 0sec memsafety [options] <source>
@@ -1363,7 +1371,7 @@ Run foxguard-backed kernel advisory variant hunting
 
 ### exploit
 
-Run the weaponization escalation ladder for a confirmed kernel memory-safety finding in the kernel VM (ADR-055 Phase 1). Default-safe: a no-op (exit 2) when no kernel-VM artifacts are present. With --climb, drive the REAL verify→weaponization chain runner and loop genuine boots until the deterministic oracle credits root.
+Run the kernel-VM escalation ladder for a confirmed memory-safety finding (ADR-055 Phase 1). Missing VM artifacts produce exit 2 with no execution. With `--climb`, run the verification and weaponization chain through repeated boots until the deterministic oracle observes root.
 
 ```text
 0sec exploit [options]
@@ -1398,7 +1406,7 @@ Guide: [Read the workflow](/research-workflows/).
 
 ### xnu-fuzz
 
-IOKit user-client fuzzer (dynamic sibling to the xnu-re review profile). Models the IOExternalMethodDispatch2022 gate per user client, generates gate-passing + structure-aware inputs, and plans the disposable macOS-VM run lane.
+Model each IOKit user client's `IOExternalMethodDispatch2022` gate, generate gate-passing structured inputs, and plan a disposable macOS-VM fuzzing run. Complements the `xnu-re` review profile.
 
 ```text
 0sec xnu-fuzz
@@ -1441,7 +1449,7 @@ Subcommands: [enumerate](#xnu-fuzz-enumerate) · [gen](#xnu-fuzz-gen) · [harnes
 
 #### xnu-fuzz harness-plan
 
-§3: print what a single macOS-VM shard run needs to actually run
+Print the execution requirements for one macOS-VM shard.
 
 ```text
 0sec xnu-fuzz harness-plan [options]
@@ -1478,7 +1486,7 @@ Guide: [Read the workflow](/research-workflows/).
 
 ### protocol-check
 
-Tier-1 HTTP spec-vs-implementation conformance differential (issue #972). The unified LLM hypothesizes where an implementation diverges from a spec excerpt; each exercise is SENT at a real target and a deterministic oracle confirms only concrete MUST-level violations.
+Check Tier-1 HTTP conformance against a spec excerpt (issue #972). The LLM proposes mismatches, exercises run against the real target, and a deterministic oracle confirms MUST-level violations.
 
 ```text
 0sec protocol-check [options]
@@ -1506,7 +1514,7 @@ Protocol/spec differential-hunting research commands.
 0sec specdrift
 ```
 
-Protocol/spec differential research interface. Consult the source-specific prerequisites and evidence limits in [Research Workflows](/research-workflows/).
+See [Research Workflows](/research-workflows/) for prerequisites and evidence limits.
 
 Guide: [Read the workflow](/research-workflows/).
 
@@ -1621,7 +1629,7 @@ Guide: [Read the workflow](/research-workflows/).
 
 ### bench
 
-A/B variant tournament + CI regression gate over the labeled corpus (#656)
+Run A/B variant tournaments and a CI regression gate over the labeled corpus (#656).
 
 ```text
 0sec bench
@@ -1874,7 +1882,7 @@ Subcommands: [capture](#evolve-feedback-capture) · [approve](#evolve-feedback-a
 
 #### evolve feedback capture
 
-Capture an evidence-backed observation from a JSON file; does not confirm a finding
+Capture an evidence-backed observation from JSON. Finding verification remains unchanged.
 
 ```text
 0sec evolve feedback capture [options]
@@ -1932,7 +1940,7 @@ Show retained observations and their approval/processing status
 
 ### recon
 
-Enumerate a domain's attack surface — subdomains (passive CT/DNS, plus active DNS brute-force with --active), endpoints, OpenAPI/Swagger docs, and MCP servers — and emit a deduped asset inventory consumable as discovered_assets. Partial #769.
+Enumerate subdomains through passive CT/DNS, endpoints, OpenAPI/Swagger docs, and MCP servers. `--active` adds DNS brute force. Emit a deduplicated inventory for `discovered_assets`. Partial #769.
 
 ```text
 0sec recon [options] <domain>
@@ -1953,7 +1961,7 @@ Guide: [Read the workflow](/research-workflows/).
 
 ### js-recon
 
-Fetch the JS a live site serves and mine each bundle for endpoints/API base URLs + embedded secrets (redacted). Scope-gated, deny-by-default. #927
+Fetch a site's JavaScript bundles and extract endpoints, API base URLs, and redacted embedded secrets. Requires scope; access is denied by default. #927
 
 ```text
 0sec js-recon [options] <url>
@@ -1974,7 +1982,7 @@ Guide: [Read the workflow](/research-workflows/).
 
 ### npm-discovery
 
-npm-ecosystem dynamic bug discovery via the pluggable detector registry (SSPP fuzz / validation read-stability TOCTOU / SSRF parser-diff). Confirmed only on observed runtime consequence.
+Run registered npm-package detectors for SSPP fuzzing, validation read-stability TOCTOU, and SSRF parser differences. Confirmation requires an observed runtime consequence.
 
 ```text
 0sec npm-discovery
@@ -2017,7 +2025,7 @@ Sweep a package worklist with the detectors and print confirmed findings.
 
 ### identity
 
-Read-only posture assessment of a Microsoft Entra ID (Azure AD) tenant — privileged role assignments, conditional-access coverage, app registrations, service principals, and federated-domain trust. The Graph access token is read from the 0SEC_GRAPH_ACCESS_TOKEN environment variable; it is never accepted as an argument.
+Assess an Entra ID (Azure AD) tenant's privileged roles, conditional-access coverage, app registrations, service principals, and federated-domain trust. Read-only. Supply the Graph token through `0SEC_GRAPH_ACCESS_TOKEN`; command-line tokens are refused.
 
 ```text
 0sec identity [options]
@@ -2034,7 +2042,7 @@ Guide: [Read the workflow](/engagements/).
 
 ### adgraph
 
-Offline Active Directory attack-path analysis over BloodHound CE / SharpHound JSON already on disk — paths to Domain Admin, kerberoastable principals, unconstrained delegation, DCSync rights, ACL abuse chains, and ADCS escalation. Reads files only: never collects, never authenticates, never touches the network.
+Analyze existing BloodHound CE / SharpHound JSON for paths to Domain Admin, kerberoastable principals, unconstrained delegation, DCSync rights, ACL abuse chains, and ADCS escalation. Reads local files only, with no collection, authentication, or network access.
 
 ```text
 0sec adgraph [options]
@@ -2051,7 +2059,7 @@ Guide: [Read the workflow](/engagements/).
 
 ### entragraph
 
-Offline Microsoft Entra ID attack-path analysis over an AzureHound export already on disk — paths to Global Administrator, service-principal escalation, consent-grant abuse, owner chains, and guest escalation. Reads files only: never collects, never authenticates, never touches the network.
+Analyze an existing AzureHound export for paths to Global Administrator, service-principal escalation, consent-grant abuse, owner chains, and guest escalation. Reads local files only, with no collection, authentication, or network access.
 
 ```text
 0sec entragraph [options]
@@ -2069,13 +2077,13 @@ Guide: [Read the workflow](/engagements/).
 
 ### cloud
 
-Read-only cloud-surface probes (S3 public-access / takeover, AWS credential validation). Gated behind 0SEC_FEATURE_CLOUD_SURFACE + an engagement scope, deny-by-default. #925
+Probe S3 public access and takeover risks, or validate AWS credentials. Read-only; requires `0SEC_FEATURE_CLOUD_SURFACE` and an engagement scope. Access is denied by default. #925
 
 ```text
 0sec cloud
 ```
 
-This command probes cloud infrastructure under an engagement scope. It is **not** the managed 0sec Cloud product or a way to sign up for that service. For managed engagements use [0cloud](/roadmap/#0cloud).
+These commands inspect authorized cloud infrastructure. Managed testing is documented under [0cloud](/roadmap/#0cloud); 0sec Cloud account setup uses the [connection guide](/getting-started/#hosted-models-draft).
 
 Guide: [Read the workflow](/research-workflows/).
 
@@ -2083,7 +2091,7 @@ Subcommands: [s3-probe](#cloud-s3-probe) · [validate-creds](#cloud-validate-cre
 
 #### cloud s3-probe
 
-Anonymously probe one or more S3 buckets for public listability + orphaned-bucket takeover. Read-only, no credentials sent.
+Probe S3 buckets anonymously for public listing and orphaned-bucket takeover. Read-only; sends no credentials.
 
 ```text
 0sec cloud s3-probe [options] <bucket...>
@@ -2102,7 +2110,7 @@ Anonymously probe one or more S3 buckets for public listability + orphaned-bucke
 
 #### cloud validate-creds
 
-Validate a harvested AWS credential READ-ONLY via sts:GetCallerIdentity + read-only over-privilege probes. No mutation, ever.
+Validate an AWS credential with `sts:GetCallerIdentity` and read-only over-privilege probes. Makes no changes.
 
 ```text
 0sec cloud validate-creds [options]
@@ -2301,7 +2309,7 @@ Run 0sec's MCP stdio server for live target interaction tools
 0sec mcp-server [options]
 ```
 
-Use an explicit scope and a narrow `--tools` allowlist for an authorized target. The external MCP client owns model selection. This stdio server is not a replacement for OS isolation.
+Set an explicit scope and narrow `--tools` allowlist. The external MCP client selects the model; configure OS isolation separately.
 
 Guide: [Read the workflow](/integrations/).
 
@@ -2320,15 +2328,13 @@ Guide: [Read the workflow](/integrations/).
 
 ### plugin
 
-Install, enable, and inspect third-party plugins (scaffold; no marketplace ships).
-Model-authored executable plugins (self-extension) are a separate mechanism —
-see [Integrations](/integrations/#plugin-system) for both.
+Install, enable, and inspect third-party plugins. This scaffold has no public marketplace. For model-authored executable plugins and third-party setup, see [Integrations](/integrations/#plugin-system).
 
 ```text
 0sec plugin
 ```
 
-Installing, enabling, and invoking are separate actions. Plugin code is untrusted; declared capabilities are not an OS sandbox. Do not assume a populated public marketplace exists.
+Installation, project enablement, and invocation are separate steps. Treat plugin code as untrusted and provide OS isolation separately from capability declarations.
 
 Guide: [Read the workflow](/integrations/).
 
@@ -2372,7 +2378,7 @@ List everything in the configured registry
 
 #### plugin install
 
-Fetch + validate + write a plugin's files (installs; does NOT enable, runs no code)
+Download, validate, and write plugin files. Installation leaves the plugin disabled and executes no code.
 
 ```text
 0sec plugin install [options] <id>
@@ -2388,7 +2394,7 @@ Fetch + validate + write a plugin's files (installs; does NOT enable, runs no co
 
 #### plugin enable
 
-Enable an installed plugin FOR THIS PROJECT, granting its capabilities
+Enable an installed plugin for this project and grant its capabilities.
 
 ```text
 0sec plugin enable <id>
@@ -2424,7 +2430,7 @@ Show an installed plugin's manifest, capabilities, and enablement state
 
 #### plugin run
 
-Invoke a tool of an ENABLED plugin over the protocol (spawns the plugin; effectful tools require --yes). Args: key=value pairs and/or --json '<obj>'.
+Spawn an enabled plugin and invoke its tool. Effectful tools require `--yes`. Pass arguments as `key=value` pairs, `--json '<obj>'`, or both.
 
 ```text
 0sec plugin run [options] <id> [tool] [pairs...]
@@ -2450,7 +2456,7 @@ Run the autonomous verification worker against persisted queued case work
 0sec orchestrate [options]
 ```
 
-This executes queued case work in the selected database. It is not a generic multi-target scan launcher. Review the queued cases, credentials, and side-effect permissions first.
+Runs queued cases from the selected database. Review their credentials and side-effect permissions first. For multi-target scans, use the scan workflows.
 
 Guide: [Read the workflow](/integrations/).
 
@@ -2552,13 +2558,13 @@ Write a program's structured_scopes to ~/.0sec/scopes/<handle>.json
 
 ### auth
 
-0sec-cloud authentication
+Authenticate with a configured 0sec control plane.
 
 ```text
 0sec auth
 ```
 
-These credentials are for a configured managed control plane, not model-provider authentication. Browser login requires a compatible server-side flow and authorized access; the presence of this CLI command does not establish public service availability. See [0cloud](/roadmap/#0cloud).
+These credentials grant access to a managed control plane. Model-provider credentials are configured separately. Browser login requires authorized access and a compatible server-side flow; public availability remains gated. See [0cloud](/roadmap/#0cloud).
 
 Guide: [Read the workflow](/api-keys/).
 
@@ -2566,7 +2572,7 @@ Subcommands: [login](#auth-login) · [logout](#auth-logout) · [status](#auth-st
 
 #### auth login
 
-Log in to 0sec-cloud (opens browser; --token to paste directly)
+Log in through the browser, or supply a credential with `--token`.
 
 ```text
 0sec auth login [options]
@@ -2587,7 +2593,7 @@ Delete ~/.0sec/cloud.env
 
 #### auth status
 
-Verify 0sec-cloud credentials against /health
+Check configured control-plane credentials against `/health`.
 
 ```text
 0sec auth status
@@ -2595,11 +2601,7 @@ Verify 0sec-cloud credentials against /health
 
 ## XBOW benchmark runner
 
-The benchmark workspace is separate from `0sec bench`. Its runner and measured
-results are documented in [Benchmarks](/benchmark/) and [Methodology](/methodology/).
-Use `pnpm --filter @0sec/benchmark xbow --help` from a source checkout to inspect
-runner options. Benchmark execution needs its own target environments and budget;
-it is not a quick installation check.
+The XBOW runner lives in the benchmark workspace. See [Benchmarks](/benchmark/) and [Methodology](/methodology/) for measured results. From a source checkout, run `pnpm --filter @0sec/benchmark xbow --help` for options. Execution requires dedicated target environments and a benchmark budget.
 
 ## Reference sources
 

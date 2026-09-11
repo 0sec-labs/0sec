@@ -1,19 +1,22 @@
 ---
 title: Finding Triage ML
-description: Research synthesis — ML-based finding triage to maximize accuracy of vulnerability classification.
+description: Triage research, implemented gates, planned classifiers, and measured ablation results.
 ---
 
 ## Problem
 
-0sec's agent produces findings (potential vulnerabilities). Some are real, some are false positives. Currently a "blind verify agent" (full LLM call) re-tests each finding independently. This works but is a single-shot binary judgment. We want to maximize accuracy — catch every real vulnerability while eliminating false positives.
+Independent verification re-tests candidate findings. This design investigates
+how features, classifiers, and additional checks affect recall, false positives,
+and cost.
 
-> **Status (April 2026):** Every layer of the design below has shipped. See the [FP Reduction Moat](/research/fp-reduction-moat/) page for the full stack and the expected FP reduction from each technique.
+> **April 2026 record:** implementation and planning coexist below. Neural fusion
+> and adversarial debate remain proposals. See [measured triage results](/research/fp-reduction-moat/).
 
 ## Research Landscape (April 2026)
 
 ### What production systems do
 
-Every production security triage system that discloses its architecture uses **LLM pipelines with structured decomposition**, not fine-tuned small models:
+The disclosed systems below use structured LLM triage pipelines:
 
 | System | Architecture | FP Reduction | Open-Source |
 |--------|-------------|-------------|-------------|
@@ -23,7 +26,7 @@ Every production security triage system that discloses its architecture uses **L
 | Snyk DeepCode AI | Symbolic AI + multiple fine-tuned models | 84% MTTR reduction | No |
 | GitHub Copilot Autofix | GPT-5.1, SARIF + code context | Fix generation, not triage | No |
 
-**Key insight from GitHub Security Lab:** The differentiator is **prompt specificity** — their prompts encode 200+ lines of domain-specific edge cases per vulnerability class. Generic "is this a real vulnerability?" prompts don't work well.
+GitHub Security Lab uses vulnerability-specific prompts with over 200 lines of edge cases per class.
 
 ### What VulnBERT teaches us (hybrid approach)
 
@@ -36,7 +39,7 @@ VulnBERT (Guanni Qu, Pebblebed Ventures) predicts vulnerability-introducing comm
 - CodeBERT embeddings alone: **84.3% recall / 4.2% FPR**
 - Hybrid (features + CodeBERT): **92.2% recall / 1.2% FPR**
 
-**The critical insight:** "Neither neural networks nor hand-crafted rules alone achieve the best results. The combination does." — Guanni Qu
+The hybrid achieved the best reported result in that ablation.
 
 ### Open models with public weights
 
@@ -55,7 +58,7 @@ VulnBERT (Guanni Qu, Pebblebed Ventures) predicts vulnerability-introducing comm
 
 ## Our Approach: Hybrid Triage Model
 
-Inspired by VulnBERT's hybrid architecture and GitHub Security Lab's structured triage pipelines. **All layers below now ship.** File paths identify the exact module in the 0sec monorepo.
+The design combines VulnBERT-style classification and structured LLM verification. Implemented components have source pointers; planned components are identified separately.
 
 ### Layer 1: Feature Extraction (45 handcrafted features) — SHIPPED
 
@@ -126,21 +129,24 @@ A blocklist-driven filter that rejects findings where the "vulnerability" is sim
 
 ### Layer 1.75: Reachability Gate ("Endor Labs moat") — SHIPPED
 
-For every finding, check whether the vulnerable sink is actually reachable from an application entry point (HTTP handler, CLI main, user-facing API). Dead code and test-only paths are not exploitable. Endor Labs' 95% FP elimination rate depends on their proprietary "Code API" for this signal; 0sec implements an open-source approximation.
+Reachability checks assess paths from application entry points to vulnerable sinks. Endor Labs reports 95% false-positive elimination with its proprietary Code API; 0sec's pattern-based implementation has separate evidence.
 
 **Implementation:** `packages/core/src/triage/reachability.ts` — zero-dependency grep/pattern-based first pass. Conservative: when uncertain it returns `reachable: true` with low confidence so the rest of the pipeline still runs. Public API: `checkReachability(finding, repoPath)` returning a `ReachabilityResult`.
 
 ### Layer 1.9: Per-Class Oracles — SHIPPED
 
-Deterministic, category-specific exploit oracles: SQLi, reflected XSS, SSRF, RCE, path traversal, IDOR. Each oracle attempts to **prove** the exploit actually works — SQL error, timing delta, rendered alert with a unique token, `/etc/passwd` exfiltration, SSRF callback to a local HTTP server — and only flags a finding as `verified` when concrete evidence is observed. This is the "no exploit, no report" principle.
+Category-specific oracles check SQLi, reflected XSS, SSRF, RCE, path traversal, and IDOR using observed signals: SQL errors, timing differences, tokenized browser alerts, file contents, or callback requests.
 
 **Implementation:** `packages/core/src/triage/oracles.ts` plus the dispatcher `verifyOracleByCategory(finding, target)`. Oracles bypass the LLM entirely on the happy path; the LLM verify pipeline is the fallback.
 
 ### Layer 1.95: Multi-Modal Agreement (foxguard × 0sec) — SHIPPED
 
-Cross-validate every 0sec finding against [foxguard](https://github.com/0sec-labs/foxguard), the Rust pattern scanner. If foxguard fires on the same file (and ideally the same category) → strong signal the finding is real. If foxguard scanned the file but was silent → likely false positive. This is the open-source mirror of Endor Labs' "neural + rules must agree" architecture.
+The optional [foxguard](https://github.com/0sec-labs/foxguard) check adds evidence
+from a second scanner on the same tree. Agreement and silence feed the triage
+decision; either outcome still needs interpretation.
 
-**Implementation:** `packages/core/src/triage/multi-modal.ts` — `checkMultiModalAgreement`, `fuseTriageSignals`, `parseFoxguardSarif`, `detectFoxguard`. We don't know of another open-source agent that runs a second, independent scanner for cross-validation.
+Implementation: `packages/core/src/triage/multi-modal.ts`, exposing
+`checkMultiModalAgreement`, `fuseTriageSignals`, `parseFoxguardSarif`, and `detectFoxguard`.
 
 ### Layer 2: Neural Classification (CodeBERT)
 
@@ -176,7 +182,7 @@ Because LLM sampling is non-deterministic, any single run of the structured veri
 
 ### Layer 4.75: PoV (Proof-of-Vulnerability) Gate — SHIPPED
 
-Empirical ground truth from "All You Need Is A Fuzzing Brain" (arXiv:2509.07225): if the agent cannot build a working PoC in N turns, the finding is almost certainly a false positive. A narrowly-scoped mini agent loop runs with a minimal `bash` + `http_request` tool set and must produce a concrete executable exploit whose response contains category-specific proof. No PoV → severity downgrade to `info`, `triageNote = "no_pov"`.
+Following *All You Need Is A Fuzzing Brain* (arXiv:2509.07225), a scoped `bash` / `http_request` loop attempts a working PoC. Missing PoV downgrades severity to `info` and sets `triageNote = "no_pov"`.
 
 **Implementation:** `packages/core/src/triage/pov-gate.ts` — `generatePov` and `judgePovEvidence`. Feature flag: `0SEC_FEATURE_POV_GATE`.
 
@@ -186,9 +192,10 @@ Per-target persistent FP context that learns from human triage decisions. When a
 
 **Implementation:** `packages/core/src/triage/memories.ts` — `MemoryStore`, `scoreMemory`, `inferPackage`. Feature flag: `0SEC_FEATURE_TRIAGE_MEMORIES`.
 
-### Layer 6: Adversarial Debate — SHIPPED
+<span id="layer-6-adversarial-debate--shipped"></span>
+### Layer 6: Adversarial debate (planned)
 
-Prosecutor vs. defender agents debate each finding with fresh contexts, and a skeptical judge picks the winner. Based on Anthropic's debate paper (arXiv:2402.06782). The point is error decorrelation: single-pass verify shares priors with the discovery agent, whereas explicitly opposing debaters have uncorrelated error modes.
+The proposed prosecutor/defender design uses fresh contexts and a judge, inspired by arXiv:2402.06782. Reduced error correlation would require measurement.
 
 **Status: planned, not implemented.** There is no `triage/adversarial.ts` and no `0SEC_FEATURE_DEBATE` flag in the engine today. The closest shipped mechanism is the cross-family refuter (`stages/hunt-cross-family.ts`), which pursues the same error-decorrelation goal by forcing the refute pass onto a different model family than the finder.
 
@@ -201,9 +208,10 @@ Prosecutor vs. defender agents debate each finding with fresh contexts, and a sk
 
 ### Target Performance
 
-> **Update 2026-04-11 — the aspirational table below was contradicted by measurement.** The 21-run ablation posted on [0sec#72](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229956469) and documented on the [FP Reduction Moat](/research/fp-reduction-moat/) page shows the real effect is mode- and slice-dependent, not a monotonic 50% → under 5% progression. See that page for the measured numbers across XBOW white-box, XBOW black-box, and npm-bench.
+> **Measured update, 2026-04-11:** the [21-run ablation](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229956469) found mode- and slice-dependent effects. See [results](/research/fp-reduction-moat/).
 
-The stack was *designed* so each layer strips out a fraction of the false positives that survived the previous layer. The aspirational table below was derived from published reference numbers for SAST systems (Endor Labs, Semgrep Assistant) evaluated on differentially-labeled static findings — a different problem from agent-generated findings on exploitation benchmarks. It is preserved here only as design intent:
+The table below preserves historical design targets drawn from SAST references.
+It contains no measured 0sec performance:
 
 | Metric (design target, NOT measured) | Features only (est.) | + Oracles + Reachability | + Consensus LLM verify | + Memories + PoV gate |
 |--------|---------------------|--------------------------|------------------------|------------------------|
@@ -213,11 +221,11 @@ The stack was *designed* so each layer strips out a fraction of the false positi
 | Cost | $0 | $0 | ~$0.05/finding | ~$0.10/finding |
 
 The actual measured effect on 0sec (2026-04-11 ablation, gpt-5.4):
-- XBOW white-box @ limit=50: `moat` profile cuts findings 63% (67 → 25) at the cost of 2 flags (44 → 41) and 1.6× $/flag vs `no-triage`. Recall stays at ~82%.
-- XBOW black-box @ limit=25: `moat` strictly dominates `none` — more flags (19 vs 18), 52% fewer findings (14 vs 27), cheaper per flag ($0.53 vs $0.76).
-- npm-bench (81 packages): 100% TPR across every profile. `default` and `moat` are F1-identical (0.956). The moat layers add zero FPR reduction on top of default; the FPR increase from `none` (0.11) to `default` (0.19) comes entirely from the stable features (early-stop, script templates, progress handoff), not from the moat layers.
+- XBOW white-box @ limit=50: `moat` reduced findings 63% (67 → 25), with 41/50 flags (82%) versus `none` at 43/50 and `no-triage` at 44/50. Cost per flag was $0.53 versus `none` at $0.33 (1.6×).
+- XBOW black-box @ limit=25: `moat` produced 19 versus 18 flags, 14 versus 27 findings (48% fewer), and $0.53 versus $0.76 per flag.
+- npm-bench (81 packages): TPR was 100% across profiles; `default` and `moat` matched at F1=0.956. FPR rose from 0.11 (`none`) to 0.19 (`default`) in batch 1. Batch-2 variation prevents confident subsystem attribution.
 
-The honest end-to-end story is *not* "50% → under 5% FPR." It is "depending on mode and slice, the moat is either a Pareto tradeoff you choose to take (white-box XBOW) or a strict dominance result (black-box XBOW) or a no-op (npm-bench). A static feature-flag system applied at the scan level can't optimize all three slices simultaneously — which is the direct motivation for the [learned dynamic routing](https://github.com/0sec-labs/0sec/issues/113) paper."
+The measured tradeoffs motivate [learned dynamic routing](https://github.com/0sec-labs/0sec/issues/113): preserve recall while selecting useful layers per finding and benchmark slice.
 
 ## Related Work
 

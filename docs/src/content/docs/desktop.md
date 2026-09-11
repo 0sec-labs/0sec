@@ -5,20 +5,19 @@ draft: true
 pagefind: false
 ---
 
-**Desktop is not released and is under construction.** These notes are for
-contributors testing development builds, not installation instructions for a
-released app. Packaging support does not imply downloadable or signed releases.
+**Desktop remains in development.** These contributor notes cover source builds;
+public downloadable and signed releases remain unavailable.
 
 The 0sec desktop is an [Electron](https://www.electronjs.org/) application
 (v42, Chromium-based) that provides a native windowed control plane for the
 0sec harness. Its dedicated React renderer lives in
 `packages/desktop/src/renderer/`, with its own `desktop.html` build entry.
-The application manages a **sidecar** — a compiled 0sec CLI process that
+The application manages a **sidecar**: a compiled 0sec CLI process that
 handles all engine communication behind a security boundary.
 
-The renderer is still web technology, not SwiftUI. On macOS it uses real window
-controls, native menus, a directory picker, and sidebar material, with system
-fonts and light/dark appearance. The operations dashboard remains a separate view.
+The renderer uses web technology. On macOS, native window controls, menus, a
+directory picker, and sidebar material use system fonts and light/dark
+appearance. The operations dashboard is a separate view.
 
 ## Starting the desktop
 
@@ -64,7 +63,7 @@ is run from the desktop environment or launcher.
 ## Sidecar security boundary
 
 The desktop separates the renderer (web UI) from engine operations through a
-**sidecar** — the 0sec CLI binary itself, spawned as a child process.
+**sidecar**: the 0sec CLI binary itself, spawned as a child process.
 
 ```
 ┌─────────────────────────────────────┐
@@ -230,12 +229,31 @@ sessions or toggle the sidebar twice.
    copyable code blocks, collapsible reasoning, and expandable tool activity.
    **Stop** cancels the active turn. Scrolling back preserves your position;
    **Latest** resumes following. Drafts and renamed titles stay with their session.
-5. The inspector exposes context, activity, and evidence; approval cards remain
-   in the conversation. **Settings** provides system/light/dark appearance and
-   OpenAI Codex device sign-in. Codex authentication is not 0cloud access.
-   **Operations** opens the separate findings-and-runs dashboard.
+5. The inspector shows context, activity, and evidence. Approval cards stay in
+   chat. **Settings** controls appearance; **Connection** offers ChatGPT Codex
+   subscription sign-in. Configure API-key providers through CLI or environment.
+   **Operations** opens the findings-and-runs dashboard.
 6. The renderer has no general Node.js or Electron API. Engine work goes through
    the loopback sidecar. External documentation links open in the system browser.
+
+### Local candidate checks
+
+The compiled dashboard browser candidate uses `ConsoleSession.harness` and its
+shared catalog for live views, commands, settings, and workspace trust.
+Host ESM trust requires separate acknowledgement from self-extension.
+
+An isolated loopback fixture verified persistent chat, Unicode drafts across
+Settings, explicit prompt staging, stale frame/nonce/generation/provider
+rejection, revocation, and final/delta reply reconciliation. Reload added no model
+calls. Empty-HOME startup retained the draft and reported missing credentials.
+
+The browser used a backend built before the later shutdown repairs. Explicitly
+delivered disposal callbacks were idempotent; callback delivery during automatic
+frame removal remains best effort.
+
+Cloud sign-in, in-renderer API-key entry, and provider/model pickers remain
+unimplemented. Provider authentication, hosted payment/inference, native
+installation, and release qualification remain pending.
 
 ## Platforms and build requirements
 

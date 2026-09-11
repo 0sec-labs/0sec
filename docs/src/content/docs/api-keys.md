@@ -28,9 +28,9 @@ provider, tokens, billed amount, cancellation and settlement status.
 There is no `0sec usage` command.
 
 Autumn reserves credit before dispatch and settles measured usage afterward.
-Login adds no credit; checkout initiation isn't payment. Funding uses configured
-top-ups or allowances. An unfunded wallet rejects requests rather than accruing
-postpaid overage.
+Login adds no credit. Funding requires confirmed payment through configured
+top-ups or allowances. Requests exceeding available reserve credit are rejected;
+postpaid overage is unavailable.
 
 | Endpoint on the selected cloud host | Required token scope | Purpose |
 | --- | --- | --- |
@@ -120,7 +120,8 @@ env 0SEC_SELECTED_PROVIDER=openai 0SEC_MODEL=gpt-6-astra \
 Gemini still requires a gateway: use `opencode/gemini-3.8-flash` with OpenCode
 Zen, or the gateway's documented model id with OpenRouter.
 
-Prices are estimates, not invoices. [Astra's published base rates](https://developers.openai.com/api/docs/models/gpt-6-astra)
+Displayed prices are estimates; reconcile charges against provider invoices.
+[Astra's published base rates](https://developers.openai.com/api/docs/models/gpt-6-astra)
 apply through 272K input tokens; longer requests and cache writes cost more.
 [DeepSeek Flash](https://api-docs.deepseek.com/quick_start/pricing) is estimated
 at peak rates ($0.30 input / $1.20 output per million tokens); off-peak is half
@@ -143,8 +144,7 @@ environment variables in this order. The **first variable found** wins:
 10. **OpenCode Zen** — `OPENCODE_API_KEY`
 11. **Anthropic** — `ANTHROPIC_API_KEY`
 
-With no key at all, the runtime defaults to Anthropic (consistently emitting a
-helpful failure message — it never silently produces zero findings).
+Without a key, the runtime selects Anthropic and reports a missing-credential failure.
 
 **Two things override this fallback chain:**
 - A `--model` (or `0SEC_MODEL`) value that maps to a specific provider — see
@@ -172,9 +172,8 @@ when more than one credential is present.
 | `deepseek-flash`, `deepseek-v4-flash` | DeepSeek | Responses wire; V4.1 uses `deepseek-flash` |
 | Azure Foundry deployment ids | Azure | Chat completions or Responses |
 
-Without an explicit model, 0sec picks an available fallback via the [credential
-priority](#credential-priority) chain. Pin a model rather than relying on ambient
-credential order.
+Without an explicit model, 0sec follows the [credential priority](#credential-priority)
+chain. Pin a model for predictable selection.
 
 ### Free OpenRouter model
 
@@ -256,11 +255,10 @@ Path precedence for the auth file:
 2. `0SEC_CODEX_AUTH_JSON_PATH` (deprecated — honoured as a fallback).
 3. `~/.codex/auth.json` (the default when neither override is set).
 
-The CLI bootstrap additionally runs `maybeLoadCodexAuth` at startup, which
-loads the auth file into `0SEC_CHATGPT_*` env vars if no such token is already
-present. This is a local-dev convenience: a logged-in `codex` session wins over
-stale `AZURE_OPENAI_API_KEY` / `OPENAI_API_KEY` left in a dev shell, so
-`0sec review` "just works" on the subscription backend.
+The CLI bootstrap runs `maybeLoadCodexAuth` at startup, loading the auth file
+into `0SEC_CHATGPT_*` env vars if no token is present. A logged-in `codex`
+session takes priority over stale `AZURE_OPENAI_API_KEY` / `OPENAI_API_KEY`
+left in a dev shell.
 
 In OpenTUI chat, run `/providers` (or `/connect`) and choose **ChatGPT
 Codex**. 0sec runs the official `codex login --device-auth` lifecycle, streams
@@ -271,44 +269,38 @@ Choose **OpenAI** separately when you want `OPENAI_API_KEY` direct API access.
 Every `0sec` run loads that file into the environment before any subcommand
 runs, so a codex-login file is picked up everywhere — the console `/providers`
 view, `0sec doctor`, and scans/reviews/audits. An explicit environment value always wins,
-and a missing or malformed file is ignored quietly. One caveat: the `/providers` table
-never checks the filesystem, so anything that reads it *without* the CLI's startup
-load (for example, if you embed it in your own tool) shows "not configured" — a
-display quirk, not a broken setup.
+and a missing or malformed file is ignored quietly. The `/providers` table
+never checks the filesystem: anything reading it without the CLI's startup
+load (for example, embedded in a custom tool) shows "not configured".
 
 ## Console credential store
 
-The console credential store is for API-key providers only. Run `/providers`
-to open the chat-owned OpenTUI connection pane, then select a provider to paste
-its API key. ChatGPT Codex never uses this generic key path: it uses device
-OAuth and the Codex auth file instead. Each API-key row shows `configured via
-<VAR>` or `not configured`, reflecting the real environment.
+Run `/providers` to select an API-key provider and enter its key. ChatGPT Codex
+uses device OAuth and its auth file. Each API-key row reports `configured via
+<VAR>` or `not configured` from the environment.
 
 Keys are written to `credentials.json` in the [state
 directory](/configuration/#state-directory) (`~/.0sec/` by default), re-tightened
 to owner-only (`0600` file, `0700` dir) on every save.
 
-**An explicit environment value always wins over the stored value** — the store only
-fills a variable the environment doesn't already carry. This keeps "which key did
-that run use?" answerable when a request 401s or a metered key overspends.
+**An explicit environment value always wins over the stored value.** The store
+only fills a variable the environment doesn't already carry.
 
 **Stored credentials are not encrypted.** They're plaintext, protected only by
 file permissions. Treat `credentials.json` like an exported secret in a shell
 profile.
 
 The `/model` picker starts with curated models; **Tab** opens the full catalog.
-A listing is not proof of credentials or account access. The detail pane shows
-credential sources and setup hints; an unknown price is shown as `—`, not zero.
-Use `/connect` to add credentials and `/providers` to inspect the configured
-provider before making a request.
+Check credentials and account access before use. The detail pane shows setup
+hints and credential sources; unknown prices appear as `—`.
+Use `/connect` to add credentials and `/providers` to inspect them.
 
 ## When to use OpenRouter
 
-Use OpenRouter to reach a model family with no direct provider credential. It's
-not required for Z.ai GLM, Alibaba Qwen, Moonshot Kimi, Anthropic, OpenAI, Azure,
-OpenCode Zen, or DeepSeek. OpenRouter is also the fallback when a `claude-*` model
-is requested but no `ANTHROPIC_API_KEY` is set — the runtime checks for
-`OPENROUTER_API_KEY` before giving up on that model family.
+Use OpenRouter for model families with no direct provider credential. It also
+serves as fallback when a `claude-*` model is requested without
+`ANTHROPIC_API_KEY`: the runtime checks for `OPENROUTER_API_KEY` before giving
+up.
 
 ## Provider failover
 
@@ -327,9 +319,9 @@ Supported provider ids: `openrouter`, `anthropic`, `openai`, `azure`, `deepseek`
 
 ## Azure OpenAI configuration
 
-Azure is stricter — the API key alone isn't enough. 0sec needs an Azure base URL
-and a deployment/model name, either from env vars or reused from
-`~/.codex/config.toml` when Codex is already configured against Azure.
+0sec needs an Azure base URL and deployment/model name in addition to the API
+key, either from env vars or from `~/.codex/config.toml` when Codex is
+configured against Azure.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -347,10 +339,10 @@ export AZURE_OPENAI_WIRE_API="responses"
 
 If you rely on Codex config, make sure `~/.codex/config.toml` points at Azure with
 a usable base URL and model/deployment. Incomplete Azure config stops with a
-configuration error rather than a broken scan.
+configuration error before any scan starts.
 
 The runtime probes the Azure endpoint once per process to resolve the deployment
-region, used for diagnostics (not routing).
+region for diagnostics.
 
 ## Alternative: CLI runtimes
 
@@ -373,12 +365,13 @@ scans use the direct ChatGPT Codex provider, so they need
 
 ## `0sec doctor` — credential readiness
 
-Run `0sec doctor` to inspect runtime and credential readiness. It is not a
-successful authenticated model-call test:
+Inspect runtime and credential configuration:
 
 ```bash
 0sec doctor
 ```
+
+Authenticated model access requires a separate request; `doctor` checks configuration.
 
 It reports:
 - Node.js version compatibility (20+ required).

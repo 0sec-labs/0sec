@@ -3,17 +3,25 @@ title: "Strix Agent: Technical Implementation Comparison"
 description: "Code-level comparison of the open-source Strix pentesting agent (Apache-2.0, github.com/usestrix/strix, v0.8.3) against 0sec's own architecture. Covers agent loop, prompts, tools, planning, context compression, finding verification, isolation, telemetry, and CI. Closes 0sec#404."
 ---
 
-> **Historical research log (2026-05-23).** A code-level competitor teardown kept for transparency. It reflects a specific commit of an external project and 0sec's architecture at the time; both have moved since.
+> **Historical comparison, 2026-05-23.** Findings apply to the inspected source snapshots.
 
 Read of `usestrix/strix@HEAD` (Apache-2.0, ~18.7k LOC Python) on 2026-05-23, mapped against `0sec-labs/0sec@research/strix-comparison`. Every claim below is anchored to a `strix/<path>:<line>` or `0sec packages/<path>:<line>` reference; sections marked "not observed in public repo" are exactly that.
 
 ## 1. Executive summary
 
-1. **Strix has no programmatic verification layer.** "Validation" is just another agent role spawned via `create_agent` and bound by prompt to "prove it's real with PoC" — there is no separate replay runner, no oracle, no `signature_matched` style verdict. Compare to 0sec's `verify/replay-runner.ts` (726 lines, structured `expect` predicates) and `verify/kernel-verify.ts` (690 lines, oracle-driven). This is the most surprising finding in the repo: a 25k-star agent ships zero out-of-band verification.
-2. **Strix's "Docker isolation" is a single shared container per scan, not per-agent.** Every sub-agent in a scan hits the same `strix-scan-<scan_id>` container over HTTP (`strix/runtime/docker_runtime.py:142`, `strix/agents/StrixAgent/system_prompt.jinja:233`). The system prompt literally tells the model: *"All agents run in the same shared Docker container for efficiency."* No gVisor, no microVM, no per-agent kernel. 0sec's equivalent (`packages/core/src/agent/docker-executor.ts:1-50`) is the same shape — shared kernel — but 0sec at least scopes one container per scan with cleanup; both projects rely on `docker run --rm` as the only boundary.
-3. **Tool calls are XML, parsed with regex.** Strix prompts the model to emit `<function=name><parameter=k>v</parameter></function>` and parses it by hand in `strix/llm/utils.py` (`parse_tool_invocations`, `fix_incomplete_tool_call`, `_truncate_to_first_function`). No JSON-schema tool calling, no provider-native tool API. 0sec added an XML dispatch path for the same reason (cheap models emit malformed JSON — `packages/core/src/agent/xml-dispatch.ts`, `agent/loop.ts:59-66`) but keeps JSON tool-calling as the default. Strix has committed to string parsing as the only path.
-4. **The system prompt is the architecture.** `strix/agents/StrixAgent/system_prompt.jinja` is 509 lines of behavioral law: refusal-avoidance, scope-locking, mandatory phase ordering, hard-coded vulnerability priority list, multi-agent workflow diagrams, agent-spawn rules. There is no planner module, no FSM, no orchestrator graph beyond what the LLM does after reading the prompt. The whole system is "one model + giant prompt + recursive `create_agent`."
-5. **No CI test suite for the agent loop.** `.github/workflows/build-release.yml` is the only workflow, and it builds the PyInstaller binary — no pytest run, no eval suite, no benchmark in CI. The `tests/` tree exists (~1.9k LOC pytest, mostly unit tests of tool registration and Docker runtime mocks) but nothing runs it on PR. 0sec ships 30+ workflows including `journal-ablation.yml`, `npm-bench.yml`, `xbow` slices, and a paid eval gate.
+1. **Verification:** the inspected Strix path delegates validation to agents.
+   No separate replay runner was observed. 0sec's referenced replay and kernel
+   verifiers are 726 and 690 lines respectively.
+2. **Isolation:** agents share a scan container (`strix/runtime/docker_runtime.py:142`,
+   `strix/agents/StrixAgent/system_prompt.jinja:233`). The compared 0sec Docker
+   executor also uses the host kernel (`packages/core/src/agent/docker-executor.ts:1-50`).
+3. **Dispatch:** Strix parses XML in `strix/llm/utils.py`. The compared 0sec
+   implementation supports XML (`packages/core/src/agent/xml-dispatch.ts`,
+   `agent/loop.ts:59-66`) alongside its default JSON path.
+4. **Coordination:** the 509-line `strix/agents/StrixAgent/system_prompt.jinja`
+   supplies role, phase, and spawning instructions.
+5. **CI:** the inspected release workflow builds PyInstaller. The ~1.9k-line
+   pytest tree was not invoked there; 0sec had over 30 workflows at this snapshot.
 
 ## 2. Strix architecture overview
 
@@ -32,7 +40,8 @@ Read of `usestrix/strix@HEAD` (Apache-2.0, ~18.7k LOC Python) on 2026-05-23, map
 
 ### Planner / executor split
 
-There is none. The "root agent" is just a `StrixAgent` instance whose system-prompt skill `coordination/root_agent.md` reminds it: *"The root agent's primary job is orchestration, not hands-on testing"* (`strix/skills/coordination/root_agent.md`). Whether the model obeys is up to the model. There is no enforcement code that prevents the root from calling `terminal_execute`.
+The root is a `StrixAgent` using `strix/skills/coordination/root_agent.md`.
+The prompt assigns orchestration; code does not prevent root `terminal_execute` calls.
 
 ### Concurrency
 
@@ -92,7 +101,7 @@ Validation: `_validate_tool_arguments` (`tools/executor.py:130-153`) checks requ
 
 Result formatting: all results round-trip as a wrapped XML string `<tool_result><tool_name>…</tool_name><result>…</result></tool_result>` (`executor.py:251-256`); results longer than 10kB are middle-truncated (`executor.py:246-249`). Screenshots are detected by a magic `screenshot` field on dict results and lifted into an `image_url` content block (`executor.py:227-256`, `345-364`).
 
-The "in-sandbox" tools are not actually called locally — `_execute_tool_in_sandbox` (`tools/executor.py:39-99`) HTTP POSTs to a `tool_server` running inside the container at port 48081 with a bearer token. The tool server is an independent FastAPI process (`runtime/tool_server.py` referenced from `pyproject.toml:60-67` sandbox extras). Auth is a 256-bit `secrets.token_urlsafe(32)` minted at container creation (`docker_runtime.py:162`).
+`_execute_tool_in_sandbox` (`tools/executor.py:39-99`) sends HTTP requests to the container's FastAPI tool server on port 48081. Container creation mints a `secrets.token_urlsafe(32)` bearer token (`docker_runtime.py:162`).
 
 ### Anti-patterns observed
 
@@ -119,7 +128,7 @@ Compare to 0sec's `agent/journal/orchestrator.ts:30-42`, which has explicit prio
 
 ## 6. Context management
 
-`strix/llm/memory_compressor.py` is the whole story.
+`strix/llm/memory_compressor.py` implements compaction:
 
 - **Trigger**: when total tokens (system + history + reserved) exceed `MAX_TOTAL_TOKENS * 0.9 = 90_000` (`memory_compressor.py:12, 215`).
 - **Strategy**: always keep the last `MIN_RECENT_MESSAGES = 15` messages (`memory_compressor.py:13, 205`); chunk older messages into groups of 10 and replace each chunk with an LLM-generated summary (`memory_compressor.py:218-224`).
@@ -127,7 +136,9 @@ Compare to 0sec's `agent/journal/orchestrator.ts:30-42`, which has explicit prio
 - **Prompt** (`memory_compressor.py:15-43`): a "compress this for the next security agent" instruction that explicitly lists what to preserve (vulns, creds, tool outputs, dead ends).
 - **Image handling**: `_handle_images` keeps only the `max_images = 3` most recent images, rewriting older ones to placeholder text (`memory_compressor.py:134-149`).
 
-Critical gap vs 0sec: **no journal**. Conversation state lives in `AgentState.messages` (`agents/state.py:33`), a plain in-memory `list[dict[str, Any]]`. There is no append-only fsync'd log, no replay capability, no resume-after-crash. The `Tracer` (`telemetry/tracer.py`, 860 LOC) does write JSONL to disk for observability — but that's a sink for UI rendering, not a source of truth the agent reads back. Compare:
+Conversation state lives in `AgentState.messages` (`agents/state.py:33`).
+The inspected implementation has no crash-resume path. Its 860-line `Tracer`
+(`telemetry/tracer.py`) writes observability JSONL. Relevant comparison points:
 
 - 0sec `agent/journal/writer.ts:77-100, 90-95` — `loadJournal()` rehydrates from an fsync'd `journal.jsonl` plus sidecar artifacts directory, both sync-by-runId and async-by-path overloads.
 - 0sec `agent/journal/orchestrator.ts:122-130` — `runOrchestrator` accepts `{ resume: true }` and picks up at the last fsynced entry.
@@ -135,7 +146,6 @@ Critical gap vs 0sec: **no journal**. Conversation state lives in `AgentState.me
 
 ## 7. Verification / oracle patterns
 
-This is the section where Strix's design philosophy diverges most sharply from 0sec's.
 
 **Strix has no oracle.** A finding is "verified" when:
 
@@ -157,7 +167,8 @@ The one programmatic check is LLM-based deduplication: `check_duplicate` (`llm/d
 | Kernel finding verification | `packages/core/src/verify/kernel-verify.ts:1-100` — constrained loop with a single allowlisted tool (`kernel_run`), oracle-driven promotion (`signature_matched → confirmed, confidence=1.0`), explicit budget, separate from the main agent loop. |
 | Flag validator | `packages/core/src/agent/flag-validator.ts` — for CTF-style flag oracles. |
 
-The split is: 0sec treats verification as a **separate runtime concern** (not another LLM judging); Strix treats verification as **another LLM in a different prompt costume**.
+The compared 0sec workflows include executable replay predicates and kernel
+oracles. Strix's inspected reporting path relies on agent-produced PoC text.
 
 ## 8. Test infrastructure
 
@@ -185,9 +196,9 @@ Confirmed from `strix/runtime/docker_runtime.py`:
 - Container runs `sleep infinity`; commands enter via `container.exec_run` for setup and via the in-container tool-server HTTP API for agent tool calls.
 - All sub-agents share this container (`system_prompt.jinja:233-236` makes this explicit to the model).
 
-**Isolation boundary is the Linux kernel of the host.** This is the standard Docker shared-kernel model — fine for "don't pollute my filesystem," not fine for "I'm running untrusted RCE payloads against my workstation kernel." There is no gVisor, no Firecracker-like microVM, no Kata. The HN comment that Strix runs in "Docker containers" is literally true and is the only isolation layer.
-
-For comparison, 0sec's `agent/docker-executor.ts` uses the same shared-kernel Docker model for shell-tool execution. Stronger isolation in 0sec shows up only in the kernel-verify path, which delegates to a separate runner — and per the public-copy rule, that's described as "isolated kernel per scan" without implementation specifics.
+Both compared Docker executors share the host kernel. The inspected Strix
+configuration provides no additional VM boundary. 0sec's kernel-verification
+path uses a separate runner; this historical comparison predates later backends.
 
 ### Retries
 
@@ -231,7 +242,7 @@ A first-run anonymous-id file at `~/.strix/.seen` (`posthog.py:25-34`) seeds a `
 
 ## 11. Recommendations
 
-Ordered by ROI. "Borrow" = clear win, ship it. "Verify empirically" = sounds good in their prompt, but we don't know if it actually moves their numbers, so A/B before adopting. "Avoid" = anti-pattern.
+Candidate changes from this source review require evaluation before adoption:
 
 ### Borrow
 
@@ -249,11 +260,12 @@ Ordered by ROI. "Borrow" = clear win, ship it. "Verify empirically" = sounds goo
 
 ### Avoid
 
-6. **Don't adopt their context-compression as-is.** The "summarize chunks of 10, fall back to `messages[0]` on failure" (`memory_compressor.py:131, 218-224`) silently drops work on transient LLM failures. 0sec's `OrchestratorWindowExceededError` (`agent/journal/orchestrator.ts:104-112`) is better — fail loud and surface the bug. Don't soften that.
-
-7. **Don't adopt their threading-based sub-agent model.** Global module-level dicts (`_agent_graph`, `_agent_messages`, `_running_agents`, `_agent_instances`, `_agent_states` — `agents_graph_actions.py:11-30`) with one lock between them is a recipe for multi-scan races. 0sec's per-run journal scoping is the correct shape; keep it.
-
-8. **Don't adopt their "validation is another LLM" approach.** This is the central disagreement. Their `create_vulnerability_report` accepts whatever PoC text the model emits — no replay, no oracle, no calibration. 0sec's `verify/replay-runner.ts` + `finding-confidence.ts` + `verify/kernel-verify.ts` triangle is the moat. Hold the line.
+6. Preserve evidence on compaction failure (`memory_compressor.py:131, 218-224`);
+   compare `OrchestratorWindowExceededError` in `agent/journal/orchestrator.ts:104-112`.
+7. Scope mutable agent state per run and synchronize access. The inspected shared
+   dictionaries are in `agents_graph_actions.py:11-30`.
+8. Keep executable verification criteria alongside model-authored reports, using
+   the appropriate replay, confidence, and kernel-verification contracts.
 
 ## 12. Sources / citations
 

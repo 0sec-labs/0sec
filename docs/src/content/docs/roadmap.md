@@ -1,13 +1,11 @@
 ---
 title: Roadmap
-description: Current implementation pointers and historical plans for the 0sec engine. Roadmap items are not release or managed-service availability guarantees.
+description: Current entry points, release boundaries, and dated development plans.
 ---
 
 ## Current implementation pointers
 
-This page retains dated strategy notes below. Use the current guides for
-executable instructions; the older “Now” and “Next” lists are not a live
-inventory of missing commands.
+Use these guides for current instructions. The dated plans below preserve earlier priorities.
 
 | Area | Current entry point | Remaining boundary |
 | --- | --- | --- |
@@ -21,47 +19,32 @@ inventory of missing commands.
 
 ## 0cloud
 
-**0cloud is not yet released.** It remains in development; no public
-onboarding, download path, or launch date is promised. All references to a
-managed control plane on this site describe architectural components that have
-not shipped as a user-accessible service.
+**0cloud remains in development.** Managed testing has no public onboarding or launch date.
+The separate **0sec Cloud** inference service follows the availability described in
+[Getting started](/getting-started/#hosted-models-draft).
 
 ## Desktop
 
-**The native Desktop application is not yet released.** It is in development;
-no public download or install path is available. All desktop references on this
-site describe an in-progress interface. Use the CLI [Console](/console/) for
-the released terminal interface.
+**Desktop remains in development**, without a public download. Use the
+[Console](/console/) for terminal work.
 
 Documentation follows the source checkout. Check `0sec --version` and
 `0sec <command> --help` against your installed release before using newly
 documented flags.
 
-This roadmap prioritises product leverage over surface-area creep, and stays
-honest about what has shipped vs what is still being scoped. The thesis is
-unchanged:
+Priorities: reliable execution, usable evidence, and orchestration.
 
-1. Make the core agentic pipeline trustworthy.
-2. Make the outputs operationally useful for real teams.
-3. Then add orchestration and control-plane UX on top.
-
-The trust layer is now real. The retained artifact-backed XBOW aggregate is
-103/104 = 99.0% (only XBEN-030 unsolved in any mode); the load-bearing gpt-5.4
-black-box cohort is 93/95 = 97.9%; the first scored full Cybench run is 36/40 =
-90.0% single-config, single-shot. (The older mixed local+CI publication line is
-documented separately.) Most next-quarter work is about making that capability
-easy to live with — for one developer, for a CI pipeline gating PRs, and for a
-security team running a continuous campaign.
+Retained artifact-backed XBOW aggregate: 103/104 = 99.0% (only XBEN-030
+unsolved in any mode). Load-bearing gpt-5.4 black-box cohort: 93/95 = 97.9%.
+First scored full Cybench run: 36/40 = 90.0% single-config, single-shot. (The
+older mixed local+CI publication line is documented separately.) Next-quarter
+work targets making that capability routine: for one developer, for a CI
+pipeline gating PRs, and for a security team running a continuous campaign.
 
 ## August 2026 product-discovery checkpoint
 
-**Historical checkpoint, August 2026:** no commercial vertical had been selected
-in this strategy note.
-The original platform rationale follows. 0sec was framed as an
-open-source, evidence-backed cyber reasoning system: given an authorized
-objective, a scoped target, tools, and a verifier, it plans, investigates, tests,
-and returns replayable evidence. That's a platform thesis — it doesn't by itself
-prove which company problem is urgent enough to buy.
+**August 2026 checkpoint:** the strategy had selected no commercial vertical.
+It described a scoped reasoning-and-execution platform with replayable evidence.
 
 ### Platform primitives
 
@@ -73,8 +56,7 @@ prove which company problem is urgent enough to buy.
 6. replayable evidence bundle
 
 Web testing, source review, package audit, MCP testing, and agent assurance are
-applications of those primitives. New modes should strengthen one of them, not
-turn the CLI into a pile of unrelated product claims.
+applications of those primitives. New modes should strengthen one of them.
 
 ### Commercial hypotheses
 
@@ -91,24 +73,21 @@ turn the CLI into a pile of unrelated product claims.
 
 ### Validation before committing
 
-Don't pick a vertical from benchmarks, downloads, or a feature inventory. For
-each candidate workflow: interview ten companies with the real target and a named
-security owner; sell three paid pilots, not free evals; require an authorized
-staging target, a concrete success/prohibited-action definition, and a replayable
-evidence review; count collected revenue, a remediation decision, and a requested
-re-run as the leading evidence; build only blockers that recur across ≥2 pilots.
-The decision is deliberately reversible until then.
+For each candidate workflow, interview ten companies with a target and security
+owner; sell three paid pilots; require an authorized staging target, a defined
+success or prohibited action, and replayable evidence. Measure collected revenue,
+remediation decisions, and repeat demand. Build blockers recurring across at least
+two pilots before committing to a vertical.
 
 ## May 2026 strategy addendum
 
 FoxGuard is now the default static lead source and the stepping stone away from
-Semgrep. The direction is not "delete Semgrep immediately" or "rewrite 0sec in
-Rust." It's:
+Semgrep. The direction:
 
-1. keep the TypeScript control plane for agent orchestration, provider
-   integration, CLI/cloud contracts, benchmark loops, and fast policy iteration;
-2. move deterministic engines into Rust behind stable JSON/SARIF contracts;
-3. make FoxGuard the first engine that proves this boundary with measured lead
+1. Keep the TypeScript control plane for agent orchestration, provider
+   integration, CLI/cloud contracts, benchmark loops, and fast policy iteration.
+2. Move deterministic engines into Rust behind stable JSON/SARIF contracts.
+3. Make FoxGuard the first engine that proves this boundary with measured lead
    quality and wall-time wins.
 
 Trust-track implications:
@@ -135,9 +114,8 @@ See [TypeScript/Rust Boundary](/research/typescript-rust-boundary/).
   evaluation (development/held-out/negative-control) in network-none Docker
   containers, content-addressed immutable snapshots, pure-function promotion
   gates, canary trials, rollback, and hash-chained registries with atomic
-  artifact publication. Config replaces the previous blanket "no automatic
-  source-code promotion" with configured autonomy (`autoPromote`). Executed as
-  sandboxed versioned workers — never live in-process self-patching. See
+  artifact publication. Configured `autoPromote` controls promotion autonomy.
+  Candidates execute as sandboxed versioned workers.
   [Improvement Plane](/improvement-plane/).
 - **Operational feedback curation.** `0sec evolve feedback capture/approve/status/release`
   for evidence-backed observations with operator-curated `ValidationFixture`
@@ -176,8 +154,7 @@ See [TypeScript/Rust Boundary](/research/typescript-rust-boundary/).
 
 ## Now
 
-Historical priorities from the original roadmap. Current implemented portions
-are called out below; this is not a release schedule.
+Historical priorities; implemented portions are identified below.
 
 ### 1. Anti-honeypot / decoy-flag heuristic
 
@@ -192,8 +169,7 @@ submit it.
 **Current implementation:** the `done` tool's decoy-shape heuristic is enabled
 by default and can be disabled with `--no-decoy-detection`. It rejects a
 low-confidence flag once; a repeated submission can override it. This is a
-benchmark-oriented speed bump, not an independent verifier or a proof gate
-for real-world findings.
+benchmark-oriented speed bump.
 
 ### 2. Statistical evaluation methodology — n=10 per cell
 
@@ -216,20 +192,18 @@ methodology page on best-of-N (what XBOW reports) vs per-attempt success rate
 restarting.
 
 **Why:** the repo already persists `agent_sessions` and `pipeline_events`;
-restarting long agentic workflows is expensive. This is what makes 0sec feel like
-infrastructure.
+restarting long agentic workflows is expensive.
 
 **Current implementation:** `0sec resume <scan-id>` and journal continuation
-exist. The remaining goal is reliable recovery across all workflows, not the
-addition of a missing command. Read [Scan Workflows](/scan-workflows/) for
-supported routing, state requirements, and caveats.
+exist. The remaining goal is reliable recovery across all workflows. Read
+[Scan Workflows](/scan-workflows/) for supported routing, state requirements,
+and caveats.
 
 ### 4. Finding inbox + triage workflow
 
 **Goal:** make findings manageable across repeated runs.
 
-**Why:** "found a thing" isn't enough for teams. Repeated findings need dedupe,
-suppression, and audit history.
+**Why:** repeated findings need dedupe, suppression, and audit history.
 
 **Current implementation:** the `findings` command exposes grouped findings,
 triage filtering, and lifecycle inspection. The CLI's human triage values are
@@ -238,8 +212,6 @@ The broader suppression-expiry, comments, and cross-run workflow described
 here remains a design goal unless documented by a current command.
 
 ## Next
-
-More valuable once the above is solid.
 
 ### 5. Diff-aware PR scanning
 
@@ -253,8 +225,7 @@ behavior are goals, not implied by the presence of these flags.
 
 ### 6. Deterministic replay for every finding
 
-**Goal:** every confirmed finding reproducible on demand — the bridge between "AI
-said so" and "I can see it myself."
+**Goal:** every confirmed finding reproducible on demand.
 
 **Deliverables:** replay from finding ID; saved exploit inputs/requests/prompts;
 verifier transcript and verdict trace; shareable artifact bundle.
@@ -265,9 +236,7 @@ verifier transcript and verdict trace; shareable artifact bundle.
 subagents already fan out **within a single run** (`spawn_agents`); this item is
 the campaign-scale layer above that.
 
-**Good use:** fan research across many targets; parallel blind verification;
-aggregate into one campaign view. **Bad use:** navigation gimmicks; vague "AI
-assistant" behaviour with no task boundary.
+Use campaigns for multi-target research, parallel verification, and aggregate evidence.
 
 **Deliverables:** campaign runs; worker-pool / concurrency controls; queueing and
 retry policy; shared target inventory and cross-target clustering.
@@ -282,8 +251,6 @@ Desktop is in development; see [Roadmap](/roadmap/#desktop) for current
 status. Use [Console](/console/) for the released terminal interface.
 
 ## Later
-
-Valuable, but shouldn't outrank the workflow/control-plane work above.
 
 ### 9. Policy packs and organisation presets
 
@@ -300,21 +267,10 @@ alerts; "what changed since last green run."
 Remote queue workers; large campaign execution; shared artifact store; eventually
 a hosted control plane if adoption justifies it.
 
-## Non-goals right now
+<span id="non-goals-right-now"></span>
+<span id="product-direction"></span>
+## Development priorities
 
-- treating the existence of a UI or backend scaffold as general managed-service availability
-- replacing reproduction evidence with a chat summary or lifecycle label
-- new scan modes without stronger replay and campaign ergonomics
-- subagents used as UI magic instead of bounded workers
-- EGATS-style tree search on challenges this size — the v1 sweep proved it costs
-  more than it earns
-
-## Product direction
-
-The best version of 0sec is a sharp local CLI for one-off deep work; a reliable
-CI primitive for PRs and repos; a persistent evidence store for findings and
-agent runs; a local operations shell on that state; and eventually a separate
-distributed agentic security control plane for campaigns and remote workers. That
-beats being "yet another scanner with more templates." The XBOW number proves the
-core capability is real; the roadmap above is the work to make it something teams
-can live with.
+Local analysis, CI review, retained evidence, and campaign orchestration need
+reproducible results and bounded workers. UI scaffolding alone establishes no
+managed-service availability. EGATS remains opt-in after its unfavorable ablation.

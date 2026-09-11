@@ -1,6 +1,6 @@
 ---
 title: Agent Loop
-description: How 0sec's autonomous agent loop works — system prompt, LLM calls, tool execution, budget-aware reflection, and debugging.
+description: Model calls, tool execution, budgets, completion, and debugging.
 ---
 
 0sec runs assessments by putting a model in a loop with tools. The model reads
@@ -10,12 +10,10 @@ that process; model reasoning alone is not evidence.
 
 ## Loop overview
 
-The core native loop is `runNativeAgentLoop` in
-`packages/core/src/agent/native-loop.ts`. It exchanges structured messages and
-tool calls through the configured native runtime. Its internal `tool_use` /
-`tool_result` representation does not mean that every request goes to Anthropic;
-provider adapters translate the wire protocol. A separate legacy text loop
-exists for applicable process-runtime paths.
+`runNativeAgentLoop` in `packages/core/src/agent/native-loop.ts` exchanges
+structured messages and tool calls through the configured runtime. Provider
+adapters translate its `tool_use` / `tool_result` representation to the
+appropriate wire protocol. Applicable process runtimes use a legacy text loop.
 
 ```mermaid
 flowchart TD
@@ -43,9 +41,7 @@ recommended setting for ordinary live-target audits.
 
 ## What the agent sees
 
-**System prompt** — the most important input. It says what the agent is, what
-tools it has, and how to approach the target. 0sec assembles a different prompt
-per mode:
+The **system prompt** defines the role, available tools, and target approach:
 
 - `shellPentestPrompt` (web) — gives `bash`, `save_finding`, `done` and tells
   the agent to probe with curl/python3/CLI tools. No structured HTTP tools.
@@ -56,13 +52,11 @@ per mode:
 The prompt includes concrete target details: URL, known endpoints, detected
 features, and (for attack agents) discovery results.
 
-**Tool results** — after each call, stdout/stderr, HTTP bodies, or structured
-tool output is appended as a `tool_result` message. The agent reasons about
-actual server responses, not hypothetical ones.
+**Tool results** append stdout/stderr, HTTP responses, or structured output as
+`tool_result` messages.
 
-**Budget-aware reflection** — when the agent replies with text but no tool call
-(thinking out loud instead of acting), the loop injects a continue prompt that
-escalates with budget spent:
+**Budget prompts** continue a turn after a text-only response, escalating with
+the budget consumed:
 
 | Budget used | Prompt |
 |---|---|
@@ -72,14 +66,12 @@ escalates with budget spent:
 | 70-85% | "URGENCY. If the current approach isn't working, SWITCH NOW." |
 | 85-100% | "FINAL PUSH. Highest-confidence exploit path ONLY." |
 
-These are continuation nudges, not a guarantee that the model changes strategy.
-Feature-gated budget warnings can also fire during ordinary tool-call turns.
-See [Budget Management](/budget-management/) for limits and warning behavior.
+Strategy changes depend on the model. Feature-gated warnings also apply during
+tool-call turns. See [Budget Management](/budget-management/).
 
 ## Tool execution
 
-`ToolExecutor` in `packages/core/src/agent/tools.ts` handles all calls. The
-three that matter most for web:
+`ToolExecutor` in `packages/core/src/agent/tools.ts` handles tool calls. Web mode uses:
 
 - **`bash`** — runs shell commands and returns execution output. It is subject to
   scope and tool policy; by default it executes on the host, not in an OS sandbox.
@@ -98,10 +90,8 @@ can't spawn their own sub-agents.
 
 ## How it decides
 
-The model chooses the next hypothesis and action within the supplied task and
-tool surface. The harness still contains deterministic rules, optional playbooks,
-scope enforcement, and evidence gates. Shell-first execution gives the model
-flexibility; it does not grant unrestricted permission to act.
+The model chooses hypotheses and actions within the task and available tools.
+Deterministic policy, scope, playbooks, and evidence gates constrain execution.
 
 ## Walk-through: IDOR exploitation
 
@@ -119,15 +109,12 @@ Illustrative sequence in an authorized disposable lab at `http://target:8080`
 5. **Save + finish.** `save_finding` with the request, the leaking response, and
    analysis; then `done`.
 
-The relevant result is the cross-user access observation under known test
-identities, not the flag-shaped string. A separate verification step must assess
-whether the behavior supports the finding.
+Verify cross-user access under known test identities before accepting the finding.
 
 ## Debugging
 
-Use `--verbose` on commands that support it to expose more progress and tool
-detail. Output varies by workflow; it is not a guarantee of a complete raw
-provider transcript. Treat logs as sensitive and redact before sharing them.
+Use supported `--verbose` flags for progress and tool detail. Output varies by
+workflow and can omit provider-transcript details. Redact logs before sharing.
 
 Common patterns:
 

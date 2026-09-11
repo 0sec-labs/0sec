@@ -3,14 +3,11 @@ title: GitHub CI — run 0sec in CI
 description: Run 0sec scans, reviews, and audits as GitHub Actions steps via the container image or binary install.
 ---
 
-0sec runs in GitHub Actions today through the published container image or a
-binary install step. A dedicated composite action is planned (tracked via the
-schema file at `packages/cli/src/__tests__/github-action-schema.test.ts`) but
-has not shipped yet — there is no `.github/actions/` directory in the
-repository.
-
-For now, invoke the CLI directly from a workflow step. Provider credentials go
-in as `env:` from repository secrets.
+0sec runs in GitHub Actions through the published container image or a binary
+install step. A dedicated composite action is planned (tracked at
+`packages/cli/src/__tests__/github-action-schema.test.ts`) but has not shipped.
+Invoke the CLI directly from a workflow step. Provider credentials go in as
+`env:` from repository secrets.
 
 ## Container-based workflow
 
@@ -280,13 +277,13 @@ It uses direct OpenAI `gpt-5.6-luna` through the Responses API, with a hard
 ## Known limitations
 
 - The dedicated composite action (`0sec-labs/0sec/.github/actions/0sec-scan`)
-  has **not shipped** — there is no `.github/actions/` directory
+  has **not shipped**.
 - The planned action design includes inputs `mode`, `profile`, `comment-on-pr`,
-  `fail-on-confirmed`, `0sec-version`, `github-token`, and `working-directory`
-- The binary install (`install.sh`) is ~145 MB; download time varies by runner
-- Live target scans from CI require the target to be reachable from the runner
-- Some runtimes (`claude`, `codex`, `gemini`) require CLI subprocess
-  installation on the runner — the `api` runtime is preferred for CI
+  `fail-on-confirmed`, `0sec-version`, `github-token`, and `working-directory`.
+- Binary install (`install.sh`) is ~145 MB; download time varies by runner.
+- Live target scans require the target to be reachable from the runner.
+- `claude`, `codex`, and `gemini` runtimes require CLI subprocess installation
+  on the runner. The `api` runtime is preferred for CI.
 
 ## See also
 

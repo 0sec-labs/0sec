@@ -8,7 +8,18 @@ export default defineConfig({
   outDir: "./dist",
   site: "https://docs.0.security",
   // Allow previewing the dev server over Tailscale (dev-only; ignored by the static build).
-  vite: { server: { allowedHosts: [".ts.net"] } },
+  vite: {
+    server: { allowedHosts: [".ts.net"] },
+    plugins: [{
+      name: "pagefind-main-thread",
+      transform(code, id) {
+        if (id !== "\0virtual:starlight/pagefind-config") return;
+        // Pagefind 1.5.2 sends relative fetch URLs to a blob worker.
+        // Keep Starlight's UI and use Pagefind's supported main-thread engine.
+        return `${code};\npagefindUserConfig.noWorker = true;`;
+      },
+    }],
+  },
   markdown: {
     // Render ```mermaid code blocks as SVG at build time.
     syntaxHighlight: { type: "shiki", excludeLangs: ["mermaid"] },
@@ -28,7 +39,7 @@ export default defineConfig({
         { tag: "link", attrs: { rel: "preconnect", href: "https://0.security", crossorigin: "anonymous" } },
       ],
       description:
-        "Run the 0sec harness, choose model access, and understand executable self-evolution, authorization, and evidence.",
+        "Your self-improving cybersecurity team. The cyber reasoning system harness and CLI. Research Preview.",
       logo: {
         dark: "./src/assets/0sec-aperture-white.svg",
         light: "./src/assets/0sec-aperture-dark.svg",
@@ -126,7 +137,7 @@ export default defineConfig({
             { label: "Results", slug: "benchmark" },
             { label: "Methodology", slug: "methodology" },
             { label: "XBOW Analysis", slug: "research/xbow-analysis" },
-            { label: "Competitive Landscape", slug: "research/competitive-landscape" },
+            { label: "Project comparison", slug: "research/competitive-landscape" },
           ],
         },
         {
@@ -143,7 +154,7 @@ export default defineConfig({
                 { label: "Shell-First Rationale", slug: "research/shell-first" },
                 { label: "Agent Techniques", slug: "research/agent-techniques" },
                 { label: "Model Comparison", slug: "research/model-comparison" },
-                { label: "FP Reduction Moat", slug: "research/fp-reduction-moat" },
+                { label: "False-positive reduction", slug: "research/fp-reduction-moat" },
                 { label: "TypeScript/Rust Boundary", slug: "research/typescript-rust-boundary" },
               ],
             },
@@ -163,7 +174,7 @@ export default defineConfig({
               label: "Experiment Logs",
               collapsed: true,
               items: [
-                { label: "2026-05-09 Control Flow, Not Prompts", slug: "research/2026-05-09-control-flow-not-prompts" },
+                { label: "2026-05-09 Control-flow audit", slug: "research/2026-05-09-control-flow-not-prompts" },
                 { label: "2026-05-08 Cost per Flag", slug: "research/2026-05-08-cost-per-flag" },
                 { label: "2026-05-06 H1 Program Audit", slug: "research/2026-05-06-h1-ai-readiness" },
                 { label: "2026-04-11 Ablation", slug: "research/2026-04-11-ablation" },
