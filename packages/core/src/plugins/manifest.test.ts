@@ -187,6 +187,18 @@ describe("validatePluginManifest — tool-level failures", () => {
     expect(e.some((m) => m.includes("`parameters` is required"))).toBe(true);
   });
 
+  it("rejects complete schemas in the properties bag before provider dispatch", () => {
+    const tool = { name: "acme_x", description: "x", capabilities: ["compute"] };
+    expect(validatePluginManifest({
+      ...validManifest() as object,
+      tools: [{ ...tool, parameters: { type: "object", properties: { value: { type: "number" } } } }],
+    }).ok).toBe(false);
+    expect(validatePluginManifest({
+      ...validManifest() as object,
+      tools: [{ ...tool, parameters: { type: { type: "string" }, value: { type: "number" }, extra: true } }],
+    }).ok).toBe(true);
+  });
+
   it("bad required array", () => {
     const e = toolErrors({
       name: "acme_x",
@@ -325,12 +337,9 @@ describe("gateFlagsFor — conservative defaults across every subset", () => {
   it("no subset yields readOnly:true unless read-only is genuinely implied", () => {
     for (const subset of powerSet(PLUGIN_CAPABILITIES)) {
       const flags = gateFlagsFor(tool(subset));
-      // readOnly may only be true when the subset is non-empty AND every member
-      // is a pure read capability. Today the only read capability is
-      // "filesystem-read", so the ONLY read-only subset is exactly
-      // ["filesystem-read"].
+      // Compute and brokered model calls do not mutate the scoped host.
       const genuinelyReadOnly =
-        subset.length > 0 && subset.every((c) => c === "filesystem-read");
+        subset.length > 0 && subset.every((c) => c === "filesystem-read" || c === "compute" || c === "model-call");
       expect(flags.readOnly, `subset ${JSON.stringify(subset)}`).toBe(genuinelyReadOnly);
     }
   });

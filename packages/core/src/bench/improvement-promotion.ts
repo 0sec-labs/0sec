@@ -211,15 +211,20 @@ export function evaluateImprovementPromotion(
 
   const championCost = result.heldOut.champion.costPerSuccessUsd;
   const challengerCost = result.heldOut.challenger.costPerSuccessUsd;
-  const costPasses = championCost !== null
-    && challengerCost !== null
-    && Number.isFinite(championCost)
-    && Number.isFinite(challengerCost)
-    && challengerCost <= championCost * policy.maximumCostMultiplier;
+  // A fully observed zero-success baseline has no finite cost per success.
+  // Do not confuse that with missing cost data for a successful/uncertain baseline.
+  const zeroSuccessBaseline = championCost === null
+    && result.heldOut.champion.successRate === 0
+    && result.heldOut.champion.inconclusiveRate === 0;
+  const costPasses = challengerCost !== null
+    && Number.isFinite(challengerCost) && challengerCost >= 0
+    && (zeroSuccessBaseline || (championCost !== null
+      && Number.isFinite(championCost) && championCost >= 0
+      && challengerCost <= championCost * policy.maximumCostMultiplier));
   checks.push({
     id: "cost_discipline",
     passed: costPasses,
-    detail: `held-out cost per success must be available and no more than ${policy.maximumCostMultiplier.toFixed(2)}x champion cost`,
+    detail: `held-out challenger cost must be finite and nonnegative; at most ${policy.maximumCostMultiplier.toFixed(2)}x champion cost unless the fully observed champion has zero successes`,
   });
 
   if (checks.some((check) => !check.passed)) {

@@ -88,9 +88,9 @@ Guide: [Read the workflow](/console/).
 | `--db-path <path>` | — | Persistent findings database (defaults to 0SEC_DB_PATH or the local store) |
 | `-m, --model <id>` | — | Override the LLM model id (else provider default) |
 | `--role <role>` | — | Tool set to expose: audit\|review\|discovery\|attack\|verify (default audit = every tool) |
-| `--mode <mode>` | — | Autonomy mode to start in: standard\|recon\|copilot\|yolo (default standard). YOLO drops per-action prompts but stays target/scope-anchored; cycle live with Shift+Tab. |
+| `--mode <mode>` | — | Autonomy mode to start in: standard\|recon\|copilot\|yolo (default yolo). YOLO drops per-action prompts but stays target/scope-anchored; cycle live with Shift+Tab. |
 | `--yolo` | — | Shortcut for --mode yolo — start the console in YOLO autonomy (no per-action prompts; still target-anchored and SSRF-railed). |
-| `--autonomy <mode>` | `standard` | Alias of --mode (standard\|copilot\|yolo\|recon); --mode/--yolo take precedence. |
+| `--autonomy <mode>` | — | Alias of --mode (standard\|copilot\|yolo\|recon); --mode/--yolo take precedence. |
 | `--max-tool-calls <n>` | `20` | Safety cap on tool-call rounds per operator message |
 | `--allow-scanners` | — | Expose generic-scanner tool wrappers (sqlmap/nikto/…); default off |
 | `--resume [id]` | — | Reopen a saved console session by id (or unique prefix); with no id, opens a session picker. Also reachable as `0 -r [id]`. |
@@ -2320,7 +2320,9 @@ Guide: [Read the workflow](/integrations/).
 
 ### plugin
 
-Install, enable, and inspect third-party plugins (scaffold; no marketplace ships)
+Install, enable, and inspect third-party plugins (scaffold; no marketplace ships).
+Model-authored executable plugins (self-extension) are a separate mechanism —
+see [Integrations](/integrations/#plugin-system) for both.
 
 ```text
 0sec plugin

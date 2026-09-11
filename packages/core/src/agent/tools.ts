@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { isAbsolute, resolve, join } from "node:path";
@@ -14,7 +15,7 @@ import type {
   VerificationBehaviorStep,
   NamedIdentity,
 } from "@0sec/shared";
-import { resolveIdentities, compareRoles } from "@0sec/shared";
+import { resolveIdentities, compareRoles, DEFAULT_AUTONOMY_MODE } from "@0sec/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolResultMeta, ToolContext, AgentRole } from "./types.js";
 import type {
   OperatorQuestion,
@@ -241,40 +242,28 @@ const rememberCodebaseArgsSchema = z.object({
   tags: z.array(z.string().max(100)).max(16).optional(),
 }).strip();
 
-// ── Model self-extension: the `self_extend` front door ────────────────────────
-//
-// AIxCC T9 structured-output discipline (mirrors kernel_run): the tool-call
-// payload is parsed against an explicit Zod schema and REJECTED on a mismatch
-// before any side effect — a malformed submission never reaches the registry, so
-// it can neither register a tool nor consume a budget slot.
-//
-// The schema is deliberately a THIN envelope: it accepts only `{ manifest }` and
-// `.strip()`s every other top-level key. This is security-relevant, not
-// cosmetic — it means the model can NEVER smuggle a `guards` array (deny-only
-// guard FUNCTIONS are not expressible over JSON anyway) or forge an `origin`;
-// the handler pins `origin: "model"`. The authoritative deep validation
-// (capabilities mandatory + fail-closed, name charset, no built-in shadowing,
-// every per-session limit) stays in the registry's `register`, which is the ONE
-// validator — this front door never re-implements or relaxes it.
-const selfExtendArgsSchema = z
-  .object({
-    manifest: z
-      .record(z.string(), z.unknown(), {
-        required_error:
-          "self_extend: 'manifest' is required and must be a JSON object naming the tools to register",
-        invalid_type_error:
-          "self_extend: 'manifest' must be a JSON object naming the tools to register",
-      })
-      .refine((m) => m !== null && typeof m === "object" && !Array.isArray(m), {
-        message: "self_extend: 'manifest' must be a JSON object naming the tools to register",
-      }),
-  })
-  .strip();
+// The model supplies executable source and metadata, never host configuration,
+// guards, provider credentials, or an evaluation oracle.
+const selfExtendArgsSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("submit"),
+    manifest: z.record(z.unknown()),
+    files: z.record(z.string()).refine((files) => Object.keys(files).length > 0, "files must not be empty"),
+    entry: z.string().min(1).max(1024),
+    kind: z.enum(["tool", "skill", "agent"]).optional(),
+  }).strip(),
+  z.object({ action: z.literal("list") }).strip(),
+  z.object({
+    action: z.literal("rollback"), plugin_id: z.string().min(1),
+    version_id: z.string().min(1),
+  }).strip(),
+  z.object({
+    action: z.literal("evolve"), plugin_id: z.string().min(1),
+    profile: z.string().min(1),
+  }).strip(),
+]);
 
-/** Validated `self_extend` payload after the Zod envelope check. */
-export interface SelfExtendArgs {
-  manifest: Record<string, unknown>;
-}
+export type SelfExtendArgs = z.infer<typeof selfExtendArgsSchema>;
 
 /**
  * Validate a raw `self_extend` tool-call argument bag. Discriminated union so the
@@ -287,27 +276,19 @@ export function validateSelfExtendArgs(
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, error: "self_extend: arguments must be an object with a `manifest`" };
   }
-  const parsed = selfExtendArgsSchema.safeParse(raw);
+  const parsed = selfExtendArgsSchema.safeParse({
+    ...raw, action: (raw as Record<string, unknown>).action ?? "submit",
+  });
   if (!parsed.success) {
     const first = parsed.error.issues[0];
     return { ok: false, error: first?.message ?? "self_extend: invalid arguments" };
   }
-  return { ok: true, args: { manifest: parsed.data.manifest } };
+  return { ok: true, args: parsed.data };
 }
 
-/**
- * Read the session's self-extension registry off the tool context WITHOUT
- * widening the shared `ToolContext` type (owned elsewhere) — the same cast
- * pattern `messagingRuntimeOf` uses. native-loop constructs the registry
- * (enabled iff `allowModelSelfExtension`), attaches it here, and reads back the
- * same instance to inject registered tools into the model-facing tool set.
- * Absent for every non-console/non-native caller — the tool then refuses.
- */
-interface SelfExtensionCtx {
-  selfExtension?: SelfExtensionRegistry;
-}
+/** The same session registry supplies policy and the model-facing tool set. */
 export function selfExtensionRegistryOf(ctx: ToolContext): SelfExtensionRegistry | undefined {
-  return (ctx as ToolContext & SelfExtensionCtx).selfExtension;
+  return ctx.selfExtension;
 }
 
 /**
@@ -357,6 +338,7 @@ interface BashRunOptions {
   timeoutMs: number;
   ceilingMs: number;
   env: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 /**
@@ -373,6 +355,7 @@ async function runBashWithWallclock(
   command: string,
   opts: BashRunOptions,
 ): Promise<BashOutcome> {
+  if (opts.signal?.aborted) return { kind: "error", message: "bash tool cancelled before dispatch" };
   return new Promise((resolvePromise) => {
     let child;
     try {
@@ -396,6 +379,8 @@ async function runBashWithWallclock(
     const stderrChunks: string[] = [];
     let timedOut = false;
     let settled = false;
+    let cancelled = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
 
     child.stdout?.setEncoding("utf-8");
     child.stderr?.setEncoding("utf-8");
@@ -429,13 +414,21 @@ async function runBashWithWallclock(
       }
     };
 
+    const terminate = () => {
+      killGroup("SIGTERM");
+      if (!killTimer) {
+        killTimer = setTimeout(() => { if (!settled) killGroup("SIGKILL"); }, BASH_GRACE_MS);
+        killTimer.unref?.();
+      }
+    };
+    const onAbort = () => {
+      if (settled) return;
+      if (!timedOut) cancelled = true;
+      terminate();
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      killGroup("SIGTERM");
-      // Escalate after a short grace if the group ignored SIGTERM.
-      setTimeout(() => {
-        if (!settled) killGroup("SIGKILL");
-      }, BASH_GRACE_MS).unref?.();
+      terminate();
     }, opts.timeoutMs);
     timer.unref?.();
 
@@ -443,6 +436,8 @@ async function runBashWithWallclock(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(killTimer);
+      opts.signal?.removeEventListener("abort", onAbort);
       resolvePromise(outcome);
     };
 
@@ -451,6 +446,10 @@ async function runBashWithWallclock(
     });
 
     child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+      if (cancelled) {
+        settle({ kind: "error", message: "bash tool cancelled by operator" });
+        return;
+      }
       if (timedOut) {
         settle({ kind: "timeout", partial: collected() });
         return;
@@ -461,6 +460,8 @@ async function runBashWithWallclock(
       const exitCode = typeof code === "number" ? code : signal ? 1 : 0;
       settle({ kind: "exit", exitCode, combined: collected() });
     });
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+    if (opts.signal?.aborted) onAbort();
   });
 }
 
@@ -2855,10 +2856,13 @@ export class ToolExecutor {
    * method / command) joins EXACTLY to its `tool_calls` entry instead of being
    * matched by timestamp proximity. Null for callers that don't pass one.
    *
-   * Safe as instance state because tool dispatch is sequential in both agent
-   * loops — one `execute()` is awaited to completion before the next starts.
+   * Async-local state also keeps nested/concurrent executable-agent calls
+   * from borrowing another call's correlation id or cancellation signal.
    */
-  private _correlationId: string | null = null;
+  private readonly _executionContext = new AsyncLocalStorage<{ correlationId?: string; signal?: AbortSignal }>();
+  private get _correlationId(): string | null {
+    return this._executionContext.getStore()?.correlationId ?? null;
+  }
 
   /**
    * Id factory for tool-minted correlation ids (currently the `ask_operator`
@@ -3079,12 +3083,14 @@ export class ToolExecutor {
    * call persists. Restored (not just cleared) on exit so a nested dispatch
    * can't strand a stale id.
    */
-  async execute(call: ToolCall, opts?: { correlationId?: string }): Promise<ToolResult> {
-    const previousCorrelationId = this._correlationId;
-    this._correlationId = opts?.correlationId ?? null;
+  async execute(call: ToolCall, opts?: { correlationId?: string; signal?: AbortSignal }): Promise<ToolResult> {
+    const signal = opts?.signal ?? this._executionContext.getStore()?.signal;
+    return this._executionContext.run({ correlationId: opts?.correlationId, signal }, async () => {
     try {
+      signal?.throwIfAborted();
       const scopedAuditVerdict = await this._evaluateScopedAuditGate(call);
       if (scopedAuditVerdict) return scopedAuditVerdict;
+      signal?.throwIfAborted();
 
       // Coverage-gate accounting (#audit-laziness). Counted BEFORE dispatch
       // so a tool that throws still contributes to the "total tool calls"
@@ -3112,9 +3118,8 @@ export class ToolExecutor {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: null, error: msg };
-    } finally {
-      this._correlationId = previousCorrelationId;
     }
+    });
   }
 
   /**
@@ -3224,7 +3229,7 @@ export class ToolExecutor {
         // it through the registry so it is guard-evaluated under its DECLARED
         // capability gate flags (a self-authored tool can never reach capability
         // its declared+approved guards deny).
-        const ext = this._dispatchExtensionTool(call);
+        const ext = await this._dispatchExtensionTool(call);
         if (ext) return ext;
         // Or a tool from a connected MCP server. The `mcp__<server>__<tool>`
         // name is matched by isUntrustedSourceTool, so the native loop fences
@@ -3253,91 +3258,39 @@ export class ToolExecutor {
     return { success: true, output: this.ctx.rememberCodebase(parsed.data) };
   }
 
-  /**
-   * The `self_extend` handler — a thin, Zod-validated front door to the session's
-   * `SelfExtensionRegistry.register`.
-   *
-   * Discipline (mirrors kernel_run): the payload is validated against
-   * {@link selfExtendArgsSchema} and a malformed/unshaped submission is rejected
-   * as an `is_error` result BEFORE the registry is touched — so it registers
-   * nothing and consumes no budget slot. A well-shaped submission is handed to
-   * the registry, which is the ONE authoritative validator: it enforces mandatory
-   * fail-closed capabilities, name charset, no built-in shadowing, and EVERY
-   * per-session limit, and it audits every outcome. This method never relaxes or
-   * re-implements any of that.
-   *
-   * GATING: refuses unless a registry is wired AND `allowModelSelfExtension` is
-   * enabled (the registry's `isEnabled()`), so the capability is OFF by default
-   * even if the tool were somehow reachable.
-   */
-  private selfExtend(args: Record<string, unknown>): ToolResult {
+  /** Validate model input before passing source to the isolated plugin lifecycle. */
+  private async selfExtend(args: Record<string, unknown>): Promise<ToolResult> {
     const registry = selfExtensionRegistryOf(this.ctx);
-    if (!registry || !registry.isEnabled()) {
-      return {
-        success: false,
-        output: null,
-        error:
-          "self_extend is unavailable: model self-extension is disabled. Enable `allowModelSelfExtension` to permit model-authored tools.",
-      };
+    if (!registry?.isEnabled()) {
+      return { success: false, output: null, error: "Model self-extension is disabled for this session." };
     }
-
-    // Validate-then-reject: no side effect on a malformed submission.
     const parsed = validateSelfExtendArgs(args);
-    if (!parsed.ok) {
-      return { success: false, output: null, error: parsed.error };
-    }
-
-    // The registry is the single validator + limits enforcer. `origin` is pinned
-    // to "model" (the model is the caller); `guards` are intentionally not
-    // accepted from the model — deny-only guard functions are not expressible
-    // over a JSON tool call, and the front door must never turn model text into a
-    // function.
-    const result = registry.register({ manifest: parsed.args.manifest, origin: "model" });
-    if (!result.ok) {
+    if (!parsed.ok) return { success: false, output: null, error: parsed.error };
+    const manager = this.ctx.executablePlugins;
+    if (!manager) {
       return {
-        success: false,
-        output: null,
-        error: `self_extend rejected: ${result.errors.join("; ")}`,
+        success: false, output: null,
+        error: "Executable plugins require a configured Docker or smolvm backend; source is never run on the host.",
       };
     }
-
-    const rec = result.record;
-    return {
-      success: true,
-      output: {
-        registered: true,
-        registrationId: rec.registrationId,
-        pluginId: rec.pluginId,
-        pluginName: rec.pluginName,
-        version: rec.version,
-        tools: rec.tools.map((t) => ({
-          name: t.name,
-          capabilities: [...t.capabilities],
-          gateFlags: { ...t.gateFlags },
-        })),
-        message: `Registered ${rec.tools.length} tool(s) into this session; they are now callable on subsequent turns, gated by their declared capabilities.`,
-      },
-    };
+    await manager.ready;
+    const request = parsed.args;
+    const context = this._executableContext("self_extend");
+    if (request.action === "list") {
+      return { success: true, output: { plugins: manager.list(), evolutionProfiles: Object.keys(this.ctx.executableEvolutionProfiles ?? {}) } };
+    }
+    if (request.action === "rollback") {
+      return manager.rollback(request.plugin_id, request.version_id, context);
+    }
+    if (request.action === "evolve") {
+      if (!this.ctx.evolveExecutablePlugin) {
+        return { success: false, output: null, error: "No controller-owned evolution profiles are configured." };
+      }
+      return this.ctx.evolveExecutablePlugin(request.plugin_id, request.profile, context.signal);
+    }
+    return manager.submit(request, context);
   }
 
-  /**
-   * Dispatch a call to a tool the model REGISTERED this session (via
-   * `self_extend`). Returns `null` when `call.name` is not a live registered tool
-   * (so the caller falls back to "Unknown tool"), or a `ToolResult` otherwise.
-   *
-   * A registered tool is authorized through the SAME deny-only guard floor
-   * everything else uses: a {@link GuardContext} is built from the tool's
-   * DECLARED capability gate flags (never a lighter class) and evaluated against
-   * the registry's guard set (`BUILTIN_GUARDS` + any contributed guards). A
-   * denial short-circuits to an `is_error` result.
-   *
-   * Registration is NOT execution: the registry governs policy, not tool bodies,
-   * and it never accepts a runtime implementation (see the "OUT OF SCOPE"
-   * section in plugins/self-extension.ts). So even a guard-approved call has no
-   * body to run in-process — it returns an explicit "no executable
-   * implementation" result. This is the security crux: a model-authored tool
-   * cannot reach ANY capability, whatever it declares.
-   */
   /**
    * Resolve the two deferred-tool control calls (`list_tools` / `load_tool`)
    * against the session's {@link DeferredToolRegistry}. Returns null when this
@@ -3368,7 +3321,22 @@ export class ToolExecutor {
     return { success: true, output: formatLoadResult(registry.load(names)) };
   }
 
-  private _dispatchExtensionTool(call: ToolCall): ToolResult | null {
+  private _executableContext(toolName: string) {
+    const bound = this.ctx.pluginExecutionContext?.() ?? {};
+    const execution = this._executionContext.getStore();
+    return {
+      ...bound,
+      signal: execution?.signal ?? bound.signal,
+      onEvent: (event: unknown) => {
+        this._executionContext.run(execution ?? {}, () => {
+          this.persistToolArtifact(toolName, { executable: event });
+        });
+        bound.onEvent?.(event);
+      },
+    };
+  }
+
+  private async _dispatchExtensionTool(call: ToolCall): Promise<ToolResult | null> {
     const registry = selfExtensionRegistryOf(this.ctx);
     if (!registry || !registry.isEnabled()) return null;
     const tool = registry.tool(call.name);
@@ -3380,7 +3348,7 @@ export class ToolExecutor {
       networkCapable: gate.networkCapable,
       localScope: gate.localScope,
       readOnly: gate.readOnly,
-      autonomyMode: this.ctx.autonomyMode ?? "standard",
+      autonomyMode: this.ctx.autonomyMode ?? DEFAULT_AUTONOMY_MODE,
       hasScope:
         !!this.ctx.scope ||
         (typeof this.ctx.scopePath === "string" && this.ctx.scopePath.length > 0),
@@ -3400,14 +3368,11 @@ export class ToolExecutor {
       };
     }
 
-    return {
-      success: false,
-      output: null,
-      error:
-        `Tool "${call.name}" is registered (capabilities: ${tool.capabilities.join(", ") || "none"}) ` +
-        "and passed its declared guards, but has no executable implementation in this session — " +
-        "model-authored tool bodies are not run in-process.",
-    };
+    const manager = this.ctx.executablePlugins;
+    if (!manager) {
+      return { success: false, output: null, error: `Executable backend is unavailable for "${call.name}".` };
+    }
+    return manager.execute(call.name, call.arguments ?? {}, this._executableContext(call.name));
   }
 
   private async httpRequest(args: Record<string, unknown>): Promise<ToolResult> {
@@ -3447,7 +3412,9 @@ export class ToolExecutor {
             method: parts.method,
             headers: { "Content-Type": "application/json", ...parts.headers },
             body: parts.body ?? undefined,
-            signal: controller.signal,
+            signal: this._executionContext.getStore()?.signal
+              ? AbortSignal.any([controller.signal, this._executionContext.getStore()!.signal!])
+              : controller.signal,
             redirect: "manual",
           },
           this.ctx.attribution,
@@ -5518,7 +5485,9 @@ export class ToolExecutor {
     // auth-header injection above; the card shows the model's original intent).
     const displayCommand = (args.command as string).trim();
     const startedAt = Date.now();
-    const outcome = await runBashWithWallclock(command, { timeoutMs, ceilingMs, env });
+    const outcome = await runBashWithWallclock(command, {
+      timeoutMs, ceilingMs, env, signal: this._executionContext.getStore()?.signal,
+    });
     const durationMs = Date.now() - startedAt;
 
     if (outcome.kind === "timeout") {
@@ -5977,6 +5946,13 @@ export class ToolExecutor {
           costLedger: this.ctx.costLedger,
           costCeilingUsd: this.ctx.costCeilingUsd,
           costModel: this.ctx.costModel,
+          scopePath: this.ctx.scopePath,
+          autonomyMode: this.ctx.autonomyMode,
+          allowModelSelfExtension: this.ctx.selfExtension?.isEnabled() ?? false,
+          executablePlugins: this.ctx.executablePluginConfiguration,
+          executableEvolutionProfiles: this.ctx.executableEvolutionProfiles,
+          enforcement: this.ctx.enforcement,
+          rateLimiter: this.ctx.rateLimiter,
           // `native-loop.ts` copies this straight onto the child's ToolContext,
           // which is where the child messaging tools read it from. Declared
           // there as `unknown`, hence the cast on the config literal below.
@@ -5984,6 +5960,7 @@ export class ToolExecutor {
         } as Parameters<typeof runNativeAgentLoop>[0]["config"],
         runtime: rt,
         db: null,
+        signal: this._executionContext.getStore()?.signal,
         getPendingUserMessages: childMessaging
           ? () => renderInboundBatch(drainInbox(childMessaging.projectPath, base.agent_id, childMessaging.homeDir)).rendered.map((message) => message.text)
           : undefined,
@@ -6109,10 +6086,18 @@ export class ToolExecutor {
         costLedger: this.ctx.costLedger,
         costCeilingUsd: this.ctx.costCeilingUsd,
         costModel: this.ctx.costModel,
+        scopePath: this.ctx.scopePath,
+        autonomyMode: this.ctx.autonomyMode,
+        allowModelSelfExtension: this.ctx.selfExtension?.isEnabled() ?? false,
+        executablePlugins: this.ctx.executablePluginConfiguration,
+        executableEvolutionProfiles: this.ctx.executableEvolutionProfiles,
+        enforcement: this.ctx.enforcement,
+        rateLimiter: this.ctx.rateLimiter,
         ...(childMessaging ? { agentMessaging: childMessaging } : {}),
       } as Parameters<typeof runNativeAgentLoop>[0]["config"],
       runtime: rt,
       db: null,
+      signal: this._executionContext.getStore()?.signal,
       getPendingUserMessages: childMessaging
         ? () => renderInboundBatch(drainInbox(childMessaging.projectPath, base.agent_id, childMessaging.homeDir)).rendered.map((message) => message.text)
         : undefined,

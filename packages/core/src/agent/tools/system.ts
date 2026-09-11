@@ -218,17 +218,22 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
   self_extend: {
     name: "self_extend",
     description:
-      "Register NEW model-authored tools into THIS session (the 'it builds itself' capability). " +
-      "Additive-only and session-scoped: registered tools live in memory for this session, are never " +
-      "written to disk, and never affect another session. Off unless the operator enabled " +
-      "`allowModelSelfExtension` — when disabled this tool is absent or refuses. " +
-      "Submit a plugin `manifest` naming the tools to add. Each tool MUST declare `capabilities` " +
-      "(non-empty; one or more of: network, filesystem-read, filesystem-write, process-exec, findings-write) — " +
-      "those declared capabilities become the tool's authorization gate, so a self-authored tool can never " +
-      "grant itself more capability than it declares. A tool name may not shadow a built-in. Per-session limits " +
-      "apply (at most 8 extensions, 8 tools per extension, 32 tools total, 16KiB per manifest); an over-limit or " +
-      "malformed submission is rejected with an error and registers nothing.",
+      "Create or update executable TypeScript tools, reusable skills, and agent programs in the configured sandbox. " +
+      "For submit, provide manifest, files, entry, and optionally kind (tool, skill, agent). " +
+      "The entry exports async run(toolName, args, sdk); compose behavior with sdk.callTool, sdk.callSkill, " +
+      "and sdk.callModel. Declare compute for guest-only computation, model-call for provider access, " +
+      "and applicable network/filesystem-read/filesystem-write/process-exec/findings-write capabilities. " +
+      "Code never executes in the host harness. Active versions persist for reuse; existing invocations remain pinned. " +
+      "Structural activation is not proof of semantic improvement. Use evolve with a controller-owned profile " +
+      "for evaluated improvement, list to discover reusable code/versions, or rollback to restore an earlier version.",
     parameters: {
+      action: { type: "string", enum: ["submit", "list", "evolve", "rollback"], description: "Lifecycle operation; defaults to submit." },
+      files: { type: "object", description: "Relative source paths mapped to complete UTF-8 contents. Required for submit." },
+      entry: { type: "string", description: "Relative TypeScript entry path exporting run(toolName, args, sdk). Required for submit." },
+      kind: { type: "string", enum: ["tool", "skill", "agent"], description: "Executable contribution kind; defaults to tool." },
+      plugin_id: { type: "string", description: "Plugin ID for evolve or rollback." },
+      version_id: { type: "string", description: "Retained version to restore for rollback." },
+      profile: { type: "string", description: "Controller-owned evaluation profile name for evolve." },
       manifest: {
         type: "object",
         description:
@@ -238,7 +243,6 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
           "required?: string[], capabilities: string[] (non-empty) } ] }.",
       },
     },
-    required: ["manifest"],
   },
 
   pty_session: {

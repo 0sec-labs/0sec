@@ -524,7 +524,7 @@ export class SelfExtensionRegistry {
    *
    * Every outcome, success or rejection, is recorded as an audit event.
    */
-  register(submission: ExtensionSubmission): RegistrationResult {
+  register(submission: ExtensionSubmission, options?: { replace?: boolean }): RegistrationResult {
     const origin: ExtensionOrigin = submission?.origin === "operator" ? "operator" : "model";
     const registrationId = `ext-${++this.seq}`;
     const errors: string[] = [];
@@ -539,9 +539,19 @@ export class SelfExtensionRegistry {
         "self-extension is disabled; enable `allowModelSelfExtension` to permit model-authored tools",
       ]);
     }
+    const replacementId = options?.replace && isPlainObject(submission.manifest)
+      ? submission.manifest.id
+      : undefined;
+    const replacement = typeof replacementId === "string"
+      ? this.live.find((entry) => !entry.revoked && entry.record.pluginId === replacementId)
+      : undefined;
+    if (replacement && (replacement.record.origin !== "model" || origin !== "model" || replacement.guards.length > 0)) {
+      return this.reject(registrationId, origin, 0, 0, ["replacement cannot revoke operator contributions or contributed guards"]);
+    }
+    const liveNames = this.liveToolNames(replacement);
 
     // ── bound: live extensions ──
-    if (this.liveCount() >= this.maxExtensions) {
+    if (this.liveCount() - (replacement ? 1 : 0) >= this.maxExtensions) {
       return this.reject(registrationId, origin, 0, 0, [
         `extension limit reached: at most ${this.maxExtensions} extensions may be registered per session`,
       ]);
@@ -575,7 +585,7 @@ export class SelfExtensionRegistry {
     // ── the ONE validator: capabilities mandatory, fail-closed, no shadowing ──
     // Reserved names are the caller's built-ins PLUS every currently live
     // contributed name, so a second extension cannot shadow the first either.
-    const reserved = [...this.reserved, ...this.liveToolNames()];
+    const reserved = [...this.reserved, ...liveNames];
     const validation = validatePluginManifest(submission.manifest, { reservedToolNames: reserved });
     if (!validation.ok) {
       errors.push(...validation.errors);
@@ -589,13 +599,13 @@ export class SelfExtensionRegistry {
         `tool limit reached: at most ${this.maxToolsPerExtension} tools may be contributed per extension`,
       );
     }
-    if (this.liveToolNames().length + manifest.tools.length > this.maxToolsPerSession) {
+    if (liveNames.length + manifest.tools.length > this.maxToolsPerSession) {
       errors.push(
         `session tool limit reached: at most ${this.maxToolsPerSession} contributed tools may be live per session`,
       );
     }
     // A duplicate plugin id would make the audit trail ambiguous.
-    if (this.live.some((r) => !r.revoked && r.record.pluginId === manifest.id)) {
+    if (this.live.some((r) => r !== replacement && !r.revoked && r.record.pluginId === manifest.id)) {
       errors.push(`plugin id "${manifest.id}" is already registered in this session`);
     }
 
@@ -651,7 +661,12 @@ export class SelfExtensionRegistry {
       digest,
       revoked: false,
     };
-    this.live.push(entry);
+    if (replacement) {
+      this.live[this.live.indexOf(replacement)] = entry;
+      this.revoke(replacement);
+    } else {
+      this.live.push(entry);
+    }
 
     this.emit({
       kind: "registered",
@@ -845,10 +860,10 @@ export class SelfExtensionRegistry {
     return this.live.reduce((n, r) => n + (r.revoked ? 0 : 1), 0);
   }
 
-  private liveToolNames(): string[] {
+  private liveToolNames(exclude?: LiveRegistration): string[] {
     const names: string[] = [];
     for (const reg of this.live) {
-      if (reg.revoked) continue;
+      if (reg.revoked || reg === exclude) continue;
       for (const t of reg.tools) names.push(t.name);
     }
     return names;

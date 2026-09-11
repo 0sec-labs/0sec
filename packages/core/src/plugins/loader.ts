@@ -1056,6 +1056,18 @@ export class PluginHost {
         });
         return;
       }
+      case "request_tool":
+      case "request_skill":
+      case "request_model": {
+        live.channel.write(encodeHostMessage({
+          v: 1,
+          kind: "broker_error",
+          id: msg.id,
+          code: "unsupported_broker",
+          message: "Host-mediated SDK calls require the isolated executable plugin runtime.",
+        }));
+        return;
+      }
       case "list_tools": {
         // The manifest is the contract; a runtime tool list cannot widen it.
         // We accept and ignore the frame so a chatty SDK is not fatal.

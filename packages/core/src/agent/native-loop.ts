@@ -9,7 +9,7 @@ import type {
   NativeRuntimeResult,
 } from "../runtime/types.js";
 import type { AuthConfig } from "@0sec/shared";
-import { resolveIdentities } from "@0sec/shared";
+import { resolveIdentities, DEFAULT_AUTONOMY_MODE, DEFAULT_ALLOW_MODEL_SELF_EXTENSION } from "@0sec/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
 import { toNativeToolDef, toNativeExtensionToolDef } from "./native-tooldef.js";
 import { SessionEngine } from "./session.js";
@@ -20,12 +20,11 @@ import type { EnforcementTracker } from "../scope/enforcement.js";
 import { WafDetector } from "../scope/waf-detect.js";
 import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "./tools.js";
 import { SelfExtensionRegistry } from "../plugins/self-extension.js";
-import type {
-  RegisteredExtensionTool,
-  SelfExtensionEvent,
-  SelfExtensionSnapshot,
-} from "../plugins/self-extension.js";
+import { createExecutablePlugins, executableModelResult, parseExecutableModelRequest, resolveExecutableEvolutionProfiles, type ExecutablePluginConfiguration } from "./executable-plugins.js";
+import type { EvolutionConfig } from "../improvement/types.js";
+import type { SelfExtensionEvent } from "../plugins/self-extension.js";
 import { BUILTIN_GUARDS } from "../plugins/guards.js";
+import { checkInvocationCapabilities, NETWORK_CAPABLE_TOOLS, LOCAL_SCOPE_TOOLS, READ_ONLY_TOOLS, type ToolGateFlags } from "../plugins/capability-classification.js";
 import { ToolHealthTracker } from "./tool-health.js";
 import type { ToolHealthSummary } from "./tool-health.js";
 import { TodoTracker, buildTodosPayload } from "./todos.js";
@@ -311,17 +310,11 @@ export interface NativeAgentConfig {
    * `trust-graph-runtime.ts` for the full contract.
    */
   trustGraph?: TrustGraphConfig;
-  /**
-   * Model self-extension (the "it builds itself" capability). OFF BY DEFAULT and
-   * load-bearing: only an explicit `true` constructs an ENABLED
-   * `SelfExtensionRegistry` for the session and injects the `self_extend` tool
-   * into the model-facing tool set. When false/omitted the registry is inert,
-   * `self_extend` is absent from the tool set, and any call to it refuses. The
-   * registry is session-scoped (in-memory, never persisted) and additive-only;
-   * it enforces every limit in plugins/self-extension.ts. Mirrors the operator
-   * setting `allowModelSelfExtension` (SELF_EXTENSION_SETTING_DEF).
-   */
+  /** Sandboxed TypeScript tools, skills, and agent programs; never enabled for verifier roles. */
   allowModelSelfExtension?: boolean;
+  autonomyMode?: ToolContext["autonomyMode"];
+  executablePlugins?: ExecutablePluginConfiguration;
+  executableEvolutionProfiles?: Record<string, EvolutionConfig>;
   /**
    * Enable codebase learning: recall prior source-grounded notes into context
    * at loop start and expose the `remember_codebase` tool. For scoped source
@@ -337,6 +330,8 @@ export interface NativeAgentLoopOptions {
   config: NativeAgentConfig;
   runtime: NativeRuntime;
   db: osecDB | null;
+  /** Cancels model requests, executable guests, and subsequent tool dispatch. */
+  signal?: AbortSignal;
   onTurn?: (
     turn: number,
     toolCalls: ToolCall[],
@@ -537,16 +532,7 @@ export async function runNativeAgentLoop(
   const session =
     config.session ?? (identities.length > 0 ? new SessionEngine(identities) : undefined);
 
-  // ── Model self-extension (session-scoped, additive-only) ──
-  // OFF by default: only an explicit `allowModelSelfExtension === true` builds an
-  // ENABLED registry. The registry is constructed with the deny-only built-in
-  // guard floor and the built-in tool names as reserved (so a model-registered
-  // tool can never shadow a built-in), and enforces every per-session limit
-  // itself. It lives only in this closure — session-scoped, never persisted, and
-  // discarded when the loop returns. Every registration attempt (success OR
-  // rejection) is surfaced via `onEvent` so the TUI/journal can show what the
-  // model registered.
-  const selfExtensionEnabled = config.allowModelSelfExtension === true;
+  const selfExtensionEnabled = (config.allowModelSelfExtension ?? DEFAULT_ALLOW_MODEL_SELF_EXTENSION) && config.role !== "verify";
   const selfExtension = new SelfExtensionRegistry({
     enabled: selfExtensionEnabled,
     baseGuards: BUILTIN_GUARDS,
@@ -577,6 +563,7 @@ export async function runNativeAgentLoop(
     target: config.target,
     scanId: config.scanId,
     role: config.role,
+    autonomyMode: config.autonomyMode ?? DEFAULT_AUTONOMY_MODE,
     findings: [],
     attackResults: [],
     targetInfo: {},
@@ -635,11 +622,19 @@ export async function runNativeAgentLoop(
     }),
   };
 
-  // Attach the self-extension registry to the tool context (via the same cast
-  // pattern the messaging runtime uses) so the `self_extend` handler and the
-  // model-registered-tool dispatcher both resolve THIS session's registry.
-  (toolCtx as ToolContext & { selfExtension?: SelfExtensionRegistry }).selfExtension =
-    selfExtension;
+  const executablePlugins = selfExtensionEnabled
+    ? createExecutablePlugins(selfExtension, config.executablePlugins)
+    : undefined;
+  const executionAbort = new AbortController();
+  const executionSignal = opts.signal
+    ? AbortSignal.any([opts.signal, executionAbort.signal])
+    : executionAbort.signal;
+  toolCtx.selfExtension = selfExtension;
+  toolCtx.executablePlugins = executablePlugins;
+  toolCtx.executablePluginConfiguration = config.executablePlugins;
+  toolCtx.executableEvolutionProfiles = selfExtensionEnabled
+    ? resolveExecutableEvolutionProfiles(config.executableEvolutionProfiles)
+    : {};
 
   const huntMemoryEnabled =
     process.env["0SEC_DISABLE_HUNT_MEMORY"] !== "1" &&
@@ -805,10 +800,9 @@ export async function runNativeAgentLoop(
     }
   }
 
-  // Journal replay owns messages; the persisted session still owns the pinned
-  // extension definitions. Restore both before the first resumed model turn.
+  // Replay conversation state; executable definitions come from the durable
+  // source library, never metadata-only snapshots with missing implementations.
   const existingSession = config.sessionId && db ? db.getSessionById(config.sessionId) : undefined;
-  let restoredExtensionState = false;
   if (existingSession && (existingSession.status === "paused" || rehydratedFromJournal)) {
     const ctx = JSON.parse(existingSession.toolContext) as Partial<PersistedNativeToolContext>;
     if (!rehydratedFromJournal) {
@@ -819,24 +813,6 @@ export async function runNativeAgentLoop(
       toolCtx.targetInfo = ctx.targetInfo ?? {};
       onEvent?.("session_resumed", { sessionId, turnCount, messageCount: messages.length });
     }
-    const extSnapshot = ctx.selfExtension;
-    if (extSnapshot !== undefined) {
-      try {
-        selfExtension.restore(extSnapshot);
-        restoredExtensionState = true;
-        syncExtensionTools();
-        onEvent?.("self_extension_restored", { sessionId, registrationCount: extSnapshot.registrations.length });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        onEvent?.("self_extension_restore_failed", { sessionId, error: message });
-        throw new Error(`Cannot resume session with incompatible extension state: ${message}`);
-      }
-    }
-  }
-  if (rehydratedFromJournal && !restoredExtensionState && messages.some((message) =>
-    Array.isArray(message.content) && message.content.some((block) => block.type === "tool_use" && block.name === "self_extend")
-  )) {
-    throw new Error("Cannot replay extension calls without the persisted session extension snapshot");
   }
 
   // If fresh start, add the initial user message
@@ -914,6 +890,108 @@ export async function runNativeAgentLoop(
     costCeilingExceeded: false,
     killSwitchTriggered: false,
     inlineValidations: [],
+  };
+  let pendingValidationNotes: string[] | undefined;
+  let pendingActionLog: ToolCallLogEntry[] | undefined;
+  const invokePluginModel = async (request: unknown, requestSignal?: AbortSignal) => {
+    if (!pendingActionLog) throw new Error("No active parent tool round.");
+    const parsed = parseExecutableModelRequest(request);
+    const signal = requestSignal ? AbortSignal.any([executionSignal, requestSignal]) : executionSignal;
+    signal.throwIfAborted();
+    const runningCost = config.costLedger?.totalCostUsd() ?? estimateCost(state.totalUsage, config.costModel);
+    if (config.costCeilingUsd && runningCost >= config.costCeilingUsd) {
+      state.costCeilingExceeded = true;
+      throw new Error("Parent scan cost ceiling is exhausted.");
+    }
+    if (config.enforcement?.isKillExpired()) throw new Error("Parent scan wall-clock allowance is exhausted.");
+    let streamedUsage: NativeRuntimeResult["usage"];
+    const result = await runtime.executeNative(
+      parsed.system, parsed.messages, parsed.tools,
+      { onUsage: (usage) => { streamedUsage = usage; } }, signal,
+    );
+    const usage = result.usage ?? streamedUsage;
+    if (usage) {
+      state.totalUsage.inputTokens += usage.inputTokens;
+      state.totalUsage.outputTokens += usage.outputTokens;
+      state.totalUsage.cachedInputTokens += usage.cachedInputTokens ?? 0;
+      config.costLedger?.add(usage, config.costModel);
+      state.estimatedCostUsd = estimateCost(state.totalUsage, config.costModel);
+      onEvent?.("usage", {
+        turn: state.turnCount, inputTokens: state.totalUsage.inputTokens,
+        outputTokens: state.totalUsage.outputTokens, estimatedCostUsd: state.estimatedCostUsd,
+      });
+      eventBus.emit("cost_update", {
+        cost_usd: state.estimatedCostUsd, turn: state.turnCount,
+        input_tokens: state.totalUsage.inputTokens, output_tokens: state.totalUsage.outputTokens,
+        token_input: state.totalUsage.inputTokens, token_output: state.totalUsage.outputTokens,
+      });
+    }
+    return executableModelResult(result);
+  };
+  const resolveToolGateFlags = (name: string): ToolGateFlags => ({
+    networkCapable: NETWORK_CAPABLE_TOOLS[name] === true,
+    localScope: LOCAL_SCOPE_TOOLS[name] === true,
+    readOnly: READ_ONLY_TOOLS[name] === true,
+  });
+  toolCtx.pluginExecutionContext = () => ({
+    signal: executionSignal,
+    invokeModel: invokePluginModel,
+    invokeTool: async (name, args, signal, capabilities) => {
+      const actionLog = pendingActionLog;
+      const validationNotes = pendingValidationNotes;
+      if (!actionLog || !validationNotes) {
+        return { success: false, output: null, error: "No active parent tool round." };
+      }
+      if (!nativeTools.some((tool) => tool.name === name)) {
+        return { success: false, output: null, error: `Tool "${name}" is not available to the parent agent role.` };
+      }
+      // Both execution surfaces use the same built-in gate classification.
+      if (capabilities) {
+        const gate = resolveToolGateFlags(name);
+        const check = checkInvocationCapabilities(name, capabilities, gate);
+        if (!check.allowed) {
+          return { success: false, output: null, error: check.reason ?? `Tool "${name}" denied by executable capability gate.` };
+        }
+      }
+      const effectiveSignal = signal ? AbortSignal.any([executionSignal, signal]) : executionSignal;
+      effectiveSignal.throwIfAborted();
+      const call: ToolCall = { name, arguments: args };
+      const correlationId = newCorrelationId();
+      const startedAt = Date.now();
+      toolsUsedSet.add(name);
+      if (name === "save_finding") saveFindingCalled = true;
+      eventBus.emit("tool_call_started", {
+        tool: name, turn: state.turnCount, args_preview: toolCallPreview(call).slice(0, 200), ts: startedAt,
+      });
+      shadowJournal.append({ kind: "tool_call", tool: name, arguments: args, turn: state.turnCount, callId: correlationId });
+      const result = await executor.execute(call, { correlationId, signal: effectiveSignal });
+      actionLog.push(buildToolCallLogEntry({
+        call, correlationId, startedAt, endedAt: Date.now(),
+        result: { success: result.success, error: result.error },
+      }));
+      shadowJournal.append({
+        kind: "tool_result", tool: name, ok: result.success, turn: state.turnCount, callId: correlationId,
+        ...(result.success ? { output: result.output } : { error: result.error }),
+      });
+      eventBus.emit("tool_call_completed", {
+        tool: name, turn: state.turnCount, duration_ms: Date.now() - startedAt,
+        status: result.success ? "ok" : "error", ts: Date.now(),
+        ...(result.success ? {} : { error: result.error ?? "unknown" }),
+      });
+      await publishSavedFinding(call, result, validationNotes);
+      return result;
+    },
+  });
+  toolCtx.evolveExecutablePlugin = async (pluginId, profileName, evolveSignal) => {
+    const profiles = toolCtx.executableEvolutionProfiles;
+    if (!profiles || !Object.hasOwn(profiles, profileName) || !config.costModel || !executablePlugins) {
+      return { success: false, output: null, error: "Evolution requires a named operator evaluation profile and the active provider model ID." };
+    }
+    const signal = evolveSignal ? AbortSignal.any([executionSignal, evolveSignal]) : executionSignal;
+    return executablePlugins.evolve(pluginId, { ...profiles[profileName], model: config.costModel }, {
+      signal,
+      model: (system, messages, tools, signal) => invokePluginModel({ system, messages, tools }, signal),
+    }, { ...toolCtx.pluginExecutionContext?.(), signal });
   };
 
   // Early-stop tracking: has the agent called save_finding at least once?
@@ -1018,6 +1096,8 @@ export async function runNativeAgentLoop(
 
   // ── Graceful cleanup on signals ──
   const signalCleanup = () => {
+    executionAbort.abort(new Error("Agent session interrupted."));
+    void executablePlugins?.close();
     executor.cleanup();
   };
   const unregisterSignalCleanup = registerSignalCleanup(signalCleanup);
@@ -1364,8 +1444,170 @@ export async function runNativeAgentLoop(
     return pending.length > 0;
   } : undefined;
 
+  async function publishSavedFinding(
+    call: ToolCall, toolResult: ToolResult, inlineValidationNotes: string[],
+  ): Promise<void> {
+      if (call.name === "save_finding" && toolResult.success) {
+        const f = toolResult.output as Record<string, unknown> | undefined;
+        const input = call.arguments ?? {};
+        const confidence =
+          typeof input.confidence === "number" && Number.isFinite(input.confidence)
+            ? input.confidence
+            : undefined;
+        eventBus.emit("finding_ingested", {
+          finding_id: typeof f?.id === "string" ? f.id : typeof f?.findingId === "string" ? f.findingId : undefined,
+          severity: typeof input.severity === "string" ? input.severity : undefined,
+          title: typeof input.title === "string" ? input.title : undefined,
+          description: typeof input.description === "string" ? input.description : undefined,
+          category: typeof input.category === "string" ? input.category : undefined,
+          confidence,
+          evidence_request:
+            typeof input.evidence_request === "string" && input.evidence_request.trim()
+              ? input.evidence_request
+              : undefined,
+          evidence_response:
+            typeof input.evidence_response === "string" && input.evidence_response.trim()
+              ? input.evidence_response
+              : undefined,
+          evidence_analysis:
+            typeof input.evidence_analysis === "string" && input.evidence_analysis.trim()
+              ? input.evidence_analysis
+              : undefined,
+          source_path:
+            typeof input.source_path === "string" && input.source_path.trim()
+              ? input.source_path
+              : undefined,
+          source_start_line:
+            typeof input.source_start_line === "number" && Number.isInteger(input.source_start_line)
+              ? input.source_start_line
+              : undefined,
+          source_end_line:
+            typeof input.source_end_line === "number" && Number.isInteger(input.source_end_line)
+              ? input.source_end_line
+              : undefined,
+          poc_steps:
+            typeof input.poc_steps === "string" && input.poc_steps.trim()
+              ? input.poc_steps
+              : undefined,
+          verification_spec:
+            typeof input.verification_spec === "string" && input.verification_spec.trim()
+              ? input.verification_spec
+              : undefined,
+        });
+        // Shadow journal: record the finding (#494) as a first-class entry so
+        // a rehydrated context sees confirmed findings without replaying the
+        // whole tool stream.
+        shadowJournal.append({
+          kind: "finding",
+          finding: { ...(f ?? {}), ...input },
+        });
+
+        // 0sec#771/#773 — cross-target `credential_shared` emit is now wired
+        // (opt-in) at the loot-harvest site: when `config.trustGraph` is set, a
+        // newly-harvested value whose hash matches a prior scan's credential
+        // from a DIFFERENT source target emits a `credential_shared` entry via
+        // `trustGraph.noteHarvest` (see the harvest block below). It hangs off
+        // the durable store rather than save_finding because the reuse signal is
+        // the recovered VALUE, not the finding shape. No-op when trustGraph is
+        // not opted in, so this single-target finding path is unchanged.
+
+        // ── Accepted finding callback + inline validation (#554) ──
+        // First expose the actual persisted finding (not the agent's proposed
+        // tool arguments) to optional sinks. Then, for high/critical findings,
+        // run the cheap deterministic oracle and feed the verdict back so the
+        // agent stops piling on a confirmed lead — or knows not to assume
+        // success on an unconfirmed one. The callback fires only for a new
+        // saved record; a dedup merge is skipped. Inline errors remain
+        // inconclusive, never false-positive.
+        const saveMsg = typeof f?.message === "string" ? f.message : "";
+        const findingId = typeof f?.findingId === "string" ? f.findingId : undefined;
+        const saved =
+          saveMsg === "Finding saved" && findingId
+            ? toolCtx.findings.find((x) => x.id === findingId)
+            : undefined;
+        if (saved) {
+          try {
+            await onFindingSaved?.(saved);
+          } catch {
+            // External sinks must not make a successfully-saved local finding fail.
+          }
+          // Hunt memory: persist a redacted record of this finding so future
+          // hunts on this / similar targets can learn from it. Self-contained
+          // and best-effort — swallows its own errors, never blocks the save.
+          recordFindingToMemory(saved);
+          // Live findings tail (data path for a `tail -f findings.md`-style
+          // view). Additive + non-blocking: gated on the coordinator-rails flag,
+          // emits one sanitized single-line summary through `onEvent` as each
+          // finding lands. Best-effort — a formatter error never fails the save.
+          if (coordinatorRailsEnabled) {
+            try {
+              const tailLine = formatFindingTailLine(saved);
+              if (tailLine) {
+                onEvent?.("findings_tail", {
+                  turn: state.turnCount,
+                  findingId: saved.id,
+                  line: tailLine,
+                });
+              }
+            } catch {
+              /* findings tail is best-effort, never blocks the loop */
+            }
+          }
+        }
+        if (
+          features.inlineValidation &&
+          saved &&
+          shouldValidateInline(saved)
+        ) {
+          const inlineStartedAt = Date.now();
+          const outcome = await validateFindingInline(saved, config.target, {
+            oracle: inlineValidationOracle,
+          });
+          // Stamp the verdict on the finding so EGATS scoreEvidence and the
+          // batch oracle/PoV gate can read it (skip the redundant re-run).
+          saved.inlineValidation = {
+            confirmed: outcome.confirmed,
+            inconclusive: outcome.inconclusive,
+            reason: outcome.reason,
+            evidence: outcome.evidence || undefined,
+            confidence: outcome.confidence,
+          };
+          state.inlineValidations.push(outcome);
+          inlineValidationNotes.push(buildInlineValidationNote(outcome));
+
+          const inlinePayload = {
+            turn: state.turnCount,
+            findingId: outcome.findingId,
+            category: outcome.category,
+            severity: outcome.severity,
+            confirmed: outcome.confirmed,
+            inconclusive: outcome.inconclusive,
+            reason: outcome.reason,
+            durationMs: Date.now() - inlineStartedAt,
+          };
+          onEvent?.("inline_validation", inlinePayload);
+          eventBus.emit("inline_validation", inlinePayload);
+          if (db) {
+            db.logEvent({
+              scanId: config.scanId,
+              stage: config.role,
+              eventType: "inline_validation",
+              agentRole: config.role,
+              payload: inlinePayload,
+              timestamp: Date.now(),
+            });
+          }
+        }
+      }
+  }
   try {
+  await executablePlugins?.ready;
+  syncExtensionTools();
   while (!state.done && state.turnCount < config.maxTurns) {
+    if (executionSignal.aborted) {
+      state.summary = "Error: Agent execution cancelled.";
+      break;
+    }
     // ── Coordinator rails: supervise sub-agents BETWEEN iterations ──
     // No-op unless the feature flag is on. Read-only observation + logging.
     runCoordinatorSupervisor();
@@ -1556,6 +1798,7 @@ export async function runNativeAgentLoop(
             }
           : {}),
       },
+      executionSignal,
     );
 
     // Drain any trailing delta buffer before the turn-completed event so
@@ -1852,10 +2095,12 @@ export async function runNativeAgentLoop(
     // each with its own wall clock + the correlation id that joins it to the
     // `tool_artifact` row). Persisted below as the `tool_calls` payload.
     const actionLog: ToolCallLogEntry[] = [];
+    pendingActionLog = actionLog;
     // Inline-validation context notes accumulated this turn (#554). Appended as
     // text blocks to the tool-results user message below so the agent sees the
     // confirmed/unconfirmed verdict on its NEXT turn.
     const inlineValidationNotes: string[] = [];
+    pendingValidationNotes = inlineValidationNotes;
 
     for (const block of toolUseBlocks) {
       const call: ToolCall = { name: block.name, arguments: block.input };
@@ -1925,7 +2170,7 @@ export async function runNativeAgentLoop(
         callId: block.id,
       });
 
-      const toolResult = await executor.execute(call, { correlationId });
+      const toolResult = await executor.execute(call, { correlationId, signal: executionSignal });
       const toolEndedAt = Date.now();
       toolResults.push(toolResult);
       onToolUpdate?.(state.turnCount, toolCalls, toolResults, textContent, turnTelemetry);
@@ -1968,158 +2213,7 @@ export async function runNativeAgentLoop(
       // stamped back onto the call args (LLM self-report clamped UP to a
       // PoC-status floor — see agent/finding-confidence.ts), not the raw
       // LLM-reported number.
-      if (block.name === "save_finding" && toolResult.success) {
-        const f = toolResult.output as Record<string, unknown> | undefined;
-        const input = block.input as Record<string, unknown>;
-        const confidence =
-          typeof input.confidence === "number" && Number.isFinite(input.confidence)
-            ? input.confidence
-            : undefined;
-        eventBus.emit("finding_ingested", {
-          finding_id: typeof f?.id === "string" ? f.id : typeof f?.findingId === "string" ? f.findingId : undefined,
-          severity: typeof input.severity === "string" ? input.severity : undefined,
-          title: typeof input.title === "string" ? input.title : undefined,
-          description: typeof input.description === "string" ? input.description : undefined,
-          category: typeof input.category === "string" ? input.category : undefined,
-          confidence,
-          evidence_request:
-            typeof input.evidence_request === "string" && input.evidence_request.trim()
-              ? input.evidence_request
-              : undefined,
-          evidence_response:
-            typeof input.evidence_response === "string" && input.evidence_response.trim()
-              ? input.evidence_response
-              : undefined,
-          evidence_analysis:
-            typeof input.evidence_analysis === "string" && input.evidence_analysis.trim()
-              ? input.evidence_analysis
-              : undefined,
-          source_path:
-            typeof input.source_path === "string" && input.source_path.trim()
-              ? input.source_path
-              : undefined,
-          source_start_line:
-            typeof input.source_start_line === "number" && Number.isInteger(input.source_start_line)
-              ? input.source_start_line
-              : undefined,
-          source_end_line:
-            typeof input.source_end_line === "number" && Number.isInteger(input.source_end_line)
-              ? input.source_end_line
-              : undefined,
-          poc_steps:
-            typeof input.poc_steps === "string" && input.poc_steps.trim()
-              ? input.poc_steps
-              : undefined,
-          verification_spec:
-            typeof input.verification_spec === "string" && input.verification_spec.trim()
-              ? input.verification_spec
-              : undefined,
-        });
-        // Shadow journal: record the finding (#494) as a first-class entry so
-        // a rehydrated context sees confirmed findings without replaying the
-        // whole tool stream.
-        shadowJournal.append({
-          kind: "finding",
-          finding: { ...(f ?? {}), ...input },
-        });
-
-        // 0sec#771/#773 — cross-target `credential_shared` emit is now wired
-        // (opt-in) at the loot-harvest site: when `config.trustGraph` is set, a
-        // newly-harvested value whose hash matches a prior scan's credential
-        // from a DIFFERENT source target emits a `credential_shared` entry via
-        // `trustGraph.noteHarvest` (see the harvest block below). It hangs off
-        // the durable store rather than save_finding because the reuse signal is
-        // the recovered VALUE, not the finding shape. No-op when trustGraph is
-        // not opted in, so this single-target finding path is unchanged.
-
-        // ── Accepted finding callback + inline validation (#554) ──
-        // First expose the actual persisted finding (not the agent's proposed
-        // tool arguments) to optional sinks. Then, for high/critical findings,
-        // run the cheap deterministic oracle and feed the verdict back so the
-        // agent stops piling on a confirmed lead — or knows not to assume
-        // success on an unconfirmed one. The callback fires only for a new
-        // saved record; a dedup merge is skipped. Inline errors remain
-        // inconclusive, never false-positive.
-        const saveMsg = typeof f?.message === "string" ? f.message : "";
-        const findingId = typeof f?.findingId === "string" ? f.findingId : undefined;
-        const saved =
-          saveMsg === "Finding saved" && findingId
-            ? toolCtx.findings.find((x) => x.id === findingId)
-            : undefined;
-        if (saved) {
-          try {
-            await onFindingSaved?.(saved);
-          } catch {
-            // External sinks must not make a successfully-saved local finding fail.
-          }
-          // Hunt memory: persist a redacted record of this finding so future
-          // hunts on this / similar targets can learn from it. Self-contained
-          // and best-effort — swallows its own errors, never blocks the save.
-          recordFindingToMemory(saved);
-          // Live findings tail (data path for a `tail -f findings.md`-style
-          // view). Additive + non-blocking: gated on the coordinator-rails flag,
-          // emits one sanitized single-line summary through `onEvent` as each
-          // finding lands. Best-effort — a formatter error never fails the save.
-          if (coordinatorRailsEnabled) {
-            try {
-              const tailLine = formatFindingTailLine(saved);
-              if (tailLine) {
-                onEvent?.("findings_tail", {
-                  turn: state.turnCount,
-                  findingId: saved.id,
-                  line: tailLine,
-                });
-              }
-            } catch {
-              /* findings tail is best-effort, never blocks the loop */
-            }
-          }
-        }
-        if (
-          features.inlineValidation &&
-          saved &&
-          shouldValidateInline(saved)
-        ) {
-          const inlineStartedAt = Date.now();
-          const outcome = await validateFindingInline(saved, config.target, {
-            oracle: inlineValidationOracle,
-          });
-          // Stamp the verdict on the finding so EGATS scoreEvidence and the
-          // batch oracle/PoV gate can read it (skip the redundant re-run).
-          saved.inlineValidation = {
-            confirmed: outcome.confirmed,
-            inconclusive: outcome.inconclusive,
-            reason: outcome.reason,
-            evidence: outcome.evidence || undefined,
-            confidence: outcome.confidence,
-          };
-          state.inlineValidations.push(outcome);
-          inlineValidationNotes.push(buildInlineValidationNote(outcome));
-
-          const inlinePayload = {
-            turn: state.turnCount,
-            findingId: outcome.findingId,
-            category: outcome.category,
-            severity: outcome.severity,
-            confirmed: outcome.confirmed,
-            inconclusive: outcome.inconclusive,
-            reason: outcome.reason,
-            durationMs: Date.now() - inlineStartedAt,
-          };
-          onEvent?.("inline_validation", inlinePayload);
-          eventBus.emit("inline_validation", inlinePayload);
-          if (db) {
-            db.logEvent({
-              scanId: config.scanId,
-              stage: config.role,
-              eventType: "inline_validation",
-              agentRole: config.role,
-              payload: inlinePayload,
-              timestamp: Date.now(),
-            });
-          }
-        }
-      }
+      await publishSavedFinding(call, toolResult, inlineValidationNotes);
 
       // Check if agent called done
       if (block.name === "done" && toolResult.success) {
@@ -2542,7 +2636,7 @@ export async function runNativeAgentLoop(
 
     // Persist session state periodically
     if (db && state.turnCount % 2 === 0) {
-      persistSession(db, state, config, "running", selfExtension.snapshot());
+      persistSession(db, state, config, "running");
     }
 
     // ── Cost ceiling check ──
@@ -2591,6 +2685,8 @@ export async function runNativeAgentLoop(
       state.done = false;
     }
     } finally {
+      pendingActionLog = undefined;
+      pendingValidationNotes = undefined;
       // Bus event: agent turn boundary end. Exit reason is inferred from
       // state flags set by the various break paths inside the body. If the
       // loop will iterate again (done=false and no early/error flag),
@@ -2672,7 +2768,7 @@ export async function runNativeAgentLoop(
 
   // Final session save
   if (db) {
-    persistSession(db, state, config, state.done ? "completed" : "paused", selfExtension.snapshot());
+    persistSession(db, state, config, state.done ? "completed" : "paused");
     db.logEvent({
       scanId: config.scanId,
       stage: config.role,
@@ -2751,7 +2847,9 @@ export async function runNativeAgentLoop(
 
   return state;
   } finally {
-    executor.cleanup();
+    executionAbort.abort(new Error("Agent session ended."));
+    await executor.cleanup();
+    await executablePlugins?.close();
     unregisterSignalCleanup();
     unsubscribeCoordinator();
   }
@@ -3481,7 +3579,6 @@ type PersistedNativeToolContext = {
   findings: ToolContext["findings"];
   attackResults: ToolContext["attackResults"];
   targetInfo: ToolContext["targetInfo"];
-  selfExtension?: SelfExtensionSnapshot;
 };
 
 function persistSession(
@@ -3489,7 +3586,6 @@ function persistSession(
   state: NativeAgentState,
   config: NativeAgentConfig,
   status: string,
-  extensionSnapshot?: SelfExtensionSnapshot,
 ): void {
   // Trim messages for storage — keep last N to stay under size limits
   const maxStoredMessages = 40;
@@ -3503,11 +3599,6 @@ function persistSession(
     attackResults: state.attackResults,
     targetInfo: state.targetInfo,
   };
-  // Persist the self-extension registry snapshot so session resume can
-  // reconstruct model-registered tools before the model's first turn.
-  if (extensionSnapshot) {
-    toolContext.selfExtension = extensionSnapshot;
-  }
 
   db.saveSession({
     id: state.sessionId,

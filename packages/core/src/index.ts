@@ -1883,6 +1883,16 @@ export type {
   ExtensionDisposer,
   ExtensionOrigin,
 } from "./plugins/self-extension.js";
+export { ExecutablePluginManager } from "./plugins/executable.js";
+export type {
+  ExecutablePluginContext,
+  ExecutablePluginOptions,
+  PluginRecord,
+  PluginVersionRecord,
+  PluginListEntry,
+} from "./plugins/executable.js";
+export type { ExecutablePluginConfiguration } from "./agent/executable-plugins.js";
+export type { InteractiveExecutionChannel } from "./runtime/interactive.js";
 // ── Third-party plugin lifecycle (install → enable → run → hot-swap) ──────────
 // These are the primitives the `0sec plugin` CLI surface drives. They are the
 // SAME modules the console loads plugins through, so the CLI never duplicates
@@ -2006,11 +2016,18 @@ export {
 export type {
   HostListToolsMessage,
   HostCallToolMessage,
+  HostToolDeliveryMessage,
+  HostSkillDeliveryMessage,
+  HostModelDeliveryMessage,
+  HostBrokerErrorMessage,
   HostMessage,
   PluginHandshakeMessage,
   PluginListToolsMessage,
   PluginToolResultMessage,
   PluginErrorMessage,
+  PluginCallToolRequest,
+  PluginCallSkillRequest,
+  PluginCallModelRequest,
   PluginMessage,
   ProtocolDecodeFailureReason,
   ProtocolDecodeFailure,

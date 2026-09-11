@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
 
 import { LlmApiRuntime } from "../runtime/llm-api.js";
+import { DEFAULT_AUTONOMY_MODE, DEFAULT_ALLOW_MODEL_SELF_EXTENSION } from "@0sec/shared";
 import type {
   NativeContentBlock,
   NativeMessage,
@@ -12,6 +13,8 @@ import type {
   NativeToolDef,
   RuntimeConfig,
 } from "../runtime/types.js";
+import { createExecutablePlugins, executableModelResult, parseExecutableModelRequest, resolveExecutableEvolutionProfiles, type ExecutablePluginConfiguration } from "../agent/executable-plugins.js";
+import type { EvolutionConfig } from "../improvement/types.js";
 import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "../agent/tools.js";
 import type { McpHost } from "../agent/mcp-host.js";
 import { toNativeToolDef, toNativeExtensionToolDef } from "../agent/native-tooldef.js";
@@ -35,10 +38,8 @@ import {
   type ToolGuard,
 } from "../plugins/guards.js";
 import { SelfExtensionRegistry } from "../plugins/self-extension.js";
-import type {
-  RegisteredExtensionTool,
-  SelfExtensionEvent,
-} from "../plugins/self-extension.js";
+import { checkInvocationCapabilities, NETWORK_CAPABLE_TOOLS, LOCAL_SCOPE_TOOLS, READ_ONLY_TOOLS } from "../plugins/capability-classification.js";
+import type { SelfExtensionEvent } from "../plugins/self-extension.js";
 import type { PluginHost } from "../plugins/loader.js";
 import type { AgentRole, OperatorQuestionAnswer, OperatorQuestionRequest, ScopedAuditEscalationRequest, ToolCall, ToolContext, ToolDefinition, ToolResult } from "../agent/types.js";
 import { ScopePolicy } from "../scope/scope.js";
@@ -521,22 +522,13 @@ export interface ConsoleSessionConfig {
    * `false` to keep the heuristic only (e.g. to avoid any extra model spend).
    */
   refineObjective?: boolean;
-  /**
-   * Model self-extension (the "it builds itself" capability) for THIS console
-   * session. OFF BY DEFAULT and load-bearing: only an explicit `true` builds an
-   * ENABLED per-session {@link SelfExtensionRegistry}, injects the `self_extend`
-   * tool into the model-facing set, and unions any model-registered tools in at
-   * each turn boundary. When false/omitted no registry is constructed,
-   * `self_extend` is absent, and the session's model-facing tool set + tool
-   * context are byte-for-byte what they were before this field existed. Mirrors
-   * the same-named field on {@link NativeAgentConfig} in the scan loop (same
-   * baseGuards/reservedToolNames), and the operator setting
-   * `allowModelSelfExtension`. The registry is session-scoped (in-memory, never
-   * persisted) and additive-only; it enforces every limit in
-   * plugins/self-extension.ts. A registered tool has no in-process body — even a
-   * guard-approved call returns an honest "no executable implementation" result.
-   */
+  /** Enable sandboxed TypeScript tools, skills, and agent programs for this session. */
   allowModelSelfExtension?: boolean;
+  executablePlugins?: ExecutablePluginConfiguration;
+  /** Evaluation contracts owned by the operator, not editable by generated code. */
+  executableEvolutionProfiles?: Record<string, EvolutionConfig>;
+  /** Actual provider model ID, used for evolution cost accounting. */
+  costModel?: string;
   /**
    * Live plugin host for THIS session (0sec plugin system). Optional; absent =
    * today's behaviour exactly (no plugin tools are exposed or dispatched). When
@@ -654,11 +646,12 @@ export function buildConsoleSystemPrompt(opts: {
   scanId: string;
   autonomyMode?: ConsoleAutonomyMode;
 }): string {
-  const autonomyInstruction = opts.autonomyMode === "yolo"
+  const mode = opts.autonomyMode ?? DEFAULT_AUTONOMY_MODE;
+  const autonomyInstruction = mode === "yolo"
     ? "YOLO mode: run without any approval prompts and without a preconfigured scope. Security testing stays anchored to the launch target and hosts that belong to it (its sub-domains); do not pivot to unrelated hosts. Source acquisition is different: use a standalone public HTTPS git clone, optionally prefixed by cd DIR &&, to obtain a repository for local review even when its hosting service is not the launch target. This does not add the source host to engagement scope. Explicit exclusions and private/internal-network protections still apply. Clone first, then inspect or build in a separate tool call; never bundle checkout with unrelated commands."
-    : opts.autonomyMode === "copilot"
+    : mode === "copilot"
     ? "Co-pilot mode: act with full autonomy within the engagement — no per-action approval prompts. Scope expands automatically to newly-discovered targets that belong to the engagement; a target outside the established engagement still needs the operator's decision."
-    : opts.autonomyMode === "recon"
+    : mode === "recon"
     ? "Recon mode: passive, in-scope reconnaissance ONLY. Operate strictly within the authorized target/scope and use only read-only and passive network-recon tools (crawling, fingerprinting, surface/API discovery, JS recon, intel lookups, source reading). Do NOT attempt any effectful, mutating, or exploitation action — those tools are refused in this mode. Gather and report what you observe, then hand control back. Scope is not auto-expanded; an out-of-scope target needs the operator's decision."
     : "Standard mode: the operator approves each action before it runs. Take one concrete step, wait for approval, and when a target is not authorized request a narrow scope extension and wait for the operator's decision.";
   return [
@@ -734,69 +727,6 @@ async function dispatchPluginTool(host: PluginHost, call: ToolCall): Promise<Too
 
 // ── Console autonomy helpers ──
 
-/** Tools that can perform engagement egress — scope resolution is required when configured. */
-const NETWORK_CAPABLE_TOOLS: Record<string, true> = {
-  http_request: true,
-  send_prompt: true,
-  crawl: true,
-  submit_form: true,
-  access_control_probe: true,
-  access_control_workflow: true,
-  browser: true,
-  wp_fingerprint: true,
-  discover_api_surface: true,
-  surface_sweep: true,
-  js_recon: true,
-  bash: true,
-  run_command: true,
-  pty_session: true,
-  python_exec: true,
-  spawn_agent: true,
-  spawn_agents: true,
-  spawn_persistent_agent: true,
-  monitor: true,
-  run_scanner: true,
-  structural_sqli_probe: true,
-  prompt_layer_probe: true,
-  auth_boundary_probe: true,
-  cloud_s3_probe: true,
-  cloud_validate_credentials: true,
-  start_scan: true,
-  oast_register: true,
-  oast_poll: true,
-};
-
-/** Tools that only read local state — exempt from copilot approval prompts. */
-const READ_ONLY_TOOLS: Record<string, true> = {
-  read_file: true,
-  search_files: true,
-  list_files: true,
-  query_findings: true,
-  list_skills: true,
-  load_skill: true,
-  intel_search_advisories: true,
-  intel_lookup_cve: true,
-  intel_search_similar: true,
-  intel_build_dossier: true,
-  payload_lookup: true,
-  // Reads only this agent's own inbox and grants no authority, so it is
-  // exempt from the copilot gate. Its counterpart `send_message` is
-  // deliberately absent from all three maps: it changes state, so copilot
-  // gates it like any other action, but it reaches neither the target
-  // network nor the operator-approved project scope.
-  check_messages: true,
-  // Puts a structured question to the operator and blocks for an answer. It is
-  // an INFORMATION-GATHERING tool: it authorizes nothing — no scope, no
-  // approval, no capability — so, like check_messages, it grants no authority
-  // and is exempt from the copilot/standard approval gate.
-  ask_operator: true,
-  // update_todos/write_todos mutate only the run's plan (TodoWrite-style
-  // full-state write) — no scope, no capability, grants nothing — so, like
-  // ask_operator, they are exempt from the copilot/standard approval gate.
-  update_todos: true,
-  write_todos: true,
-  done: true,
-};
 
 /**
  * Passive network-recon tools permitted in `"recon"` mode ON TOP OF every
@@ -825,36 +755,6 @@ const RECON_PASSIVE_NETWORK_TOOLS: Record<string, true> = {
   js_recon: true,
 };
 
-/**
- * Tools whose handlers hard-require a scoped local directory (`ctx.scopePath`)
- * and fail without one. Derived from the tool registry, not guessed: these are
- * exactly the handlers in `agent/tools.ts` that early-return a
- * "requires a scoped local directory"-class error when `this.ctx.scopePath` is
- * unset —
- *   - read_file       (tools.ts readFile)
- *   - list_files      (tools.ts listFiles)
- *   - search_files    (tools.ts searchFiles)
- *   - apply_patch     (tools.ts applyPatch)
- *   - run_command     (tools.ts runCommand; also NETWORK_CAPABLE — both gates
- *                      compose, network first then local)
- *   - analyze_binary  (tools.ts analyzeBinary; "requires a local scoped source
- *                      root", feature-gated behind 0verse)
- * These are the same names the `SCOPED_SOURCE_AUDIT_TOOLS` registry marks as
- * the filesystem read surface (read_file/list_files/search_files/analyze_binary)
- * plus the two scoped write/exec tools (apply_patch/run_command). When one of
- * these is called with no covering local scope, the console asks the operator
- * for a directory instead of dead-ending — the local-filesystem mirror of the
- * NETWORK_CAPABLE_TOOLS scope-on-demand flow above.
- */
-const LOCAL_SCOPE_TOOLS: Record<string, true> = {
-  read_file: true,
-  list_files: true,
-  search_files: true,
-  apply_patch: true,
-  str_replace: true,
-  run_command: true,
-  analyze_binary: true,
-};
 
 /**
  * Canonicalize an operator-facing or tool-requested path to an ABSOLUTE,
@@ -1600,7 +1500,7 @@ async function dispatchConversationHistoryTool(call: ToolCall, history: ConsoleC
 export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSession {
   const scanId = config.scanId ?? `console-${randomUUID()}`;
   const role: AgentRole = config.role ?? "audit";
-  let autonomyMode: ConsoleAutonomyMode = config.autonomyMode ?? "standard";
+  let autonomyMode: ConsoleAutonomyMode = config.autonomyMode ?? DEFAULT_AUTONOMY_MODE;
 
   // In-memory mutable scope state — updated by requestScope, NEVER written
   // to disk.
@@ -1638,6 +1538,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     target: sessionTarget,
     scanId,
     role,
+    costModel: config.costModel,
     findings: [],
     attackResults: [],
     targetInfo: {},
@@ -1654,26 +1555,10 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     agentMessaging: config.agentMessaging,
   };
 
-  // ── Model self-extension (session-scoped, additive-only) ──
-  // OFF by default: only an explicit `allowModelSelfExtension === true` builds an
-  // ENABLED registry. Constructed exactly like native-loop's — the deny-only
-  // built-in guard floor as the base guards, and the built-in tool names as
-  // reserved so a model-registered tool can never shadow a built-in — and it
-  // enforces every per-session limit itself. It lives only in this closure
-  // (session-scoped, never persisted) and is attached to the tool context so the
-  // shared executor routes `self_extend` and every model-registered-tool call
-  // through THIS session's registry. When disabled the registry is not
-  // constructed at all and nothing is attached, so the tool context is
-  // byte-for-byte what it was before this feature existed. Every registration
-  // attempt (success OR rejection) is surfaced on the event bus for the TUI.
-  // The active turn's operator notify hook, set at the top of each `send()` and
-  // cleared when it returns. The self-extension registry's `onEvent` (below)
-  // fires DURING a turn — when the model calls `self_extend` — so routing its
-  // audit line here delivers it to the console's notify surface (the same
-  // `onNotice` channel the scope/local-scope auto-expansion notices use).
+  // Audit notifications are routed to the active turn's renderer.
   let activeNotify: ((message: string) => void) | undefined;
 
-  const selfExtensionEnabled = config.allowModelSelfExtension === true;
+  const selfExtensionEnabled = (config.allowModelSelfExtension ?? DEFAULT_ALLOW_MODEL_SELF_EXTENSION) && role !== "verify";
   const selfExtension = selfExtensionEnabled
     ? new SelfExtensionRegistry({
         enabled: true,
@@ -1702,13 +1587,15 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         },
       })
     : undefined;
-  if (selfExtension) {
-    // Attach via the same cast pattern the messaging runtime / native-loop use,
-    // so the executor's `selfExtend` handler and its `_dispatchExtensionTool`
-    // both resolve THIS session's registry.
-    (toolContext as ToolContext & { selfExtension?: SelfExtensionRegistry }).selfExtension =
-      selfExtension;
-  }
+  const executablePlugins = selfExtension
+    ? createExecutablePlugins(selfExtension, config.executablePlugins)
+    : undefined;
+  toolContext.selfExtension = selfExtension;
+  toolContext.executablePlugins = executablePlugins;
+  toolContext.executablePluginConfiguration = config.executablePlugins;
+  toolContext.executableEvolutionProfiles = selfExtensionEnabled
+    ? resolveExecutableEvolutionProfiles(config.executableEvolutionProfiles)
+    : {};
   if (config.mcpHost) {
     // Same cast pattern: the executor's _dispatch resolves mcp__ tool calls to
     // THIS session's connected host.
@@ -1952,6 +1839,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   async function maybeResolveScope(
     call: ToolCall,
     notify?: (message: string) => void,
+    allowScopeExpansion = true,
   ): Promise<"approved" | ToolResult> {
     if (!networkCapableTools[call.name]) return "approved";
 
@@ -1974,6 +1862,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // a policy against, so scope coverage cannot discharge it.
     const allCovered = urls.every((url) => sessionScope?.match(url).allowed);
     if (allCovered && unresolved.length === 0) return "approved";
+    if (!allowScopeExpansion) {
+      return { success: false, output: null, error: "Executable code cannot expand network scope. Establish the required scope in the parent session first." };
+    }
 
     // ── Denied-decision memory (ALL modes; never cleared or skipped by a mode) ──
     // A previously-declined opaque payload or host is denied outright — without a
@@ -2198,6 +2089,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   async function maybeResolveLocalScope(
     call: ToolCall,
     notify?: (message: string) => void,
+    allowScopeExpansion = true,
   ): Promise<"approved" | ToolResult> {
     if (!localScopeTools[call.name]) return "approved";
 
@@ -2207,6 +2099,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     try {
       requestedPath = canonicalizeRealPath(extractLocalPath(call));
     } catch {
+      if (!allowScopeExpansion) {
+        return { success: false, output: null, error: "Executable code requires a resolvable path inside the parent's approved local scope." };
+      }
       // The path resolves to nothing real (no existing ancestor). There is
       // nothing concrete to authorize; defer to today's behaviour and let the
       // executor produce its own error.
@@ -2216,6 +2111,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // Already inside an approved local scope subtree → run it.
     if (sessionScopePath && isWithinDir(requestedPath, sessionScopePath)) {
       return "approved";
+    }
+    if (!allowScopeExpansion) {
+      return { success: false, output: null, error: "Executable code cannot expand local scope. Establish the required scope in the parent session first." };
     }
 
     // ── Floors that apply in EVERY mode, before any prompt or auto-grant ──
@@ -2468,6 +2366,37 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     };
   }
 
+  /** Both the planner and executable agents use this exact authorization path. */
+  async function dispatchAuthorized(
+    call: ToolCall,
+    notify?: (message: string) => void,
+    signal?: AbortSignal,
+    allowScopeExpansion = true,
+  ): Promise<ToolResult> {
+    if (signal?.aborted) return { success: false, output: null, error: "Tool call cancelled before dispatch." };
+    const recon = maybeAllowReconCapability(call);
+    if (recon !== "approved") return recon;
+    const scope = await maybeResolveScope(call, notify, allowScopeExpansion);
+    if (scope !== "approved") return scope;
+    const local = await maybeResolveLocalScope(call, notify, allowScopeExpansion);
+    if (local !== "approved") return local;
+    const approval = await maybeApproveTool(call);
+    if (approval !== "approved") return approval;
+    const guard = evaluateGuards(WIRED_GUARDS, guardContextFor(call));
+    if (!guard.allowed) {
+      return { success: false, output: null, error: `Tool "${call.name}" denied: ${guard.reasons.join("; ")}` };
+    }
+    if (signal?.aborted) return { success: false, output: null, error: "Tool call cancelled before dispatch." };
+    if (config.conversationHistory &&
+      (call.name === LIST_CONVERSATIONS_NAME || call.name === READ_CONVERSATION_NAME)) {
+      return dispatchConversationHistoryTool(call, config.conversationHistory);
+    }
+    if (config.pluginHost?.ownsTool(call.name)) return dispatchPluginTool(config.pluginHost, call);
+    return executor.execute(call, { signal });
+  }
+
+  let turnInProgress = false;
+
   async function send(
     userText: string,
     callbacks?: ConsoleRenderCallbacks,
@@ -2494,6 +2423,10 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         stopReason: "cancelled",
       };
     }
+    if (turnInProgress) throw new Error("This console session already has an active turn.");
+    turnInProgress = true;
+    let turnActive = true;
+    try {
 
     messages.push({ role: "user", content: [{ type: "text", text: userText }] });
 
@@ -2541,6 +2474,81 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       },
     };
 
+    const recordModelUsage = (delta?: { inputTokens: number; outputTokens: number }): void => {
+      if (delta) {
+        usage.inputTokens += delta.inputTokens;
+        usage.outputTokens += delta.outputTokens;
+        lastCallInputTokens = delta.inputTokens;
+      }
+      callbacks?.onUsage?.({
+        inputTokens: delta?.inputTokens ?? 0,
+        outputTokens: delta?.outputTokens ?? 0,
+        turnTokensUsed: usage.inputTokens + usage.outputTokens,
+        turnTokenBudget: maxTurnTokens,
+        iterations,
+        maxToolIterations,
+      });
+    };
+    const invokePluginModel = async (request: unknown, requestSignal?: AbortSignal) => {
+      if (!turnActive) throw new Error("The parent console turn has ended.");
+      const parsed = parseExecutableModelRequest(request);
+      const tokensUsed = usage.inputTokens + usage.outputTokens;
+      // Generated agents share the parent turn's allowance; repeated SDK calls
+      // do not create a fresh budget or another provider identity.
+      if (tokensUsed >= maxTurnTokens || tokensUsed + lastCallInputTokens > maxTurnTokens) {
+        throw new Error("Parent turn token budget is exhausted.");
+      }
+      const effectiveSignal = signal && requestSignal ? AbortSignal.any([signal, requestSignal]) : signal ?? requestSignal;
+      effectiveSignal?.throwIfAborted();
+      let delta: { inputTokens: number; outputTokens: number } | undefined;
+      const response = await config.runtime.executeNative(
+        parsed.system, parsed.messages, parsed.tools,
+        { onUsage: (value) => { delta = value; } }, effectiveSignal,
+      );
+      recordModelUsage(response.usage ?? delta);
+      return executableModelResult(response);
+    };
+    toolContext.pluginExecutionContext = () => ({
+      signal,
+      invokeModel: invokePluginModel,
+      invokeTool: async (name, args, requestSignal, capabilities) => {
+        if (!turnActive) return { success: false, output: null, error: "The parent console turn has ended." };
+        // Enforce declared capabilities when the call originates from an
+        // executable tool's SDK broker.  Derive gate flags from the session's
+        // live gate maps (built-in ∪ injected tools).
+        if (capabilities) {
+          const check = checkInvocationCapabilities(name, capabilities, {
+            networkCapable: networkCapableTools[name] === true,
+            localScope: localScopeTools[name] === true,
+            readOnly: readOnlyTools[name] === true,
+          });
+          if (!check.allowed) {
+            return { success: false, output: null, error: check.reason ?? `Tool "${name}" denied by executable capability gate.` };
+          }
+        }
+        const call: ToolCall = { name, arguments: args };
+        const effectiveSignal = signal && requestSignal ? AbortSignal.any([signal, requestSignal]) : signal ?? requestSignal;
+        callbacks?.onToolStart?.(call);
+        const result = nativeTools.some((tool) => tool.name === name)
+          ? await dispatchAuthorized(call, callbacks?.onNotice, effectiveSignal, false)
+          : { success: false, output: null, error: `Tool "${name}" is not available to the parent session.` };
+        runCalls.push({ call, result });
+        callbacks?.onToolResult?.(call, result);
+        return result;
+      },
+    });
+    toolContext.evolveExecutablePlugin = async (pluginId, profileName, evolveSignal) => {
+      const profiles = toolContext.executableEvolutionProfiles;
+      if (!profiles || !Object.hasOwn(profiles, profileName) || !config.costModel || !executablePlugins) {
+        return { success: false, output: null, error: "Evolution requires a named operator evaluation profile and the active provider model ID." };
+      }
+      const effectiveSignal = signal && evolveSignal ? AbortSignal.any([signal, evolveSignal]) : signal ?? evolveSignal;
+      return executablePlugins.evolve(pluginId, { ...profiles[profileName], model: config.costModel }, {
+        signal: effectiveSignal,
+        model: (system, messages, tools, modelSignal) => invokePluginModel({ system, messages, tools }, modelSignal),
+      }, { ...toolContext.pluginExecutionContext?.(), signal: effectiveSignal });
+    };
+
     // Turn cycle: plan → run tools → feed results back → repeat until the model
     // stops requesting tools (end_turn), the turn's token budget is spent, or
     // the runaway iteration backstop trips.
@@ -2550,7 +2558,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     objectiveService.turnStarted();
     // Route self-extension audit lines to THIS turn's operator notify hook.
     activeNotify = callbacks?.onNotice;
-    try {
+    await executablePlugins?.ready;
     for (;;) {
       // ── Turn-boundary refresh of injected tools (self-extension + plugins) ──
       // Rebuild the model-facing tool set and gate maps HERE, at the top of each
@@ -2588,11 +2596,8 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         }
       }
       streamedUsage = undefined;
-      // HONEST LIMIT: this call cannot be interrupted once issued. NativeRuntime
-      // .executeNative takes no AbortSignal, so an abort that fires while the
-      // model request is in flight only takes effect at the next checkpoint
-      // (the top of this loop, or before the next tool dispatch). Aborting the
       const result = await config.runtime.executeNative(systemPrompt, messages, nativeTools, streamCallbacks, signal);
+      recordModelUsage(result.usage ?? streamedUsage);
 
       if (result.stopReason === "error") {
         // The runtime reports an operator abort structurally via `cancelled`
@@ -2617,23 +2622,6 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         };
       }
 
-      const callUsage = result.usage ?? streamedUsage;
-      if (callUsage) {
-        usage.inputTokens += callUsage.inputTokens;
-        usage.outputTokens += callUsage.outputTokens;
-        lastCallInputTokens = callUsage.inputTokens;
-      }
-      // Live progress against the budget, once per model call rather than only
-      // at the end of the turn, so a UI can show consumption climbing while a
-      // long multi-tool turn is still running.
-      callbacks?.onUsage?.({
-        inputTokens: callUsage?.inputTokens ?? 0,
-        outputTokens: callUsage?.outputTokens ?? 0,
-        turnTokensUsed: usage.inputTokens + usage.outputTokens,
-        turnTokenBudget: maxTurnTokens,
-        iterations,
-        maxToolIterations,
-      });
 
       messages.push({ role: "assistant", content: result.content });
 
@@ -2689,110 +2677,8 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
           continue;
         }
 
-        // ── Recon capability gate (recon mode only; runs first) ──
-        // A hard, passive-only capability floor: an effectful/exploit tool is
-        // refused here before any scope or approval prompt can fire.
-        const reconVerdict = maybeAllowReconCapability(call);
-        if (reconVerdict !== "approved") {
-          callbacks?.onToolStart?.(call);
-          callbacks?.onToolResult?.(call, reconVerdict);
-          runCalls.push({ call, result: reconVerdict });
-          toolResultBlocks.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: stringifyToolResult(reconVerdict),
-            is_error: true,
-          });
-          continue;
-        }
-
-        // ── Scope resolution gate (network-capable tools) ──
-        const scopeVerdict = await maybeResolveScope(call, callbacks?.onNotice);
-        if (scopeVerdict !== "approved") {
-          callbacks?.onToolStart?.(call);
-          callbacks?.onToolResult?.(call, scopeVerdict);
-          runCalls.push({ call, result: scopeVerdict });
-          toolResultBlocks.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: stringifyToolResult(scopeVerdict),
-            is_error: true,
-          });
-          continue;
-        }
-
-        // ── Local filesystem scope-on-demand gate (filesystem-scoped tools) ──
-        const localScopeVerdict = await maybeResolveLocalScope(call, callbacks?.onNotice);
-        if (localScopeVerdict !== "approved") {
-          callbacks?.onToolStart?.(call);
-          callbacks?.onToolResult?.(call, localScopeVerdict);
-          runCalls.push({ call, result: localScopeVerdict });
-          toolResultBlocks.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: stringifyToolResult(localScopeVerdict),
-            is_error: true,
-          });
-          continue;
-        }
-
-        // ── Standard per-action approval gate (non-read-only tools) ──
-        const approvalVerdict = await maybeApproveTool(call);
-        if (approvalVerdict !== "approved") {
-          callbacks?.onToolStart?.(call);
-          callbacks?.onToolResult?.(call, approvalVerdict);
-          runCalls.push({ call, result: approvalVerdict });
-          toolResultBlocks.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: stringifyToolResult(approvalVerdict),
-            is_error: true,
-          });
-          continue;
-        }
-
-        // ── Monotonic guard floor (deny-only) ──
-        // The three gates above are keyed on tool-NAME membership in static
-        // maps, which means a tool absent from all of them lands in the
-        // least-dangerous class by omission. The guards are the backstop for
-        // that: each may only return a denial reason or abstain, so adding one
-        // can never widen access, and an unknown tool is refused rather than
-        // silently trusted. This runs last, after every gate has approved, so
-        // it is the single point every dispatched call passes through.
-        const guardVerdict = evaluateGuards(WIRED_GUARDS, guardContextFor(call));
-        if (!guardVerdict.allowed) {
-          const denial: ToolResult = {
-            success: false,
-            output: null,
-            error: `Tool "${call.name}" denied: ${guardVerdict.reasons.join("; ")}`,
-          };
-          callbacks?.onToolStart?.(call);
-          callbacks?.onToolResult?.(call, denial);
-          runCalls.push({ call, result: denial });
-          toolResultBlocks.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: stringifyToolResult(denial),
-            is_error: true,
-          });
-          continue;
-        }
-
         callbacks?.onToolStart?.(call);
-        // Dispatch. A tool the plugin host OWNS is routed through the host (its
-        // out-of-process `call_tool`); the host's `call` is deliberately
-        // downstream of the gates above, which have already run. Everything else
-        // goes through the real ToolExecutor — including `self_extend` (a
-        // built-in handler) and any model-registered tool, which the executor
-        // routes through THIS session's attached self-extension registry (guard-
-        // evaluated under its declared gate flags, and — having no in-process
-        // body — returning an honest "no executable implementation" result).
-        const toolResult = config.conversationHistory &&
-          (call.name === LIST_CONVERSATIONS_NAME || call.name === READ_CONVERSATION_NAME)
-          ? await dispatchConversationHistoryTool(call, config.conversationHistory)
-          : config.pluginHost?.ownsTool(call.name)
-            ? await dispatchPluginTool(config.pluginHost, call)
-            : await executor.execute(call);
+        const toolResult = await dispatchAuthorized(call, callbacks?.onNotice, signal);
         callbacks?.onToolResult?.(call, toolResult);
         runCalls.push({ call, result: toolResult });
         toolResultBlocks.push({
@@ -2847,11 +2733,15 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       }
     }
     } finally {
+      turnActive = false;
+      turnInProgress = false;
       // Turn over. Once no turn is active this lets the one-shot objective
       // refinement fire — deferred and rescheduled while any turn runs, so its
       // model call never races the turn's own. Fire-and-forget, fully fail-soft.
       objectiveService.turnEnded();
       activeNotify = undefined;
+      toolContext.pluginExecutionContext = undefined;
+      toolContext.evolveExecutablePlugin = undefined;
     }
   }
 
@@ -2880,6 +2770,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     cleanup: async () => {
       objectiveService.dispose();
       await config.mcpHost?.closeAll();
+      await executablePlugins?.close();
       return executor.cleanup();
     },
   };

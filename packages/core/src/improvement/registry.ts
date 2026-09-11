@@ -349,6 +349,10 @@ function loadRegistryRaw(storePath: string): EvolutionRegistry {
       throw new Error(`version with empty or non-string id in registry: ${rp}`);
     }
     if (seenIds.has(v.id)) throw new Error(`duplicate version id in registry: ${v.id}`);
+    if (v.alternativeParentId !== undefined
+      && (typeof v.alternativeParentId !== "string" || !seenIds.has(v.alternativeParentId))) {
+      throw new Error(`alternative parent must reference an earlier retained version: ${v.id}`);
+    }
     seenIds.add(v.id);
     if (!["baseline", "candidate", "canary", "active", "retired"].includes(v.status)) {
       throw new Error(`invalid version status "${v.status}" for ${v.id}`);
@@ -701,7 +705,7 @@ function assertPromotableReceipt(receipt: EvolutionEvaluation, versionId: string
 // ---------------------------------------------------------------------------
 
 /** Copy explicitly selected sourcePaths into a store-owned immutable content-addressed directory. */
-export async function snapshotEvolutionSource(config: EvolutionConfig): Promise<EvolutionSnapshot> {
+export async function snapshotEvolutionSource(config: Pick<EvolutionConfig, "sourceRoot" | "storePath" | "sourcePaths" | "maxSourceBytes">): Promise<EvolutionSnapshot> {
   const { sourceRoot, storePath, sourcePaths, maxSourceBytes } = config;
   for (const d of [snapshotsDir(storePath), receiptsDir(storePath), configsDir(storePath)]) {
     ensureEvolutionDirectory(d);
@@ -754,6 +758,10 @@ export async function recordEvolutionVersion(
     } else if (version.parentId === null || !registry.versions.some((parent) => parent.id === version.parentId)) {
       throw new Error("candidate must reference an existing parent");
     }
+    if (version.alternativeParentId !== undefined
+      && !registry.versions.some(parent => parent.id === version.alternativeParentId && parent.kind === version.kind)) {
+      throw new Error("alternative parent must reference an existing version of the same artifact kind");
+    }
     if (config && evolutionDigest(config) !== version.configDigest) throw new Error("recorded config digest mismatch");
     if (evaluation && (evaluation.receiptDigest !== version.receiptDigest || evaluation.candidateId !== version.id
       || evaluation.candidateDigest !== version.snapshot.digest || evaluation.configDigest !== version.configDigest)) {
@@ -794,9 +802,10 @@ export async function startEvolutionCanary(
     if (version.status !== "candidate" || registry.canaryId !== null || version.parentId !== registry.activeId) {
       throw new Error(`version ${id} has status ${version.status}; expected candidate or baseline for canary`);
     }
+    const baselineId = version.parentId;
 
     // Comprehensive receipt validation (baseline digest from registry)
-    const baselineVersion = version.parentId ? registry.versions.find((v) => v.id === version.parentId) : undefined;
+    const baselineVersion = baselineId ? registry.versions.find((v) => v.id === baselineId) : undefined;
     verifyEvolutionReceipt(storePath, id, version, baselineVersion?.snapshot.digest);
 
     // Reject altered code before exposing it as a canary.
@@ -826,10 +835,13 @@ export async function promoteEvolutionVersion(
     }
     const version = registry.versions.find((v) => v.id === id);
     if (!version) throw new Error(`version not found for promotion: ${id}`);
-    if (version.status !== "canary" || registry.canaryId !== id || version.parentId !== registry.activeId) throw new Error(`version ${id} must be the current canary against the active baseline`);
+    if (version.status !== "canary" || registry.canaryId !== id || version.parentId !== registry.activeId) {
+      throw new Error(`version ${id} must be the current canary against the active baseline`);
+    }
+    const baselineId = version.parentId;
 
     // Comprehensive receipt validation with baseline digest from registry
-    const baselineVersion = version.parentId ? registry.versions.find((v) => v.id === version.parentId) : undefined;
+    const baselineVersion = baselineId ? registry.versions.find((v) => v.id === baselineId) : undefined;
     verifyEvolutionReceipt(storePath, id, version, baselineVersion?.snapshot.digest);
 
     // Load config to derive canaryTrials (immutable stored config; fail closed if missing or mismatched)
@@ -886,19 +898,20 @@ export async function rollbackEvolutionVersion(
     if (registry.canaryId !== id && (registry.activeId !== id || registry.canaryId !== null)) {
       throw new Error("rollback must retire the current canary, or the active version with no pending canary");
     }
-    if (version.parentId !== null && !registry.versions.some((v) => v.id === version.parentId)) {
-      throw new Error(`parent version ${version.parentId} not found for rollback of ${id}`);
+    const rollbackTargetId = version.parentId;
+    if (rollbackTargetId !== null && !registry.versions.some((v) => v.id === rollbackTargetId)) {
+      throw new Error(`rollback target version ${rollbackTargetId} not found for rollback of ${id}`);
     }
 
     const idx = registry.versions.indexOf(version);
     registry.versions[idx] = { ...version, status: "retired" };
 
-    if (version.parentId !== null) {
-      const parentEntry = registry.versions.find((v) => v.id === version.parentId)!;
+    if (rollbackTargetId !== null) {
+      const parentEntry = registry.versions.find((v) => v.id === rollbackTargetId)!;
       verifyEvolutionSnapshot(parentEntry.snapshot);
       const pIdx = registry.versions.indexOf(parentEntry);
       registry.versions[pIdx] = { ...parentEntry, status: "active" };
-      registry.activeId = version.parentId;
+      registry.activeId = rollbackTargetId;
     } else {
       registry.activeId = null;
     }

@@ -139,6 +139,48 @@ export function tryRecoverPreviousFeedback(
   return null;
 }
 
+
+/** Rank bounded, compatible archived programs using development observations only.
+ * Rejected candidates may be useful proposal parents, but never become active
+ * without being re-evaluated against the current deployment baseline. */
+export function selectEvolutionAlternativeParent(
+  config: EvolutionConfig,
+  registry: EvolutionRegistry,
+  log?: (message: string) => void,
+): EvolutionVersion | null {
+  const limit = config.maxAlternativeParents ?? 0;
+  if (limit <= 0) return null;
+  const contract = feedbackContractDigest(config);
+  let inspected = 0;
+  let selected: EvolutionVersion | null = null;
+  let bestFraction = -1;
+  for (let index = registry.versions.length - 1; index >= 0 && inspected < limit; index--) {
+    const version = registry.versions[index]!;
+    if (version.id === registry.activeId || version.id === registry.canaryId
+      || !["candidate", "retired"].includes(version.status) || !version.receiptDigest || !version.parentId) continue;
+    inspected++;
+    let receipt: EvolutionEvaluation | null;
+    try {
+      verifyEvolutionSnapshot(version.snapshot);
+      const stored = readEvolutionArtifact(join(configsDir(config.storePath), `${version.configDigest.replace(/^sha256:/, "")}.json`));
+      if (evolutionDigest(stored) !== version.configDigest) continue;
+      if (feedbackContractDigest(parseEvolutionConfig(stored)) !== contract) continue;
+      receipt = loadEvolutionReceipt(config.storePath, version.id);
+    } catch { continue; }
+    const parent = registry.versions.find(entry => entry.id === version.parentId);
+    if (!receipt || receipt.receiptDigest !== version.receiptDigest
+      || receipt.candidateId !== version.id || receipt.candidateDigest !== version.snapshot.digest
+      || receipt.configDigest !== version.configDigest || receipt.baselineDigest !== parent?.snapshot.digest) continue;
+    const attempts = receipt.attempts.candidate.filter(attempt => attempt.lane === "development");
+    if (attempts.length === 0) continue;
+    const fraction = attempts.filter(attempt => attempt.matched && !attempt.inconclusive).length / attempts.length;
+    // Newest-first traversal makes equal scores deterministic without sorting.
+    if (fraction > bestFraction) { selected = version; bestFraction = fraction; }
+  }
+  if (selected) log?.(`[evolve] selected alternative parent ${selected.id} (development match fraction ${bestFraction})`);
+  return selected;
+}
+
 export async function runEvolution(rawConfig: EvolutionConfig, deps: EvolutionDependencies = {}): Promise<EvolutionRunResult> {
   const config = parseEvolutionConfig(rawConfig);
   if (!config.allowModelSourceAccess) throw new Error("source rewriting requires explicit allowModelSourceAccess consent");
@@ -206,7 +248,11 @@ async function runEvolutionPass(config: EvolutionConfig, deps: EvolutionDependen
       deps.signal?.throwIfAborted();
       const remaining = config.maxModelCostUsd - result.modelCostUsd;
       if (remaining <= 0) break;
-      const proposal = await proposeEvolutionEdits(active.snapshot, { ...config, maxModelCostUsd: remaining }, feedback, deps);
+      registry = loadEvolutionRegistry(config.storePath);
+      if (registry.activeId !== active.id) throw new Error("active evolution version changed during the pass");
+      const alternativeParent = selectEvolutionAlternativeParent(config, registry, deps.log);
+      const generationSnapshot = alternativeParent?.snapshot ?? active.snapshot;
+      const proposal = await proposeEvolutionEdits(generationSnapshot, { ...config, maxModelCostUsd: remaining }, feedback, deps);
       if (!Number.isFinite(proposal.modelCostUsd) || proposal.modelCostUsd < 0) throw new Error("invalid model cost receipt");
       result.modelCostUsd += proposal.modelCostUsd;
       if (result.modelCostUsd > config.maxModelCostUsd) throw new Error("source rewriting model cost ceiling exceeded");
@@ -214,7 +260,7 @@ async function runEvolutionPass(config: EvolutionConfig, deps: EvolutionDependen
         deps.log?.("[evolve] model proposed no further changes");
         break;
       }
-      const candidate = await createEvolutionCandidate(active.snapshot, proposal, config);
+      const candidate = await createEvolutionCandidate(generationSnapshot, proposal, config);
       deps.log?.(`[evolve] evaluating source version ${candidate.id} against ${active.id}`);
       const evaluation = await evaluateEvolutionCandidate(active.snapshot, candidate, config, evaluationDeps);
       feedback = developmentFeedback(evaluation, proposal);
@@ -231,6 +277,7 @@ async function runEvolutionPass(config: EvolutionConfig, deps: EvolutionDependen
         kind: config.kind,
         snapshot: candidate,
         parentId: active.id,
+        ...(alternativeParent ? { alternativeParentId: alternativeParent.id } : {}),
         createdAt: new Date().toISOString(),
         configDigest,
         receiptDigest: evaluation.receiptDigest,

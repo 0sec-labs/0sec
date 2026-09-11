@@ -38,12 +38,7 @@ import type { Command } from "commander";
 // Declared locally (not imported from the barrel) so the command type-checks
 // without depending on barrel exports that land in a separate change.
 
-export type PluginCapability =
-  | "network"
-  | "filesystem-read"
-  | "filesystem-write"
-  | "process-exec"
-  | "findings-write";
+import type { PluginCapability } from "@0sec/core";
 
 export interface ManifestView {
   id: string;

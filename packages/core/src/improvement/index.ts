@@ -5,9 +5,12 @@ export type {
   EvolutionRegistryEvent, EvolutionRunResult, EvolutionSandbox, EvolutionSandboxRequest,
   EvolutionSnapshot, EvolutionVersion,
 } from "./types.js";
-export { canonicalEvolutionJson, parseEvolutionConfig } from "./config.js";
+export { canonicalEvolutionJson, loadEvolutionConfigFile, parseEvolutionConfig } from "./config.js";
 export { evaluateEvolutionCandidate } from "./evaluation.js";
-export { runEvolution, executeEvolutionVersion, approveEvolutionCandidate } from "./loop.js";
+export {
+  approveEvolutionCandidate, executeEvolutionVersion,
+  runEvolution, selectEvolutionAlternativeParent, tryRecoverPreviousFeedback,
+} from "./loop.js";
 export { authorizeEvolutionArtifact } from "./artifact-authorization.js";
 export {
   createEvolutionCandidate, evolutionDigest, loadEvolutionRegistry, pinEvolutionVersion,

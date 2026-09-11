@@ -1,52 +1,19 @@
 /**
  * Plugin wire protocol — newline-delimited JSON over the child's stdio.
  *
- * This is stage 3 of DESIGN.md ("isolation + dispatch"), the PURE half: the
- * message shapes a host and an out-of-process plugin exchange, plus total
- * decoders. Nothing here touches `process`, the filesystem, the network, a
- * clock, or stdout/stderr — the loader (`loader.ts`) owns all I/O. Keeping the
- * contract pure means the exact same decoder can be exercised by a fake
- * transport in a unit test, by the real stdio path, or by a third-party plugin
- * SDK, with no way for the three to drift.
+ * Host → child:  `list_tools`, `call_tool`
+ * Child → host:  `handshake`, `list_tools`, `tool_result`, `error`
  *
- * ── Why a subprocess and not an `import()` ───────────────────────────────────
+ * Broker direction (host-mediated calls from guest back to host):
+ * Child → host:  `request_tool`, `request_skill`, `request_model`
+ * Host → child:  `tool_delivery`, `skill_delivery`, `model_delivery`, `broker_error`
  *
- * DESIGN.md §3 settles this: an in-process plugin "contains nothing" — it can
- * read `process.env` (every provider key), monkey-patch the gate maps in
- * `console/turn-engine.ts`, and turn a capability *declaration* into a promise
- * rather than a boundary. A child process cannot reach any of that. The price
- * is a wire format, and this file is it. The framing deliberately mirrors
- * `hub/mailbox.ts`: one JSON object per line, decoded by a pure/total function
- * that returns a typed failure for every malformed input instead of throwing.
+ * Protocol version 1 covers all existing and broker message kinds. A child that
+ * speaks v1 may send broker requests; a host that speaks v1 may answer them.
+ * Extant (pre-broker) code never sends a broker request, so it is unaffected.
+ * Unknown-kind rejection remains the correct handling.
  *
- * ── The trust direction ──────────────────────────────────────────────────────
- *
- * The child is UNTRUSTED. Every byte it sends is attacker-shaped input as far
- * as this module is concerned:
- *
- *   - Frames are BOUNDED ({@link MAX_FRAME_CHARS}). A child that never emits a
- *     newline cannot make the host buffer without limit; the partial frame is
- *     dropped and reported as a typed failure. This is the flood defense.
- *   - Every decoder is TOTAL. Malformed JSON, a JSON array, a JSON scalar, a
- *     missing field, a field of the wrong type, an unknown `kind`, a future
- *     protocol version, a truncated frame — each yields a
- *     {@link ProtocolDecodeFailure}, never a throw.
- *   - The manifest inside a `handshake` is validated by the STAGE-1 validator
- *     ({@link validatePluginManifest}) — there is exactly one manifest
- *     validator in this codebase and this module does not write a second one.
- *   - Tool result CONTENT is clamped here but NOT sanitized here: sanitizing is
- *     the loader's job because `sanitizeUntrustedToolResult` is the codebase's
- *     single untrusted-input defense and lives outside this pure module. This
- *     file guarantees bytes are BOUNDED, not that the prose is trustworthy.
- *
- * ── What the protocol deliberately cannot express ────────────────────────────
- *
- * There is no message a plugin can send that registers a guard, a hook, an
- * interceptor, or an event listener; no message that mutates host state; and no
- * message that carries credentials, scope, or auth config in either direction.
- * A plugin contributes TOOLS and answers `call_tool`. That is the entire
- * vocabulary, and the omission is the security property — see the extended note
- * in `loader.ts`.
+ * See DESIGN.md §3 for the wire contract, §5 for the broker path.
  */
 
 import {
@@ -110,7 +77,69 @@ export interface HostCallToolMessage {
   args: Record<string, unknown>;
 }
 
-export type HostMessage = HostListToolsMessage | HostCallToolMessage;
+/**
+ * Host delivers a structured tool result in response to a guest's
+ * `request_tool` broker call. `output` carries the structured result value,
+ * NOT wrapped in the [[0SEC_UNTRUSTED_DATA]] marker — that marker is applied
+ * only when content is forwarded to the model as raw text.
+ */
+export interface HostToolDeliveryMessage {
+  v: typeof PROTOCOL_VERSION;
+  kind: "tool_delivery";
+  id: string;
+  ok: boolean;
+  output: unknown;
+  error?: string;
+  truncated: boolean;
+}
+
+/**
+ * Host delivers a skill execution result in response to a guest's
+ * `request_skill` broker call.
+ */
+export interface HostSkillDeliveryMessage {
+  v: typeof PROTOCOL_VERSION;
+  kind: "skill_delivery";
+  id: string;
+  ok: boolean;
+  output: unknown;
+  error?: string;
+}
+
+/**
+ * Host delivers a model invocation result in response to a guest's
+ * `request_model` broker call. `output` carries the NativeRuntimeResult
+ * with `providerRaw` stripped (generated code gets no provider internals).
+ */
+export interface HostModelDeliveryMessage {
+  v: typeof PROTOCOL_VERSION;
+  kind: "model_delivery";
+  id: string;
+  ok: boolean;
+  output: unknown;
+  error?: string;
+}
+
+/**
+ * Host reports a broker call failure that did not reach the requested tool,
+ * skill, or model — for example, budget exhaustion, an unknown tool name,
+ * an unsupported brokered tool, or a signal-triggered cancellation.
+ */
+export interface HostBrokerErrorMessage {
+  v: typeof PROTOCOL_VERSION;
+  kind: "broker_error";
+  id: string;
+  code: string;
+  message: string;
+}
+
+export type HostMessage =
+  | HostListToolsMessage
+  | HostCallToolMessage
+  | HostToolDeliveryMessage
+  | HostSkillDeliveryMessage
+  | HostModelDeliveryMessage
+  | HostBrokerErrorMessage;
 
 // ── Child → host messages ────────────────────────────────────────────────────
 
@@ -162,11 +191,56 @@ export interface PluginErrorMessage {
   message: string;
 }
 
+/**
+ * Guest requests the host to call one of its own (host-side) tools via the
+ * broker callback. The guest provides the tool name and args; the host
+ * dispatches through normal authorization and returns a structured result.
+ * This is the SDK's `sdk.callTool(name, args)` path.
+ */
+export interface PluginCallToolRequest {
+  v: typeof PROTOCOL_VERSION;
+  kind: "request_tool";
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * Guest requests the host to execute another executable skill by name.
+ * The host resolves the skill, spins up a guest if needed, and returns the
+ * structured result. This is the SDK's `sdk.callSkill(name, args)` path.
+ */
+export interface PluginCallSkillRequest {
+  v: typeof PROTOCOL_VERSION;
+  kind: "request_skill";
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * Guest requests the host to invoke the configured model provider.
+ * `system`, `messages`, and `tools` are passed through; the host selects the
+ * actual provider, accounts token usage, and strips `providerRaw` from the
+ * result. This is the SDK's `sdk.callModel(request)` path.
+ */
+export interface PluginCallModelRequest {
+  v: typeof PROTOCOL_VERSION;
+  kind: "request_model";
+  id: string;
+  system?: string;
+  messages: unknown[];
+  tools?: unknown[];
+}
+
 export type PluginMessage =
   | PluginHandshakeMessage
   | PluginListToolsMessage
   | PluginToolResultMessage
-  | PluginErrorMessage;
+  | PluginErrorMessage
+  | PluginCallToolRequest
+  | PluginCallSkillRequest
+  | PluginCallModelRequest;
 
 // ── Typed failures ───────────────────────────────────────────────────────────
 
@@ -243,19 +317,36 @@ export function encodeHostMessage(msg: HostMessage): string {
   if (msg.kind === "call_tool") {
     base.tool = msg.tool;
     base.args = msg.args;
+  } else if (msg.kind === "tool_delivery") {
+    base.ok = msg.ok;
+    base.output = msg.output;
+    base.truncated = msg.truncated;
+    if (msg.error !== undefined) base.error = msg.error;
+  } else if (msg.kind === "skill_delivery") {
+    base.ok = msg.ok;
+    base.output = msg.output;
+    if (msg.error !== undefined) base.error = msg.error;
+  } else if (msg.kind === "model_delivery") {
+    base.ok = msg.ok;
+    base.output = msg.output;
+    if (msg.error !== undefined) base.error = msg.error;
+  } else if (msg.kind === "broker_error") {
+    base.code = msg.code;
+    base.message = msg.message;
   }
   try {
     return `${JSON.stringify(base)}\n`;
   } catch {
-    // Unserializable args (cycle, BigInt, …). Send a well-formed frame with no
-    // args rather than throwing into the caller's turn.
+    // Unserializable payload. Emit a well-formed error frame.
+    if (msg.kind === "tool_delivery" || msg.kind === "skill_delivery" || msg.kind === "model_delivery") {
+      return `${JSON.stringify({
+        v: PROTOCOL_VERSION, kind: "broker_error", id: msg.id,
+        code: "encode_failed", message: "host delivery payload could not be serialized",
+      })}\n`;
+    }
     if (msg.kind === "call_tool") {
       return `${JSON.stringify({
-        v: PROTOCOL_VERSION,
-        kind: "call_tool",
-        id: msg.id,
-        tool: msg.tool,
-        args: {},
+        v: PROTOCOL_VERSION, kind: "call_tool", id: msg.id, tool: msg.tool, args: {},
       })}\n`;
     }
     return `${JSON.stringify({ v: PROTOCOL_VERSION, kind: msg.kind, id: msg.id })}\n`;
@@ -337,6 +428,12 @@ export function decodePluginMessage(
       return decodeToolResult(rec);
     case "error":
       return decodeError(rec);
+    case "request_tool":
+      return decodeRequestTool(rec);
+    case "request_skill":
+      return decodeRequestSkill(rec);
+    case "request_model":
+      return decodeRequestModel(rec);
     default:
       return fail(
         "unknown-kind",
@@ -364,23 +461,19 @@ function decodeHandshake(
     reservedToolNames: opts?.reservedToolNames,
   });
   if (!result.ok) {
-    return fail("invalid-manifest", "handshake manifest failed validation", result.errors);
+    return fail(
+      "invalid-manifest",
+      `plugin ${pluginId} handshake has an invalid manifest`,
+      result.errors,
+    );
   }
-  const manifest = result.manifest;
 
-  if (manifest.id !== pluginId) {
-    return fail(
-      "malformed-field",
-      "handshake `pluginId` does not match the manifest `id` it carries",
-    );
+  const manifest = result.manifest;
+  if (pluginId !== manifest.id || version !== manifest.version) {
+    return fail("malformed-field", "handshake identity and version must match its manifest");
   }
-  if (manifest.version !== version) {
-    return fail(
-      "malformed-field",
-      "handshake `version` does not match the manifest `version` it carries",
-    );
-  }
-  if (opts?.expectPluginId !== undefined && opts.expectPluginId !== pluginId) {
+
+  if (opts?.expectPluginId !== undefined && pluginId !== opts.expectPluginId) {
     return fail(
       "malformed-field",
       `plugin announced id ${JSON.stringify(pluginId)} but was installed as ${JSON.stringify(opts.expectPluginId)}`,
@@ -397,87 +490,110 @@ function decodeListToolsResponse(
   rec: Record<string, unknown>,
   opts?: { reservedToolNames?: readonly string[] },
 ): DecodeResult<PluginListToolsMessage> {
-  if (!isToken(rec.id)) {
-    return fail("malformed-field", "`list_tools` response is missing a valid correlation id");
-  }
-  const tools = rec.tools;
-  if (!Array.isArray(tools)) {
+  if (!isToken(rec.id)) return fail("malformed-field", "`list_tools` response has a missing or malformed `id`");
+
+  if (!Array.isArray(rec.tools)) {
     return fail("malformed-field", "`list_tools` response `tools` must be an array");
   }
-  if (tools.length === 0) {
-    return fail("malformed-field", "`list_tools` response declared no tools");
-  }
-  if (tools.length > MAX_TOOLS_IN_LIST) {
-    return fail(
-      "malformed-field",
-      `\`list_tools\` response declared more than ${MAX_TOOLS_IN_LIST} tools`,
-    );
+  if (rec.tools.length > MAX_TOOLS_IN_LIST) {
+    return fail("malformed-field", `at most ${MAX_TOOLS_IN_LIST} tools per plugin`);
   }
 
-  // Validate the tools by running them through the real manifest validator in a
-  // synthetic envelope. Reusing `validatePluginManifest` here is deliberate:
-  // the charset, capability-mandatory and built-in-collision rules must be
-  // IDENTICAL for a handshake manifest and a `list_tools` response, and the
-  // only way to guarantee that is to have one implementation.
-  const probe = validatePluginManifest(
-    { id: "wire.probe", name: "wire probe", version: "0.0.0", tools },
-    { reservedToolNames: opts?.reservedToolNames },
-  );
-  if (!probe.ok) {
-    return fail("invalid-manifest", "`list_tools` response contained invalid tools", probe.errors);
+  const result = validatePluginManifest({
+    id: "protocol.list-tools",
+    name: "Plugin tool list",
+    version: "0.0.0",
+    tools: rec.tools,
+  }, opts);
+  if (!result.ok) {
+    return fail("invalid-manifest", "plugin tool list has an invalid manifest", result.errors);
   }
-
   return {
     ok: true,
-    message: { v: PROTOCOL_VERSION, kind: "list_tools", id: rec.id, tools: probe.manifest.tools },
+    message: { v: PROTOCOL_VERSION, kind: "list_tools", id: rec.id, tools: result.manifest.tools },
   };
 }
 
 function decodeToolResult(rec: Record<string, unknown>): DecodeResult<PluginToolResultMessage> {
-  if (!isToken(rec.id)) {
-    return fail("malformed-field", "`tool_result` is missing a valid correlation id");
-  }
-  if (typeof rec.ok !== "boolean") {
-    return fail("malformed-field", "`tool_result.ok` must be a boolean");
-  }
-  if (typeof rec.content !== "string") {
-    return fail("malformed-field", "`tool_result.content` must be a string");
-  }
-  // Clamp on receipt: a well-behaved child clamps too, but the host must never
-  // depend on that.
-  const clamped = clampResultContent(rec.content);
+  if (!isToken(rec.id)) return fail("malformed-field", "`tool_result` has a missing or malformed `id`");
+  if (typeof rec.ok !== "boolean") return fail("malformed-field", "`tool_result` must have a boolean `ok`");
+  if (typeof rec.content !== "string") return fail("malformed-field", "`tool_result` must have a string `content`");
+  const bounded = clampResultContent(rec.content);
   return {
     ok: true,
     message: {
-      v: PROTOCOL_VERSION,
-      kind: "tool_result",
-      id: rec.id,
-      ok: rec.ok,
-      content: clamped.content,
-      truncated: clamped.truncated || rec.truncated === true,
+      v: PROTOCOL_VERSION, kind: "tool_result",
+      id: rec.id as string, ok: rec.ok as boolean,
+      content: bounded.content,
+      truncated: bounded.truncated || rec.truncated === true,
     },
   };
 }
 
 function decodeError(rec: Record<string, unknown>): DecodeResult<PluginErrorMessage> {
-  const id = rec.id === null || rec.id === undefined ? null : rec.id;
-  if (id !== null && !isToken(id)) {
-    return fail("malformed-field", "`error.id` must be null or a valid correlation id");
+  if (rec.id !== null && !isToken(rec.id)) return fail("malformed-field", "`error` message has a malformed `id`");
+  const id = rec.id;
+  if (!isToken(rec.code)) {
+    return fail("malformed-field", "`error` must have a valid token `code`");
   }
-  if (typeof rec.code !== "string" || rec.code.length === 0 || rec.code.length > MAX_TOKEN_CHARS) {
-    return fail("malformed-field", "`error.code` must be a short non-empty string");
+  if (typeof rec.message !== "string" || rec.message.length === 0) {
+    return fail("malformed-field", "`error` must have a non-empty `message`");
   }
-  if (typeof rec.message !== "string") {
-    return fail("malformed-field", "`error.message` must be a string");
+  return { ok: true, message: { v: PROTOCOL_VERSION, kind: "error", id, code: rec.code as string, message: rec.message as string } };
+}
+
+function decodeRequestTool(rec: Record<string, unknown>): DecodeResult<PluginCallToolRequest> {
+  if (!isToken(rec.id)) return fail("malformed-field", "`request_tool` has a missing or malformed `id`");
+  if (typeof rec.name !== "string" || rec.name.length === 0) {
+    return fail("malformed-field", "`request_tool` must have a non-empty `name`");
+  }
+  if (!isPlainObject(rec.args)) {
+    return fail("malformed-field", "`request_tool` `args` must be a plain object");
   }
   return {
     ok: true,
     message: {
-      v: PROTOCOL_VERSION,
-      kind: "error",
-      id,
-      code: rec.code,
-      message: clampResultContent(rec.message).content,
+      v: PROTOCOL_VERSION, kind: "request_tool", id: rec.id as string,
+      name: rec.name as string, args: rec.args as Record<string, unknown>,
+    },
+  };
+}
+
+function decodeRequestSkill(rec: Record<string, unknown>): DecodeResult<PluginCallSkillRequest> {
+  if (!isToken(rec.id)) return fail("malformed-field", "`request_skill` has a missing or malformed `id`");
+  if (typeof rec.name !== "string" || rec.name.length === 0) {
+    return fail("malformed-field", "`request_skill` must have a non-empty `name`");
+  }
+  if (!isPlainObject(rec.args)) {
+    return fail("malformed-field", "`request_skill` `args` must be a plain object");
+  }
+  return {
+    ok: true,
+    message: {
+      v: PROTOCOL_VERSION, kind: "request_skill", id: rec.id as string,
+      name: rec.name as string, args: rec.args as Record<string, unknown>,
+    },
+  };
+}
+
+function decodeRequestModel(rec: Record<string, unknown>): DecodeResult<PluginCallModelRequest> {
+  if (!isToken(rec.id)) return fail("malformed-field", "`request_model` has a missing or malformed `id`");
+  if (rec.system !== undefined && (typeof rec.system !== "string")) {
+    return fail("malformed-field", "`request_model` `system` must be a string when present");
+  }
+  if (!Array.isArray(rec.messages)) {
+    return fail("malformed-field", "`request_model` `messages` must be an array");
+  }
+  if (rec.tools !== undefined && !Array.isArray(rec.tools)) {
+    return fail("malformed-field", "`request_model` `tools` must be an array when present");
+  }
+  return {
+    ok: true,
+    message: {
+      v: PROTOCOL_VERSION, kind: "request_model", id: rec.id as string,
+      system: rec.system as string | undefined,
+      messages: rec.messages as unknown[],
+      tools: rec.tools as unknown[] | undefined,
     },
   };
 }
@@ -492,31 +608,73 @@ export function decodeHostMessage(raw: string): DecodeResult<HostMessage> {
   if (!envelope.ok) return envelope;
   const rec = envelope.message;
 
-  if (!isToken(rec.id)) {
-    return fail("malformed-field", "host message is missing a valid correlation id");
+  const id = rec.id as string | undefined;
+  if (typeof id !== "string" || !isToken(id)) {
+    return fail("malformed-field", "host message has a missing or malformed `id`");
   }
-  if (rec.kind === "list_tools") {
-    return { ok: true, message: { v: PROTOCOL_VERSION, kind: "list_tools", id: rec.id } };
+
+  switch (rec.kind) {
+    case "list_tools":
+      return { ok: true, message: { v: PROTOCOL_VERSION, kind: "list_tools", id } };
+    case "call_tool":
+      if (typeof rec.tool !== "string" || rec.tool.length === 0) {
+        return fail("malformed-field", "`call_tool` must have a non-empty `tool`");
+      }
+      if (!isPlainObject(rec.args)) {
+        return fail("malformed-field", "`call_tool` `args` must be a plain object");
+      }
+      return {
+        ok: true,
+        message: {
+          v: PROTOCOL_VERSION, kind: "call_tool", id,
+          tool: rec.tool as string, args: rec.args as Record<string, unknown>,
+        },
+      };
+    case "tool_delivery":
+      if (typeof rec.ok !== "boolean") return fail("malformed-field", "`tool_delivery` must have a boolean `ok`");
+      return {
+        ok: true,
+        message: {
+          v: PROTOCOL_VERSION, kind: "tool_delivery", id, ok: rec.ok as boolean,
+          output: rec.output, error: rec.error as string | undefined,
+          truncated: rec.truncated === true,
+        },
+      };
+    case "skill_delivery":
+      if (typeof rec.ok !== "boolean") return fail("malformed-field", "`skill_delivery` must have a boolean `ok`");
+      return {
+        ok: true,
+        message: {
+          v: PROTOCOL_VERSION, kind: "skill_delivery", id, ok: rec.ok as boolean,
+          output: rec.output, error: rec.error as string | undefined,
+        },
+      };
+    case "model_delivery":
+      if (typeof rec.ok !== "boolean") return fail("malformed-field", "`model_delivery` must have a boolean `ok`");
+      return {
+        ok: true,
+        message: {
+          v: PROTOCOL_VERSION, kind: "model_delivery", id, ok: rec.ok as boolean,
+          output: rec.output, error: rec.error as string | undefined,
+        },
+      };
+    case "broker_error":
+      if (typeof rec.code !== "string" || rec.code.length === 0) {
+        return fail("malformed-field", "`broker_error` must have a non-empty `code`");
+      }
+      if (typeof rec.message !== "string") {
+        return fail("malformed-field", "`broker_error` must have a string `message`");
+      }
+      return {
+        ok: true,
+        message: {
+          v: PROTOCOL_VERSION, kind: "broker_error", id,
+          code: rec.code as string, message: rec.message as string,
+        },
+      };
+    default:
+      return fail("unknown-kind", `unknown message kind ${JSON.stringify(rec.kind)} from host`);
   }
-  if (rec.kind === "call_tool") {
-    if (typeof rec.tool !== "string" || rec.tool.length === 0) {
-      return fail("malformed-field", "`call_tool.tool` must be a non-empty string");
-    }
-    if (!isPlainObject(rec.args)) {
-      return fail("malformed-field", "`call_tool.args` must be an object");
-    }
-    return {
-      ok: true,
-      message: {
-        v: PROTOCOL_VERSION,
-        kind: "call_tool",
-        id: rec.id,
-        tool: rec.tool,
-        args: rec.args,
-      },
-    };
-  }
-  return fail("unknown-kind", `unknown message kind ${JSON.stringify(rec.kind)} from host`);
 }
 
 // ── Framing ──────────────────────────────────────────────────────────────────
@@ -528,23 +686,9 @@ export interface FrameBatch {
 }
 
 /**
- * Newline-delimited frame reassembler with a HARD memory bound.
- *
- * A child's stdout arrives in arbitrary chunks; frames straddle chunk
- * boundaries. The naive reassembler appends to a buffer until it sees `\n`,
- * which a hostile (or merely broken) child turns into unbounded host memory
- * growth by never sending one. This one refuses:
- *
- *   - once the pending buffer exceeds `maxFrameChars`, the buffer is DROPPED,
- *     an `oversized-frame` failure is emitted, and the reader enters SKIP mode;
- *   - in skip mode every byte is discarded until the next newline, at which
- *     point normal framing resumes. The oversized frame is lost — which is
- *     correct, since a frame we refused to buffer cannot be decoded anyway —
- *     but the stream RESYNCHRONIZES instead of the plugin being permanently
- *     wedged on one bad message.
- *
- * Pure in the sense that matters: no I/O, no clock, no globals. State is only
- * the pending buffer.
+ * Bounded newline reassembler. Oversized fragments are discarded through the
+ * next newline, then framing resumes. Complete frames remain raw so callers
+ * can decode with their expected plugin identity and reserved tool names.
  */
 export class FrameReader {
   private buffer = "";
@@ -552,60 +696,48 @@ export class FrameReader {
 
   constructor(private readonly maxFrameChars: number = MAX_FRAME_CHARS) {}
 
-  /** Feed a raw chunk. Never throws. */
+  /** Reassemble raw frames; protocol decoding belongs to the caller. */
   push(chunk: string): FrameBatch {
     const out: FrameBatch = { frames: [], failures: [] };
     if (typeof chunk !== "string" || chunk.length === 0) return out;
-
     let rest = chunk;
     while (rest.length > 0) {
       if (this.skipping) {
         const nl = rest.indexOf("\n");
-        if (nl === -1) return out; // still inside the oversized frame
+        if (nl === -1) return out;
         this.skipping = false;
         rest = rest.slice(nl + 1);
         continue;
       }
-
       const nl = rest.indexOf("\n");
       if (nl === -1) {
-        this.buffer += rest;
-        if (this.buffer.length > this.maxFrameChars) {
-          out.failures.push(
-            fail(
-              "oversized-frame",
-              `plugin frame exceeded ${this.maxFrameChars} characters before a newline; buffer discarded`,
-            ),
-          );
+        if (this.buffer.length + rest.length > this.maxFrameChars) {
+          out.failures.push(fail("oversized-frame", `plugin frame exceeded ${this.maxFrameChars} characters before a newline; buffer discarded`));
           this.buffer = "";
           this.skipping = true;
+        } else {
+          this.buffer += rest;
         }
         return out;
       }
-
-      const frame = this.buffer + rest.slice(0, nl);
+      const size = this.buffer.length + nl;
+      if (size > this.maxFrameChars) {
+        out.failures.push(fail("oversized-frame", `plugin frame exceeded ${this.maxFrameChars} characters`));
+      } else {
+        const frame = this.buffer + rest.slice(0, nl);
+        if (frame.trim().length > 0) out.frames.push(frame);
+      }
       this.buffer = "";
       rest = rest.slice(nl + 1);
-
-      if (frame.length > this.maxFrameChars) {
-        out.failures.push(
-          fail("oversized-frame", `plugin frame exceeded ${this.maxFrameChars} characters`),
-        );
-        continue;
-      }
-      if (frame.trim().length === 0) continue; // tolerate blank lines
-      out.frames.push(frame);
     }
     return out;
   }
 
-  /** Discard any partial frame. Called on respawn so state cannot leak across. */
   reset(): void {
     this.buffer = "";
     this.skipping = false;
   }
 
-  /** Characters currently buffered awaiting a newline. For tests/diagnostics. */
   get pending(): number {
     return this.buffer.length;
   }

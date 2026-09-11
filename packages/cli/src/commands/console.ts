@@ -16,6 +16,7 @@ import type {
   ToolCall,
   ToolResult,
 } from "@0sec/core";
+import { DEFAULT_AUTONOMY_MODE } from "@0sec/shared";
 import { canUseOpenTui, isBunRuntime } from "../tui/runtime.js";
 import {
   findCommand,
@@ -81,7 +82,7 @@ export type ConsoleAutonomyResolution =
  *   --yolo            convenience shortcut, equivalent to --mode yolo
  *   --autonomy <mode> retained alias (documented in docs/commands.md)
  *
- * Precedence: --mode > --yolo > --autonomy > default "standard". A conflicting
+ * Precedence: --mode > --yolo > --autonomy > default "yolo". A conflicting
  * `--mode <x> --yolo` (x !== yolo) is a clear error rather than a silent pick.
  * This only chooses the initial mode; the target/scope anchor and SSRF rail are
  * unchanged, and YOLO still requires a configured scope (enforced downstream).
@@ -115,7 +116,7 @@ export function resolveConsoleAutonomyMode(opts: {
     return { ok: true, mode: opts.autonomy };
   }
 
-  return { ok: true, mode: "standard" };
+  return { ok: true, mode: DEFAULT_AUTONOMY_MODE };
 }
 
 /**
@@ -141,9 +142,9 @@ export function registerConsoleCommand(program: Command): void {
     .option("--db-path <path>", "Persistent findings database (defaults to 0SEC_DB_PATH or the local store)")
     .option("-m, --model <id>", "Override the LLM model id (else provider default)")
     .option("--role <role>", "Tool set to expose: audit|review|discovery|attack|verify (default audit = every tool)")
-    .option("--mode <mode>", "Autonomy mode to start in: standard|recon|copilot|yolo (default standard). YOLO drops per-action prompts but stays target/scope-anchored; cycle live with Shift+Tab.")
+    .option("--mode <mode>", "Autonomy mode to start in: standard|recon|copilot|yolo (default yolo). YOLO drops per-action prompts but stays target/scope-anchored; cycle live with Shift+Tab.")
     .option("--yolo", "Shortcut for --mode yolo — start the console in YOLO autonomy (no per-action prompts; still target-anchored and SSRF-railed).")
-    .option("--autonomy <mode>", "Alias of --mode (standard|copilot|yolo|recon); --mode/--yolo take precedence.", "standard")
+    .option("--autonomy <mode>", "Alias of --mode (standard|copilot|yolo|recon); --mode/--yolo take precedence.")
     .option("--max-tool-calls <n>", "Safety cap on tool-call rounds per operator message", "20")
     .option("--allow-scanners", "Expose generic-scanner tool wrappers (sqlmap/nikto/…); default off")
     .option("--resume [id]", "Reopen a saved console session by id (or unique prefix); with no id, opens a session picker. Also reachable as `0 -r [id]`.")
@@ -280,9 +281,11 @@ export function registerConsoleCommand(program: Command): void {
         let printSession: ConsoleSession;
         try {
           const runtime = createConsoleRuntime({ model: resumedModel ?? opts.model });
+          const resolvedModel = runtime.resolvedModel();
           printSession = createLocalConsoleSession({
             runtime,
             target: focusedTarget,
+            costModel: resolvedModel,
             role,
             maxToolIterations,
             allowScanners: opts.allowScanners,
@@ -332,6 +335,7 @@ export function registerConsoleCommand(program: Command): void {
         type TuiOpts = NonNullable<Parameters<typeof showOpenTuiConsole>[0]>;
         const baseOptions: TuiOpts = {
           target: focusedTarget,
+          scope,
           dbPath: opts.dbPath,
           role,
           initialPrompt: findingPrompt,
@@ -362,11 +366,13 @@ export function registerConsoleCommand(program: Command): void {
       let session: ConsoleSession;
       try {
         const runtime = createConsoleRuntime({ model: opts.model });
+        const resolvedModel = runtime.resolvedModel();
         // MCP host was connected once above (shared with the TUI path); the
         // session closes it on cleanup (rl close).
         session = createLocalConsoleSession({
           runtime,
           target: focusedTarget,
+          costModel: resolvedModel,
           role,
           maxToolIterations,
           allowScanners: opts.allowScanners,

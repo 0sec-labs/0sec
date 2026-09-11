@@ -113,6 +113,25 @@ describe("evaluateImprovementPromotion", () => {
     expect(decision.status).toBe("rejected");
     expect(decision.checks.find((check) => check.id === "sample_size")?.passed).toBe(false);
   });
+
+  it("allows measured recovery from zero successes but rejects missing or uncertain costs", () => {
+    const recovered = result({
+      heldOut: {
+        champion: { ...score(0, 0), costPerSuccessUsd: null },
+        challenger: score(1, 0, 1),
+      },
+    });
+    expect(evaluateImprovementPromotion(candidate("source", recovered)).status).toBe("requires_human_approval");
+
+    recovered.heldOut.champion.successRate = 0.5;
+    expect(evaluateImprovementPromotion(candidate("source", recovered)).status).toBe("rejected");
+    recovered.heldOut.champion.successRate = 0;
+    recovered.heldOut.champion.inconclusiveRate = 0.5;
+    expect(evaluateImprovementPromotion(candidate("source", recovered)).status).toBe("rejected");
+    recovered.heldOut.champion.inconclusiveRate = 0;
+    recovered.heldOut.challenger.costPerSuccessUsd = null;
+    expect(evaluateImprovementPromotion(candidate("source", recovered)).status).toBe("rejected");
+  });
 });
 
 describe("improvement ledger", () => {

@@ -343,15 +343,139 @@ docker build --build-arg INSTALL_SECLISTS=1 -t 0sec:full .
 
 ## Plugin system
 
-`0sec plugin` manages third-party plugins for extending scan capabilities.
+0sec supports two plugin mechanisms:
+
+- **Model-authored executable plugins** — TypeScript code submitted by the
+  model at runtime, executed in isolated Docker containers or smolvm microVMs. These
+  are the primary self-extension path, enabled by default for non-verifier
+  agents (operator can opt out via `allowModelSelfExtension: false`).
+- **Third-party operator plugins** — CLI-managed plugins from the operator
+  marketplace. Scaffolded; no marketplace ships.
+
+### Model-authored executable plugins (self-extension)
+
+The model can submit TypeScript source files as an executable plugin during a
+session. Each plugin declares a manifest with tool names, descriptions, JSON
+parameter property schemas, and **capabilities** that gate broker access:
+
+| Capability | Description |
+|------------|-------------|
+| `compute` | Guest-local computation, including scratch files; no host filesystem or provider access |
+| `model-call` | May call the configured model provider through a controller-owned broker |
+| `network` | Requests to authorized host network tools, subject to the parent's scope |
+| `filesystem-read` / `filesystem-write` | Requests to authorized host filesystem tools, subject to local scope |
+| `process-exec` / `findings-write` | Applicable host execution or finding-publication gates; explicitly denied broker tools remain unavailable |
+
+A plugin's entry source file exports an `async run(toolName, args, sdk)`
+function. The `sdk` object provides three broker methods:
+
+- **`sdk.callTool(name, args)`** — calls another registered executable tool
+  or an available host tool through the parent's authorization gates. Returns output or throws.
+- **`sdk.callSkill(name, args)`** — calls another registered executable skill
+  by name. Throws if not found.
+- **`sdk.callModel({system?, messages?, tools?})`** — delegates a model
+  request through the controller's authorized provider front door. Requires
+  the `model-call` capability.
+
+Guest code runs in an isolated guest (Docker backend by default) with no
+network, read-only root, and bounded resources. The guest SDK **cannot**
+invoke host execution tools (`bash`, `run_command`, `python_exec`),
+delegation tools (`spawn_agent`, `spawn_agents`), or control tools
+(`self_extend`, `apply_patch`, `write_file`). Nested invocations share a
+single broker call budget and are limited to depth 4.
+
+Manifest `parameters` is a properties bag, for example
+`{"value":{"type":"number"}}`, with `required` declared beside it—not a complete
+`{"type":"object","properties":...}` schema. Source uses Node 24's native
+TypeScript stripping; use erasable TypeScript syntax and provision dependencies
+in the toolbox rather than assuming a full TypeScript compiler runs on admission.
+
+#### Lifecycle
+
+1. **Submit** — `submit({manifest, files, entry, kind?}, context)` saves an
+   immutable versioned snapshot, validates the source in a guest container
+   (admission), and activates it.
+2. **Execute** — `execute(toolName, args, context)` runs the active version's
+   entry function with the supplied arguments. Failed executions increment
+   the version's `failureCount` and record `lastError`.
+3. **Replace** — submitting the same plugin id creates a new active version.
+   Prior versions are retained for rollback (up to 32 per plugin).
+4. **List** — `list()` returns every retained version with its
+   `evidenceStatus` (`structural` for direct submits, `measured` for evolved
+   versions), `active` flag, `failureCount`, and `lastError`.
+5. **Rollback** — `rollback(pluginId, versionId, context)` reactivates a
+   prior version. Retains the rolled-back version for further rollback.
+6. **Evolve** — `evolve(pluginId, profile, deps, context)` runs the
+   improvement loop over the active version's snapshot, producing a new
+   `measured` version on promotion.
+7. **Close** — releases the manager and aborts pending operations.
+
+For the model-facing lifecycle, use `self_extend` with `action` set to `submit`,
+`list`, `evolve`, or `rollback`. Point `0SEC_PLUGIN_EVOLUTION_CONFIG` at an
+operator-owned [source-evolution config](/improvement-plane/#config-shape) to
+expose the `default` evaluation profile. It must use the same backend and pinned
+image as the executable. Without a profile, creation and replacement work,
+but measured evolution is unavailable rather than silently approved.
+
+YOLO removes per-action prompts within the configured scope; it does not let
+generated code replace its evaluator, inherit provider credentials, or expand
+host authorization. Direct submissions remain structurally admitted—not
+evidence of improved security performance.
+
+#### Storage
+
+Versions are stored in `registry.json` under the configured root. Each version
+records its snapshot UUID (content-addressed files under `snapshots/<uuid>`),
+immutable image digest, manifest digest, and (for evolved versions) the
+evolution receipt digest. The registry is validated on every read — tampered
+entries, dangling snapshots, or mismatched digests are rejected.
+
+#### Backend
+
+| Backend | Requirement | Isolation |
+|---------|------------|-----------|
+| `docker` (default) | Local Docker daemon; configured Node 24 toolbox image | `--network none`, read-only root, cap-drop all, no-new-privs, PIDs limit, bounded memory/CPU |
+| `smolvm` | KVM, smolvm **1.14.6**, Node 24 toolbox archive | MicroVM with dedicated kernel; bounded resources and no guest network |
+
+Default image for agent-created submissions is `0sec-toolbox:local`, overridable
+with `0SEC_PLUGIN_IMAGE`; the smoke script defaults to `0sec-toolbox:qualification`.
+For smolvm, configure `0SEC_SMOLVM_IMAGE_ARCHIVE`. The image is resolved to an immutable digest
+on first use; resumed/promoted versions retain that digest, not a retagged
+reference.
+
+This backend isolates executable plugins and their evolution workers, not the
+entire CLI or every built-in tool. The controller and authorized host tools
+remain outside the guest. Each invocation starts a fresh guest; smolvm adds VM
+startup overhead, and there is no warm-VM pool.
+
+#### Version lifecycle diagram
+
+```
+submit        ┌──────────┐     execute ──► success
+  │           │ Version 1 │                 └── failureCount++
+  ├──►active  │(structural)│
+  │           └────┬──────┘
+submit v2         │
+  │           ┌────▼──────┐
+  ├──►active  │ Version 2 │     rollback ──► Version 1 active again
+  │           │(structural)│
+  │           └────┬──────┘
+evolve            │
+  │           ┌────▼──────┐
+  └──►active  │ Version 3 │
+              │(measured) │
+              └───────────┘
+```
+
+### CLI-managed operator plugins
 
 **Source:** `packages/cli/src/commands/plugin.ts`
 
-**Status:** The plugin system is scaffolded (stages 4-5 of the design) but no
-real marketplace ships. The default registry endpoint is intentionally empty.
-Plugins can be loaded from local filesystem paths for development.
+**Status:** Scaffolded (stages 4-5 of the design) but no real marketplace ships.
+The default registry endpoint is intentionally empty. Plugins can be loaded from
+local filesystem paths for development.
 
-### Subcommands
+#### Subcommands
 
 | Subcommand | Description |
 |------------|-------------|
@@ -363,9 +487,9 @@ Plugins can be loaded from local filesystem paths for development.
 | `0sec plugin info <id>` | Show plugin manifest and capabilities |
 | `0sec plugin run <id> [tool]` | Invoke one contributed tool of an enabled plugin |
 
-### Security model
+#### Security model
 
-Plugins have three distinct states:
+CLI-managed plugins have three distinct states:
 
 | State | Description |
 |-------|-------------|
@@ -373,9 +497,9 @@ Plugins have three distinct states:
 | **Enabled** | Per-project operator decision recorded by the enablement store |
 | **Running** | Tool invocation. Only enabled plugins with declared capabilities execute |
 
-Capabilities are declared in the plugin manifest and gated at runtime:
+CLI plugin capabilities declared in the manifest and gated at runtime:
 `network`, `filesystem-read`, `filesystem-write`, `process-exec`,
-`findings-write`.
+`findings-write`
 
 ## Disclose and evidence
 

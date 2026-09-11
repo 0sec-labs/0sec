@@ -1,5 +1,6 @@
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import { z } from "zod";
 import { DEFAULT_IMPROVEMENT_PROMOTION_POLICY } from "../bench/improvement-promotion.js";
 import type { EvolutionConfig } from "./types.js";
@@ -54,6 +55,7 @@ const schema = z.object({
     maximumNegativeControlFpDelta: z.literal(0).default(0),
     maximumCostMultiplier: finitePositive.max(10).default(DEFAULT_IMPROVEMENT_PROMOTION_POLICY.maximumCostMultiplier),
   }).strict().default({}),
+  maxAlternativeParents: z.number().int().min(0).max(10).optional(),
 }).strict();
 
 /** Stable JSON comparison also refuses non-JSON input at programmatic call sites. */
@@ -110,4 +112,21 @@ export function parseEvolutionConfig(raw: unknown, baseDir = process.cwd()): Evo
   }
   // Own the nested JSON and omit absent optional configuration keys.
   return JSON.parse(JSON.stringify({ ...parsed, sourceRoot, storePath })) as EvolutionConfig;
+}
+
+/** Load and validate an evolution configuration file, rejecting files inside source paths. */
+export function loadEvolutionConfigFile(path: string): EvolutionConfig {
+  const absPath = resolve(path);
+  if (!existsSync(absPath)) throw new Error(`config file not found: ${absPath}`);
+  const configFile = realpathSync(absPath);
+  const raw = JSON.parse(readFileSync(absPath, "utf8"));
+  const config = parseEvolutionConfig(raw, resolve(path, ".."));
+  for (const source of config.sourcePaths) {
+    const sourcePath = resolve(config.sourceRoot, source);
+    const selected = existsSync(sourcePath) ? realpathSync(sourcePath) : sourcePath;
+    if (configFile === selected || configFile.startsWith(`${selected}${sep}`)) {
+      throw new Error("evolution config contains private answers and must be outside selected source paths");
+    }
+  }
+  return config;
 }

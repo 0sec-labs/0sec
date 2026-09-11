@@ -45,7 +45,7 @@ import type { EvolutionConfig, FinderLens, ThreatLane, VerifyLens } from "@0sec/
 // durable-registry promotion.
 import { eventBus, loadAppsecFinderLenses, ScanCostLedger, captureObservation, createEvolvedFinder } from "@0sec/core";
 import { leadToCandidateFinding, type HuntOutcome } from "./hunt.js";
-import { loadEvolutionConfigFile } from "./evolve.js";
+import { loadEvolutionConfigFile } from "@0sec/core";
 import { resolveOsecRunStorage, writeOsecRunReport } from "@0sec/db";
 import { createHash, randomUUID } from "node:crypto";
 

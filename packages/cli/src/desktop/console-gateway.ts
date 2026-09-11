@@ -15,6 +15,7 @@ import {
   type ToolCall,
 } from "@0sec/core";
 import {
+  DEFAULT_AUTONOMY_MODE,
   DESKTOP_CONSOLE_SCHEMA_VERSION,
   type DesktopConsoleAutonomyMode,
   type DesktopConsoleDecision,
@@ -166,7 +167,7 @@ function parseDecisionResponse(value: unknown): DesktopConsoleDecisionResponse {
 }
 
 function normalizeMode(value: unknown): DesktopConsoleAutonomyMode {
-  if (value === undefined) return "standard";
+  if (value === undefined) return DEFAULT_AUTONOMY_MODE;
   if (typeof value !== "string" || !MODES.has(value as DesktopConsoleAutonomyMode)) {
     throw new DesktopConsoleGatewayError("Unsupported autonomy mode.", 400);
   }
@@ -248,18 +249,22 @@ export class DesktopConsoleGateway {
   constructor(options: DesktopConsoleGatewayOptions = {}) {
     this.#now = options.now ?? (() => new Date());
     this.#createId = options.createId ?? randomUUID;
-    this.#createSession = options.createSession ?? ((input) => createLocalConsoleSession({
-      runtime: createConsoleRuntime(),
-      scanId: input.scanId,
-      target: input.target,
-      role: input.role,
-      autonomyMode: input.autonomyMode,
-      requestScope: input.requestScope,
-      requestLocalScope: input.requestLocalScope,
-      approveTool: input.approveTool,
-      escalateScopedAudit: input.escalateScopedAudit,
-      askOperator: input.askOperator,
-    }));
+    this.#createSession = options.createSession ?? ((input) => {
+      const r = createConsoleRuntime();
+      return createLocalConsoleSession({
+        runtime: r,
+        costModel: r.resolvedModel(),
+        scanId: input.scanId,
+        target: input.target,
+        role: input.role,
+        autonomyMode: input.autonomyMode,
+        requestScope: input.requestScope,
+        requestLocalScope: input.requestLocalScope,
+        approveTool: input.approveTool,
+        escalateScopedAudit: input.escalateScopedAudit,
+        askOperator: input.askOperator,
+      });
+    });
   }
 
   list(): DesktopConsoleSession[] {

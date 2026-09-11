@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
 import { canonicalEvolutionJson, parseEvolutionConfig } from "./config.js";
 import { verifyEvolutionSnapshot } from "./registry.js";
 import { allowlistedChildEnv } from "../agent/sanitized-env.js";
@@ -46,7 +47,7 @@ function quoteCommand(argv: string[]): string {
   return argv.map((argument) => `'${argument.replace(/'/g, `'\\''`)}'`).join(" ");
 }
 
-function workerScript(config: EvolutionConfig, workspace = "/workspace"): string {
+function workerScript(config: Pick<EvolutionConfig, "command" | "buildCommand">, workspace = "/workspace"): string {
   return [
     "set -eu",
     `mkdir -p ${quoteCommand([workspace])}`,
@@ -59,9 +60,20 @@ function workerScript(config: EvolutionConfig, workspace = "/workspace"): string
 }
 
 /** Source executes only inside a fresh non-root, networkless container. */
+export type SandboxProgramConfig = Pick<EvolutionConfig,
+  "backend" | "image" | "imageArchive" | "command" | "buildCommand" |
+  "timeoutMs" | "memoryMb" | "cpus" | "maxOutputBytes">;
+
+type ProgramRequest = Omit<Parameters<EvolutionSandbox>[0], "config"> & { config: SandboxProgramConfig };
+
 export function createDockerEvolutionSandbox(dockerBinary = "docker"): EvolutionSandbox {
-  return async ({ snapshot, config: rawConfig, input, signal }): Promise<EvolutionExecution> => {
-    const config = parseEvolutionConfig(rawConfig);
+  return (request) => runDockerSnapshot({ ...request, config: parseEvolutionConfig(request.config) }, dockerBinary);
+}
+
+async function runDockerSnapshot(
+  { snapshot, config, input, signal, channel }: ProgramRequest,
+  dockerBinary = "docker",
+): Promise<EvolutionExecution> {
     signal?.throwIfAborted();
     if (typeof process.getuid !== "function" || typeof process.getgid !== "function" || process.getuid() === 0) {
       throw new Error("evolution workers require a non-root POSIX host user");
@@ -100,6 +112,7 @@ export function createDockerEvolutionSandbox(dockerBinary = "docker"): Evolution
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let stdoutBytes = 0;
+      const channelDecoder = channel ? new StringDecoder("utf8") : undefined;
       let stderrBytes = 0;
       let failure: string | undefined;
       let timedOut = false;
@@ -117,9 +130,17 @@ export function createDockerEvolutionSandbox(dockerBinary = "docker"): Evolution
         if (bytes + chunk.length > config.maxOutputBytes) stop("sandbox output exceeded its byte limit");
         return bytes + kept.length;
       };
-      child.stdout.on("data", (chunk: Buffer) => { stdoutBytes = collect(chunk, stdout, stdoutBytes); });
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdoutBytes = collect(chunk, stdout, stdoutBytes);
+        if (channel && !failure) {
+          try { channel.onData(channelDecoder!.write(chunk)); }
+          catch (error) { stop(`channel callback failed: ${error instanceof Error ? error.message : String(error)}`); }
+        }
+      });
       child.stderr.on("data", (chunk: Buffer) => { stderrBytes = collect(chunk, stderr, stderrBytes); });
-      child.stdin.on("error", (error: Error) => stop(`sandbox input delivery failed: ${error.message}`));
+      child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+        if (!channel || error.code !== "EPIPE") stop(`sandbox input delivery failed: ${error.message}`);
+      });
       const finish = (code: number | null, error?: Error) => {
         if (settled) return;
         settled = true;
@@ -134,7 +155,17 @@ export function createDockerEvolutionSandbox(dockerBinary = "docker"): Evolution
       child.on("error", (error) => finish(null, error));
       child.on("close", (code) => finish(code));
       if (signal?.aborted) onAbort();
-      else child.stdin.end(stdin);
+      else if (channel) {
+        const writer = (data: string) => {
+          if (!settled && !failure && child.stdin.writable && !child.stdin.destroyed) child.stdin.write(data);
+        };
+        try {
+          if (channel.initialInput) writer(channel.initialInput);
+          channel.onReady(writer);
+        } catch (error) {
+          stop(`channel callback failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else child.stdin.end(stdin);
       execution = await pending.promise;
     } catch (error) {
       execution.error = error instanceof Error ? error.message : String(error);
@@ -148,7 +179,6 @@ export function createDockerEvolutionSandbox(dockerBinary = "docker"): Evolution
     }
     verifyEvolutionSnapshot(snapshot);
     return execution;
-  };
 }
 
 /** Resolve the operator-selected backend without substituting an execution engine. */
@@ -161,8 +191,13 @@ export async function resolveEvolutionConfigImage(config: EvolutionConfig): Prom
 }
 
 export function createSmolvmEvolutionSandbox(binary?: string): EvolutionSandbox {
-  return async ({ snapshot, config: rawConfig, input, signal }) => {
-    const config = parseEvolutionConfig(rawConfig);
+  return (request) => runSmolvmSnapshot({ ...request, config: parseEvolutionConfig(request.config) }, binary);
+}
+
+async function runSmolvmSnapshot(
+  { snapshot, config, input, signal, channel }: ProgramRequest,
+  binary?: string,
+): Promise<EvolutionExecution> {
     if (config.backend !== "smolvm" || !config.imageArchive || !IMAGE_ID.test(config.image)) {
       throw new Error("smolvm execution requires a resolved archive identity and backend smolvm");
     }
@@ -171,13 +206,18 @@ export function createSmolvmEvolutionSandbox(binary?: string): EvolutionSandbox 
       imageArchive: config.imageArchive, imageDigest: config.image, binary,
       command: ["/bin/sh", "-c", workerScript(config, "/tmp/0sec-workspace")],
       stdin: canonicalEvolutionJson(input),
+      channel,
       mounts: [{ source: snapshot.root, target: "/snapshot" }],
       timeoutMs: config.timeoutMs, memoryMb: config.memoryMb, cpus: config.cpus,
       maxOutputBytes: config.maxOutputBytes, signal,
     });
     verifyEvolutionSnapshot(snapshot);
     return execution;
-  };
+}
+
+/** Execute a controller-configured program without manufacturing evaluation cases. */
+export function executeSandboxSnapshot(request: ProgramRequest): Promise<EvolutionExecution> {
+  return request.config.backend === "smolvm" ? runSmolvmSnapshot(request) : runDockerSnapshot(request);
 }
 
 export function createEvolutionSandbox(config: EvolutionConfig): EvolutionSandbox {

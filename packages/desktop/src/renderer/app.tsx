@@ -24,10 +24,11 @@ import {
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import type {
-  DesktopConsoleAutonomyMode,
-  DesktopConsoleRole,
-  DesktopConsoleSession,
+import {
+  DEFAULT_AUTONOMY_MODE,
+  type DesktopConsoleAutonomyMode,
+  type DesktopConsoleRole,
+  type DesktopConsoleSession,
 } from "@0sec/shared";
 import { useWorkspace, type Workspace } from "./use-workspace";
 import { useStoredState } from "./use-stored-state";
@@ -740,7 +741,7 @@ function NewSessionDialog({
 }) {
   const [target, setTarget] = useState(initialTarget);
   const [role, setRole] = useState<DesktopConsoleRole>("audit");
-  const [mode, setMode] = useState<DesktopConsoleAutonomyMode>("standard");
+  const [mode, setMode] = useState<DesktopConsoleAutonomyMode>(DEFAULT_AUTONOMY_MODE);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
@@ -752,7 +753,7 @@ function NewSessionDialog({
     try {
       await onCreate(
         unscoped
-          ? { role: "audit", autonomyMode: "standard" }
+          ? { role: "audit", autonomyMode: DEFAULT_AUTONOMY_MODE }
           : { target: target.trim() || undefined, role, autonomyMode: mode },
       );
     } finally {

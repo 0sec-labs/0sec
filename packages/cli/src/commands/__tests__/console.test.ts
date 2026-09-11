@@ -6,13 +6,13 @@ import {
 } from "../console.js";
 
 describe("resolveConsoleAutonomyMode", () => {
-  it("defaults to standard when no flag is given", () => {
-    // The commander option carries a "standard" default, so real invocations
-    // pass autonomy:"standard"; a bare object must resolve the same way.
-    expect(resolveConsoleAutonomyMode({})).toEqual({ ok: true, mode: "standard" });
-    expect(resolveConsoleAutonomyMode({ autonomy: "standard" })).toEqual({
+  it("defaults to yolo when no flag is given", () => {
+    // The commander option no longer carries a default; the resolver
+    // fallback is the shared constant.
+    expect(resolveConsoleAutonomyMode({})).toEqual({ ok: true, mode: "yolo" });
+    expect(resolveConsoleAutonomyMode({ autonomy: "yolo" })).toEqual({
       ok: true,
-      mode: "standard",
+      mode: "yolo",
     });
   });
 
@@ -23,7 +23,7 @@ describe("resolveConsoleAutonomyMode", () => {
   });
 
   it("maps --yolo to autonomyMode yolo", () => {
-    expect(resolveConsoleAutonomyMode({ yolo: true, autonomy: "standard" })).toEqual({
+    expect(resolveConsoleAutonomyMode({ yolo: true, autonomy: "recon" })).toEqual({
       ok: true,
       mode: "yolo",
     });

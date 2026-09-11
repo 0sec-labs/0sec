@@ -653,6 +653,26 @@ describe("dispatch", () => {
     }
   });
 
+  it("rejects SDK broker requests on hosts without an isolated execution context", async () => {
+    const { host, fake } = await ready();
+    const pending = host.call("acme_probe", {});
+    fake.last().send({
+      v: 1, kind: "request_model", id: "sdk-model",
+      system: "", messages: [{ role: "user", content: [{ type: "text", text: "probe" }] }], tools: [],
+    });
+    const delivery = JSON.parse(fake.last().written.at(-1)!);
+    expect(delivery.kind).toBe("broker_error");
+    expect(delivery.id).toBe("sdk-model");
+    expect(delivery.code).toBe("unsupported_broker");
+    fake.last().send({
+      v: 1, kind: "tool_result", id: fake.last().callId(),
+      ok: false, content: delivery.message, truncated: false,
+    });
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.failed).toBe(true);
+  });
+
   it("a correlated `error` frame fails just that call", async () => {
     const { host, fake } = await ready();
     const pending = host.call("acme_probe", {});

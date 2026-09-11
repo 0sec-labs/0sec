@@ -33,6 +33,7 @@ import type {
   EvolutionExecution,
 } from "@0sec/core";
 import {
+  loadEvolutionConfigFile,
   parseEvolutionConfig,
   runEvolution,
   executeEvolutionVersion,
@@ -57,22 +58,6 @@ const EXIT_INTERRUPT = 3;
 
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-export function loadEvolutionConfigFile(path: string): EvolutionConfig {
-  const absPath = resolve(path);
-  if (!existsSync(absPath)) throw new Error(`config file not found: ${absPath}`);
-  const configFile = realpathSync(absPath);
-  const raw = JSON.parse(readFileSync(absPath, "utf8"));
-  const config = parseEvolutionConfig(raw, resolve(path, ".."));
-  for (const source of config.sourcePaths) {
-    const sourcePath = resolve(config.sourceRoot, source);
-    const selected = existsSync(sourcePath) ? realpathSync(sourcePath) : sourcePath;
-    if (configFile === selected || configFile.startsWith(`${selected}${sep}`)) {
-      throw new Error("evolution config contains private answers and must be outside selected source paths");
-    }
-  }
-  return config;
-}
 
 function formatRegistryStatus(registry: EvolutionRegistry, json: boolean, out: (line: string) => void): void {
   if (json) {

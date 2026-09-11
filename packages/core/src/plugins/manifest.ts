@@ -53,6 +53,8 @@
  *                          A state mutation, so never read-only.
  */
 export type PluginCapability =
+  | "compute"
+  | "model-call"
   | "network"
   | "filesystem-read"
   | "filesystem-write"
@@ -61,6 +63,8 @@ export type PluginCapability =
 
 /** The closed set of valid capabilities, in a stable declaration order. */
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
+  "compute",
+  "model-call",
   "network",
   "filesystem-read",
   "filesystem-write",
@@ -194,7 +198,7 @@ export function gateFlagsFor(tool: PluginToolManifest): {
 
   // The set of capabilities we consider a pure read. Kept as an explicit list
   // so adding a future read-only capability is a one-line, obvious change.
-  const READ_CAPS: readonly PluginCapability[] = ["filesystem-read"];
+  const READ_CAPS: readonly PluginCapability[] = ["filesystem-read", "compute", "model-call"];
   const nonEmpty = caps.length > 0;
   const allKnownReads =
     nonEmpty && caps.every((c) => isKnownCapability(c) && READ_CAPS.includes(c));
@@ -362,6 +366,12 @@ function validateTool(
 
   if (!isPlainObject(t.parameters)) {
     errors.push(`tool ${label}: \`parameters\` is required and must be an object`);
+  } else {
+    for (const [parameter, schema] of Object.entries(t.parameters)) {
+      if (typeof schema !== "boolean" && !isPlainObject(schema)) {
+        errors.push(`tool ${label}: parameters.${parameter} must be a schema object or boolean; parameters is a properties bag, not a complete JSON schema`);
+      }
+    }
   }
 
   if (t.required !== undefined) {

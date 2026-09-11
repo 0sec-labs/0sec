@@ -1456,55 +1456,47 @@ describe("ToolExecutor", () => {
     }
   });
 
-  it("stamps the caller's correlationId onto the artifact (tool_calls join key)", async () => {
-    const loggedEvents: any[] = [];
-    const mockDb = {
-      logEvent: (event: any) => { loggedEvents.push(event); },
-    } as any;
-    const dbExecutor = new ToolExecutor(ctx, mockDb);
-
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '{"result":"ok"}',
-      headers: new Headers({ "content-type": "application/json" }),
-    } as Response)));
-
-    await dbExecutor.execute(
-      { name: "http_request", arguments: { url: "https://example.com/api", method: "GET" } },
-      { correlationId: "corr-abc" },
-    );
-
-    vi.restoreAllMocks();
-
-    const artifactEvent = loggedEvents.find((e) => e.eventType === "tool_artifact");
-    expect(artifactEvent.payload.correlationId).toBe("corr-abc");
-  });
-
-  it("omits correlationId on the artifact when the caller supplies none", async () => {
-    const loggedEvents: any[] = [];
-    const mockDb = {
-      logEvent: (event: any) => { loggedEvents.push(event); },
-    } as any;
-    const dbExecutor = new ToolExecutor(ctx, mockDb);
-
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '{"result":"ok"}',
-      headers: new Headers({ "content-type": "application/json" }),
-    } as Response)));
-
-    await dbExecutor.execute({
-      name: "http_request",
-      arguments: { url: "https://example.com/api", method: "GET" },
+  it("keeps overlapping tool artifacts joined to their own calls", async () => {
+    const events: Array<{ eventType: string; payload: Record<string, unknown> }> = [];
+    const dbExecutor = new ToolExecutor(ctx, {
+      logEvent: (event: typeof events[number]) => { events.push(event); },
+    } as any);
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/slow")) {
+        entered();
+        await held;
+      }
+      return new Response('{"result":"ok"}', { headers: { "content-type": "application/json" } });
     });
-
-    vi.restoreAllMocks();
-
-    const artifactEvent = loggedEvents.find((e) => e.eventType === "tool_artifact");
-    expect(artifactEvent.payload.correlationId).toBeUndefined();
+    const slow = dbExecutor.execute(
+      { name: "http_request", arguments: { url: "https://example.com/slow", method: "GET" } },
+      { correlationId: "slow-call" },
+    );
+    try {
+      await Promise.race([started, slow.then((result) => { throw new Error(JSON.stringify(result)); })]);
+      const fast = await dbExecutor.execute(
+        { name: "http_request", arguments: { url: "https://example.com/fast", method: "GET" } },
+        { correlationId: "fast-call" },
+      );
+      expect(fast.success).toBe(true);
+      release();
+      expect((await slow).success).toBe(true);
+      expect(events.filter((event) => event.eventType === "tool_artifact").map((event) => event.payload)).toMatchObject([
+        { request: { url: "https://example.com/fast" }, correlationId: "fast-call" },
+        { request: { url: "https://example.com/slow" }, correlationId: "slow-call" },
+      ]);
+    } finally {
+      release();
+      await slow;
+      fetchSpy.mockRestore();
+      await dbExecutor.cleanup();
+    }
   });
+
 
   // ── unknown tool ──
 
@@ -2128,6 +2120,33 @@ describe("ToolExecutor", () => {
       expect(result.error).toMatch(/bash tool timed out/);
       // Ceiling 1.5s + 2s grace before SIGKILL + slack.
       expect(elapsed).toBeLessThan(8_000);
+    }, 15_000);
+
+    it("cancels an executing subprocess without waiting for its wallclock ceiling", async () => {
+      process.env["0SEC_BASH_TIMEOUT_MS"] = "30000";
+      const controller = new AbortController();
+      const directory = mkdtempSync(join(tmpdir(), "0sec-cancel-"));
+      const ready = join(directory, "ready");
+      const pending = executor.execute(
+        { name: "bash", arguments: { command: `printf ready > ${JSON.stringify(ready)}; sleep 30` } },
+        { signal: controller.signal },
+      );
+      try {
+        await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 5000, interval: 10 });
+        const started = Date.now();
+        controller.abort();
+        const result = await pending;
+        expect(result.success).toBe(false);
+        expect(result.error).toMatch(/cancelled/);
+        expect(Date.now() - started).toBeLessThan(8000);
+        const next = await executor.execute({ name: "bash", arguments: { command: "printf recovered" } });
+        expect(next.success).toBe(true);
+        expect(next.output).toContain("recovered");
+      } finally {
+        controller.abort();
+        await pending;
+        rmSync(directory, { recursive: true, force: true });
+      }
     }, 15_000);
 
     it("returns successful output for fast-completing commands", async () => {

@@ -14,6 +14,20 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Executable TypeScript plugins, reusable skills, and agent programs can be
+  created during a session, composed through tool/model brokers, retained
+  across restarts, replaced, and rolled back. Evaluated source evolution can
+  activate measured versions and explore compatible archived alternatives
+  without confusing their provenance with the deployed rollback parent.
+  Docker and local smolvm provide isolated execution; provider credentials
+  stay in the controller. New console sessions default to YOLO within their
+  configured authorization scope; `console --scope` now also reaches the
+  full-screen UI instead of being dropped during startup.
+- Source evolution can recover from a fully observed zero-success baseline
+  without treating its undefined cost-per-success as missing evidence.
+  Candidate costs must still be finite, and evaluation budgets, private
+  lanes, negative controls, approval policy, and canaries still apply.
+
 - Worker inspection now retains text-only final answers, live tool snapshots,
   and expandable commands, output, diffs, and tool details. Completed workers
   remain navigable; live steering is consumed at model boundaries, finished

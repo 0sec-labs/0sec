@@ -5,8 +5,10 @@ import { mkdir, mkdtemp, open, readdir, readFile, readlink, realpath, rm } from 
 import { tmpdir } from "node:os";
 import { isAbsolute, join, posix } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { StringDecoder } from "node:string_decoder";
 import { setTimeout as delay } from "node:timers/promises";
 import { allowlistedChildEnv } from "../agent/sanitized-env.js";
+import type { InteractiveExecutionChannel } from "./interactive.js";
 
 const IMAGE_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const MAX_IMAGE_BYTES = 8 * 1024 ** 3;
@@ -26,6 +28,10 @@ export interface SmolvmExecutionOptions {
   signal?: AbortSignal;
   binary?: string;
   storageGb?: number;
+  /** Interactive stdio channel.  When present, `stdin` is ignored, the
+   * guest process keeps stdin open for the session, and stdout chunks
+   * are delivered to `onData`. */
+  channel?: InteractiveExecutionChannel;
 }
 
 export interface SmolvmExecutionResult {
@@ -187,6 +193,7 @@ export async function runSmolvm(options: SmolvmExecutionOptions): Promise<Smolvm
       const child = spawn("setpriv", args, { cwd: root, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
       const stdout: Buffer[] = [], stderr: Buffer[] = [];
       let stdoutBytes = 0, stderrBytes = 0;
+      const channelDecoder = options.channel ? new StringDecoder("utf8") : undefined;
       let prefix = Buffer.alloc(0);
       let banner = false;
       let settled = false;
@@ -204,7 +211,13 @@ export async function runSmolvm(options: SmolvmExecutionOptions): Promise<Smolvm
         if (count + chunk.length > options.maxOutputBytes) stop("smolvm output exceeded its byte limit");
         return count + keep.length;
       };
-      child.stdout.on("data", (chunk: Buffer) => { stdoutBytes = collect(chunk, stdout, stdoutBytes); });
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdoutBytes = collect(chunk, stdout, stdoutBytes);
+        if (options.channel && !result.error) {
+          try { options.channel.onData(channelDecoder!.write(chunk)); }
+          catch (error) { stop(`channel callback failed: ${error instanceof Error ? error.message : String(error)}`); }
+        }
+      });
       child.stderr.on("data", (chunk: Buffer) => {
         if (!banner) {
           prefix = Buffer.concat([prefix, chunk]);
@@ -238,7 +251,17 @@ export async function runSmolvm(options: SmolvmExecutionOptions): Promise<Smolvm
       });
       controller.signal.addEventListener("abort", abort, { once: true });
       if (controller.signal.aborted) abort();
-      else child.stdin.end(options.stdin ?? "");
+      else if (options.channel) {
+        const writer = (data: string) => {
+          if (!settled && !result.error && child.stdin.writable && !child.stdin.destroyed) child.stdin.write(data);
+        };
+        try {
+          if (options.channel.initialInput) writer(options.channel.initialInput);
+          options.channel.onReady(writer);
+        } catch (error) {
+          stop(`channel callback failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else child.stdin.end(options.stdin ?? "");
     });
   } catch (error) {
     result.error = controller.signal.aborted

@@ -12,6 +12,10 @@ import type { WafDetector } from "../scope/waf-detect.js";
 import type { ScanCostLedger } from "./cost-ledger.js";
 import type { ToolHealthTracker } from "./tool-health.js";
 import type { TodoTracker } from "./todos.js";
+import type { SelfExtensionRegistry } from "../plugins/self-extension.js";
+import type { ExecutablePluginManager, ExecutablePluginContext } from "../plugins/executable.js";
+import type { ExecutablePluginConfiguration } from "./executable-plugins.js";
+import type { EvolutionConfig } from "../improvement/types.js";
 
 // ── Agent Roles ──
 
@@ -349,6 +353,15 @@ export interface ToolContext {
    */
   role?: AgentRole;
   scopePath?: string;
+  /** Session policy registry and durable, isolated executable implementation. */
+  selfExtension?: SelfExtensionRegistry;
+  executablePlugins?: ExecutablePluginManager;
+  executablePluginConfiguration?: ExecutablePluginConfiguration;
+  /** Bound to the current turn's authorization, cancellation, and accounting. */
+  pluginExecutionContext?: () => ExecutablePluginContext;
+  /** Named evaluation profiles are controller-owned, never supplied as model code. */
+  executableEvolutionProfiles?: Record<string, EvolutionConfig>;
+  evolveExecutablePlugin?: (pluginId: string, profile: string, signal?: AbortSignal) => Promise<ToolResult>;
   /** Host-bound source-note writer; absent during verification or when memory is disabled. */
   rememberCodebase?: (note: {
     title: string;

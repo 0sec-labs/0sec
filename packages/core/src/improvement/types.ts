@@ -1,6 +1,7 @@
 import type { NativeMessage, NativeRuntimeResult, NativeToolDef } from "../runtime/types.js";
 import type { ImprovementPromotionDecision, ImprovementPromotionPolicy } from "../bench/improvement-promotion.js";
 import type { ResearchImprovementResult } from "../bench/improvement.js";
+import type { InteractiveExecutionChannel } from "../runtime/interactive.js";
 
 export type EvolutionLane = "development" | "held-out" | "negative-control";
 export type EvolutionArtifactKind = "source" | "skill" | "router" | "lens";
@@ -52,6 +53,8 @@ export interface EvolutionConfig {
   autoPromote: boolean;
   canaryTrials: number;
   promotionPolicy: ImprovementPromotionPolicy;
+  /** Optional bounded exploration of alternative parent versions (0 or omitted disables; 1+ enables). */
+  maxAlternativeParents?: number;
 }
 
 export interface EvolutionFile {
@@ -95,6 +98,11 @@ export interface EvolutionSandboxRequest {
   config: EvolutionConfig;
   input: unknown;
   signal?: AbortSignal;
+  /** Interactive stdio channel.  When present, stdin stays open for the
+   * session and stdout is delivered to `onData` instead of being captured
+   * into `EvolutionExecution.stdout`.  The existing single-JSON behavior
+   * is unchanged when absent. */
+  channel?: InteractiveExecutionChannel;
 }
 
 export type EvolutionSandbox = (request: EvolutionSandboxRequest) => Promise<EvolutionExecution>;
@@ -133,6 +141,10 @@ export interface EvolutionVersion {
   kind: EvolutionArtifactKind;
   snapshot: EvolutionSnapshot;
   parentId: string | null;
+  /** When present, marks this version as created through alternative-parent exploration
+   * branching from a non-active ancestor. The proposal was generated from this
+   * alternative parent's snapshot rather than the current active baseline. */
+  alternativeParentId?: string;
   createdAt: string;
   configDigest: string;
   receiptDigest: string | null;

@@ -12,6 +12,7 @@ import {
   useRenderer,
   useTerminalDimensions,
 } from "@opentui/react";
+import { DEFAULT_AUTONOMY_MODE } from "@0sec/shared";
 import {
   ScopePolicy,
   createConsoleRuntime,
@@ -951,14 +952,14 @@ export function ChatScreen({
   /** Live turn-budget consumption, updated per model call. */
   const [turnBudget, setTurnBudget] = useState<{ used: number; limit: number } | null>(null);
   const [startupError, setStartupError] = useState<string | null>(null);
-  const [mode, setMode] = useState<ConsoleAutonomyMode>(options?.autonomyMode ?? "standard");
+  const [mode, setMode] = useState<ConsoleAutonomyMode>(options?.autonomyMode ?? DEFAULT_AUTONOMY_MODE);
   /**
    * The live autonomy mode, for callbacks that must not be rebuilt when it
    * changes. `buildSession` in particular is a `useCallback` that reruns on
    * `/model`; reading the ref is what keeps a model switch from silently
    * reverting the operator's mode.
    */
-  const modeRef = useRef<ConsoleAutonomyMode>(options?.autonomyMode ?? "standard");
+  const modeRef = useRef<ConsoleAutonomyMode>(options?.autonomyMode ?? DEFAULT_AUTONOMY_MODE);
   modeRef.current = mode;
   const [target, setTarget] = useState(options?.target ?? "");
   const [scopeRules, setScopeRules] = useState<string[]>(options?.scope?.raw.in_scope ?? []);
@@ -1248,8 +1249,10 @@ export function ChatScreen({
     const patch = credentialEnvPatch(loadCredentials(), process.env);
     for (const [key, value] of Object.entries(patch)) process.env[key] = value;
     const runtime = createConsoleRuntime({ model: opts.model ?? options?.model });
+    const resolvedModel = runtime.resolvedModel();
     const created = createLocalConsoleSession({
       runtime,
+      costModel: resolvedModel,
       target: options?.target,
       scope: options?.scope,
       role: options?.role,

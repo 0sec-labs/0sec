@@ -6,6 +6,12 @@
 export const DESKTOP_CONSOLE_SCHEMA_VERSION = 1 as const;
 
 export type DesktopConsoleAutonomyMode = "standard" | "recon" | "copilot" | "yolo";
+
+/** Product default autonomy mode: YOLO. Explicit flags/settings win. */
+export const DEFAULT_AUTONOMY_MODE: DesktopConsoleAutonomyMode = "yolo";
+
+/** Product default for allowModelSelfExtension in non-verify sessions. */
+export const DEFAULT_ALLOW_MODEL_SELF_EXTENSION = true;
 export type DesktopConsoleRole = "discovery" | "attack" | "verify" | "report" | "audit" | "review";
 export type DesktopConsoleSessionStatus = "ready" | "working" | "waiting" | "closed" | "failed";
 

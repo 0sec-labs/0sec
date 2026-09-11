@@ -657,7 +657,7 @@ larger independently curated positive, held-out, and clean-control corpora.
 | `minimumDevelopmentLift` | 0.05 (5 pp) | Minimum success-rate improvement on development cases. |
 | `minimumHeldOutLift` | 0.03 (3 pp) | Minimum success-rate improvement on held-out cases. |
 | `maximumNegativeControlFpDelta` | 0 | Negative-control FP rate must not increase at all. |
-| `maximumCostMultiplier` | 1.5 | Held-out cost per success at most 1.5× the champion. |
+| `maximumCostMultiplier` | 1.5 | Held-out cost per success at most 1.5× a successful champion; see zero-success recovery below. |
 
 ## Example: run the config above
 
@@ -755,7 +755,13 @@ The default policy rejects a candidate unless **every** check passes:
 | Development lift | ≥ +5 pp success rate. |
 | Held-out lift | ≥ +3 pp success rate. |
 | Precision | Negative-control FP rate rises by at most 0 pp. |
-| Cost | Held-out cost per success at most 1.5× the champion. |
+| Cost | Finite, nonnegative challenger cost per success; at most 1.5× a successful champion. |
+
+A fully observed champion with zero successes and zero inconclusive results
+has no finite cost per success. A candidate with measured finite cost can pass
+this comparison; missing cost for a successful or inconclusive champion still
+fails closed. Evaluation spending ceilings and every other promotion check
+remain enforced.
 
 A passing **policy** candidate is only `eligible_for_canary` — not deployed. A
 passing **source** candidate always needs either explicit `autoPromote: true` or
@@ -898,6 +904,38 @@ candidate bytes against the bridge's returned digest and publishes atomically.
 Changing the candidate after authorization fails instead of installing
 unapproved bytes. The bridge alone authorizes; it does not install.
 
+## Executable plugin evolution
+
+Model-authored executable plugins (the `ExecutablePluginManager` in
+`packages/core/src/plugins/executable.ts`) support their own evolution path.
+Calling `manager.evolve(pluginId, profile, deps, context)` runs the improvement
+loop over the plugin's active version snapshot, sharing the same sandbox
+isolation, evaluation receipt, and promotion gate as the standard evolution
+pipeline.
+
+Key differences from standalone evolution:
+
+- **Snapshot source**: the evolution source root is the plugin's sealed
+  snapshot, not an operator-controlled working tree. Only the files included
+  in the snapshot are visible to the model.
+- **Backend locked**: the evolution profile must use the same backend (Docker or
+  smolvm) and the same immutable image as the active version. Cross-backend
+  promotion is refused.
+- **Evidence status**: a directly submitted version has `evidenceStatus:
+  "structural"`; an evolved and promoted version has `evidenceStatus:
+  "measured"` with its evolution receipt digest recorded in the version record.
+- **Evolution store**: each plugin gets a dedicated evolution store under
+  `<manager-root>/evolution/<pluginId>/<lineageId>/<profileId>`.
+- **Rollback**: a promoted evolution version can be rolled back via
+  `manager.rollback()` like any other version; the evolved snapshot and receipt
+  are retained.
+
+The `evolve` method accepts an optional `maxAlternativeParents` field in the
+profile to explore bounded compatible retired and rejected/staged candidates as
+offline source parents, ranking development outcomes only. When set, iteration
+refreshes source after promotion; the `parentId` tracks the active baseline,
+`alternativeParentId` records source provenance.
+
 ## External hosts
 
 DSH, Codex, and Claude Code are optional MCP clients. They may present a narrow
@@ -914,12 +952,23 @@ node scripts/smoke-source-evolution.mjs
 node scripts/smoke-lens-evolution.mjs
 node scripts/smoke-codebase-learning.mjs
 node scripts/smoke-source-citation.mjs
+node scripts/smoke-executable-plugins.mjs
 ```
 
 By default, the source check requires a non-root account with Docker access and the
 `node:22-alpine` image. It exercises generated source, independent evaluation,
 approval, canaries, deployment, existing-reader pinning, and rollback using a
 small credential-detector benchmark. It does not measure general scanner quality.
+
+The executable plugin smoke check (`smoke-executable-plugins.mjs`) requires the
+built `@0sec/core` package and a local Docker daemon (or smolvm with
+`0SEC_SMOLVM_IMAGE_ARCHIVE`). It exercises the full lifecycle: submission,
+execution, TypeScript argument passing, multi-owner plugins, skill composition
+with `Promise.all` broker calls, source replacement, retained version discovery,
+persisted failure counters, cold manager restore, rollback, nested call-budget
+termination, and malformed-source rejection. An optional
+`0SEC_EVOLVE_REAL=1` flag enables a real provider evolution stage using the
+configured model.
 
 To exercise that same source lifecycle with smolvm, use `env` (the setting names
 start with a digit and therefore are not POSIX shell variable identifiers):

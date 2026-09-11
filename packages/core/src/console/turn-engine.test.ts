@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildConsoleSystemPrompt, createConsoleSession } from "./turn-engine.js";
+import { createConsoleSession } from "./turn-engine.js";
 import type {
   ConsoleLocalScopeRequest,
   ConsoleScopeRequest,
@@ -18,7 +18,6 @@ import type {
   NativeToolDef,
 } from "../runtime/types.js";
 import { ScopePolicy } from "../scope/scope.js";
-import type { PluginHost } from "../plugins/loader.js";
 import type { ToolDefinition } from "../agent/types.js";
 import * as repositoryAcquisition from "../agent/repository-acquisition.js";
 
@@ -53,40 +52,6 @@ function endTurn(text: string): NativeRuntimeResult {
   return { content: [{ type: "text", text }], stopReason: "end_turn", durationMs: 1 };
 }
 
-describe("buildConsoleSystemPrompt", () => {
-  it("frames the operator cockpit and includes target + session", () => {
-    const p = buildConsoleSystemPrompt({ target: "https://example.com", scanId: "console-x" });
-    expect(p).toContain("0sec operator console");
-    expect(p).toContain("https://example.com");
-    expect(p).toContain("console-x");
-  });
-
-  it("notes when no target is set", () => {
-    const p = buildConsoleSystemPrompt({ scanId: "console-y" });
-    expect(p).toContain("No target is set yet");
-  });
-
-  it("includes standard-mode instruction by default", () => {
-    const p = buildConsoleSystemPrompt({ scanId: "s1" });
-    expect(p).toContain("Standard mode");
-    expect(p).not.toContain("Co-pilot mode");
-    expect(p).not.toContain("YOLO mode");
-  });
-
-  it("includes copilot-mode instruction when requested", () => {
-    const p = buildConsoleSystemPrompt({ scanId: "s2", autonomyMode: "copilot" });
-    expect(p).toContain("Co-pilot mode");
-    expect(p).not.toContain("Standard mode");
-    expect(p).not.toContain("YOLO mode");
-  });
-
-  it("includes yolo-mode instruction when requested", () => {
-    const p = buildConsoleSystemPrompt({ scanId: "s3", autonomyMode: "yolo" });
-    expect(p).toContain("YOLO mode");
-    expect(p).not.toContain("Co-pilot mode");
-    expect(p).not.toContain("Standard mode");
-  });
-});
 
 describe("createConsoleSession", () => {
   it("exposes the full audit-role tool registry by default", () => {
@@ -157,6 +122,28 @@ describe("createConsoleSession", () => {
     expect(runtime.calls[1].messages.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("rejects overlapping turns without mixing history and accepts the next turn", async () => {
+    let release!: (result: NativeRuntimeResult) => void;
+    const pending = new Promise<NativeRuntimeResult>((resolve) => { release = resolve; });
+    const runtime = new ScriptedRuntime([endTurn("second response")]);
+    vi.spyOn(runtime, "executeNative").mockImplementationOnce(() => pending);
+    const session = createConsoleSession({ runtime, allowModelSelfExtension: false });
+    const first = session.send("first request");
+    try {
+      await expect(session.send("overlapping request")).rejects.toThrow(/active turn/);
+      expect(session.messages.flatMap((message) => message.content)).not.toContainEqual({
+        type: "text", text: "overlapping request",
+      });
+      release(endTurn("first response"));
+      expect((await first).assistantText).toBe("first response");
+      expect((await session.send("second request")).assistantText).toBe("second response");
+    } finally {
+      release(endTurn("released"));
+      await first;
+      await session.cleanup();
+    }
+  });
+
   it("stops with an error outcome when the runtime errors", async () => {
     const runtime = new ScriptedRuntime([
       { content: [], stopReason: "error", durationMs: 1, error: "boom" },
@@ -202,6 +189,7 @@ describe("Console autonomy — scope resolution", () => {
     const requests: ConsoleScopeRequest[] = [];
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestScope: async (req) => {
         requests.push(req);
         return null; // deny
@@ -236,6 +224,7 @@ describe("Console autonomy — scope resolution", () => {
 
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestScope: async () => ({
         target: "https://example.test",
         scope: ScopePolicy.fromJson({ in_scope: ["example.test"] }),
@@ -411,10 +400,6 @@ describe("Console autonomy — standard mode (per-action approval)", () => {
     expect(session.scope).toBeDefined();
   });
 
-  it("defaults to standard when no autonomyMode is specified", () => {
-    const session = createConsoleSession({ runtime: new ScriptedRuntime([]) });
-    expect(session.autonomyMode).toBe("standard");
-  });
 });
 
 describe("Console autonomy — copilot (no per-action prompts; in-engagement auto-expand)", () => {
@@ -535,6 +520,7 @@ describe("Console autonomy — denied-host memory", () => {
     let prompts = 0;
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestScope: async () => {
         prompts += 1;
         return null; // decline
@@ -577,6 +563,7 @@ describe("Console autonomy — denied-host memory", () => {
     let prompts = 0;
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestScope: async () => {
         prompts += 1;
         return null;
@@ -607,6 +594,7 @@ describe("Console autonomy — denied-host memory", () => {
     let prompts = 0;
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestScope: async (req) => {
         prompts += 1;
         // Decline the first request (a.test); approve the second with a scope
@@ -658,6 +646,7 @@ describe("Console autonomy — denied-host memory", () => {
     let prompts = 0;
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestScope: async () => {
         prompts += 1;
         return null;
@@ -810,6 +799,7 @@ describe("Console autonomy — approval integrity", () => {
 
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestScope: async () => ({
         target: "https://uncovered.test",
         scope: ScopePolicy.fromJson({ in_scope: ["different.test"] }),
@@ -1092,6 +1082,7 @@ describe("Console autonomy — local filesystem scope-on-demand", () => {
     let seenRequestedPath = "";
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestLocalScope: async (req: ConsoleLocalScopeRequest) => {
         calls += 1;
         seenRequestedPath = req.requestedPath;
@@ -1124,6 +1115,7 @@ describe("Console autonomy — local filesystem scope-on-demand", () => {
     let calls = 0;
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestLocalScope: async () => {
         calls += 1;
         return null; // operator declines
@@ -1168,6 +1160,7 @@ describe("Console autonomy — local filesystem scope-on-demand", () => {
     let calls = 0;
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestLocalScope: async (req: ConsoleLocalScopeRequest) => {
         calls += 1;
         // Approve only the first request (/a/b); deny every re-prompt so the
@@ -1205,6 +1198,7 @@ describe("Console autonomy — local filesystem scope-on-demand", () => {
 
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       // Approve a sibling directory that does NOT contain the requested file.
       requestLocalScope: async () => ({ scopePath: aC }),
     });
@@ -1265,7 +1259,7 @@ describe("Console autonomy — local filesystem scope-on-demand", () => {
     ]);
 
     // No requestLocalScope, no scope — exactly the legacy readline console.
-    const session = createConsoleSession({ runtime });
+    const session = createConsoleSession({ runtime, autonomyMode: "standard" });
 
     const outcome = await session.send("list files");
     expect(outcome.toolCalls).toHaveLength(1);
@@ -2274,13 +2268,6 @@ describe("Console source acquisition is not target authorization", () => {
 // ── Console autonomy — recon (passive, capability-restricted) ──
 
 describe("Console autonomy — recon: passive, in-scope, no exploitation", () => {
-  it("frames the recon persona in the system prompt", () => {
-    const p = buildConsoleSystemPrompt({ scanId: "r1", autonomyMode: "recon" });
-    expect(p).toContain("Recon mode");
-    expect(p).not.toContain("Standard mode");
-    expect(p).not.toContain("YOLO mode");
-    expect(p).not.toContain("Co-pilot mode");
-  });
 
   it("runs a read-only tool without a prompt or a refusal", async () => {
     // A READ_ONLY tool is non-exploitative, so recon runs it — and recon never
@@ -2600,6 +2587,7 @@ describe("Console turn cancellation — AbortSignal", () => {
     let prompts = 0;
     const session = createConsoleSession({
       runtime,
+      autonomyMode: "standard",
       requestScope: async (req) => {
         prompts += 1;
         // Decline blocked.test; approve anything else with a covering scope.
@@ -2665,186 +2653,68 @@ describe("Console turn cancellation — AbortSignal", () => {
 // extension (the gated `self_extend` + the tools it registers) and (2) plugin-
 // host tools. Both unions refresh at the TURN BOUNDARY and both are subject to
 // every existing per-call gate. Absent config = today's behaviour exactly.
-describe("createConsoleSession — session-registered tools", () => {
-  // A manifest a `self_extend` call registers. filesystem-read → the tool is
-  // read-only (exempt from the standard approval gate) and needs only local
-  // scope, which falls through to "approved" with no callback wired.
-  const EXT_MANIFEST = {
-    id: "acme.probe-pack",
-    name: "Probe Pack",
-    version: "1.0.0",
-    tools: [
-      {
-        name: "acme_probe",
-        description: "A model-authored probe.",
-        parameters: { note: { type: "string", description: "a note" } },
-        required: [],
-        capabilities: ["filesystem-read"],
-      },
-    ],
+describe("console executable self-extension permissions", () => {
+  const roots: string[] = [];
+  const sessions: ReturnType<typeof createConsoleSession>[] = [];
+  afterEach(async () => {
+    for (const session of sessions) await session.cleanup();
+    sessions.length = 0;
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
+    roots.length = 0;
+  });
+
+  function session(runtime: NativeRuntime, enabled: boolean) {
+    const root = mkdtempSync(join(tmpdir(), "0sec-console-executables-"));
+    roots.push(root);
+    const created = createConsoleSession({
+      runtime, allowModelSelfExtension: enabled,
+      executablePlugins: { root }, executableEvolutionProfiles: {},
+    });
+    sessions.push(created);
+    return created;
+  }
+
+  const manifest = {
+    id: "test.console-probe", name: "Console probe", version: "1.0.0",
+    tools: [{ name: "console_probe", description: "Probe", parameters: {}, capabilities: ["compute"] }],
   };
 
-  function toolUseRound(id: string, name: string, input: Record<string, unknown>): NativeRuntimeResult {
-    return {
-      content: [{ type: "tool_use", id, name, input }],
-      stopReason: "tool_use",
-      durationMs: 1,
-    };
-  }
-
-  /**
-   * A minimal stand-in for the real PluginHost that models the loader's
-   * enablement contract: `toolDefinitions()`/`ownsTool()` report ONLY the one
-   * enabled plugin tool, so the console injects exactly what the host vouches
-   * for. `calls` records every dispatch so the test can prove the call was
-   * routed THROUGH the host, not the built-in executor.
-   */
-  function makePluginHost(): PluginHost & { calls: string[] } {
-    const calls: string[] = [];
-    const def: ToolDefinition = {
-      name: "plug_tool",
-      description: "A tool contributed by an enabled plugin.",
-      parameters: { q: { type: "string", description: "query" } },
-      required: [],
-    };
-    const host = {
-      calls,
-      toolDefinitions: () => [def],
-      gateMaps: () => ({
-        networkCapable: {} as Record<string, true>,
-        localScope: {} as Record<string, true>,
-        readOnly: { plug_tool: true } as Record<string, true>,
-      }),
-      capabilityFlagsFor: (n: string) =>
-        n === "plug_tool"
-          ? { networkCapable: false, localScope: false, readOnly: true }
-          : undefined,
-      ownsTool: (n: string) => n === "plug_tool",
-      call: async (n: string) => {
-        calls.push(n);
-        return {
-          ok: true as const,
-          content: "plugin says hi",
-          failed: false,
-          truncated: false,
-          neutralized: false,
-          markers: [],
-        };
-      },
-    };
-    return host as unknown as PluginHost & { calls: string[] };
-  }
-
-  it("injects `self_extend` into the model tool set ONLY when self-extension is enabled", async () => {
+  it("honors explicit enablement and opt-out in the model-facing API", async () => {
     const on = new ScriptedRuntime([endTurn("ready")]);
-    const enabled = createConsoleSession({ runtime: on, allowModelSelfExtension: true });
-    await enabled.send("go");
-    expect(on.calls[0].tools.map((t) => t.name)).toContain("self_extend");
-
+    await session(on, true).send("go");
+    expect(on.calls[0]!.tools.map((tool) => tool.name)).toContain("self_extend");
     const off = new ScriptedRuntime([endTurn("ready")]);
-    const disabled = createConsoleSession({ runtime: off });
-    await disabled.send("go");
-    expect(off.calls[0].tools.map((t) => t.name)).not.toContain("self_extend");
+    await session(off, false).send("go");
+    expect(off.calls[0]!.tools.map((tool) => tool.name)).not.toContain("self_extend");
   });
 
-  it("makes a `self_extend`-registered tool callable on the NEXT turn and guard-evaluates it", async () => {
+  it("does not advertise ghost tools after a metadata-only submission", async () => {
     const runtime = new ScriptedRuntime([
-      toolUseRound("r1", "self_extend", { manifest: EXT_MANIFEST }),
-      toolUseRound("r2", "acme_probe", {}),
-      endTurn("done"),
-    ]);
-    // approveTool present so the (non-read-only) self_extend clears the standard
-    // approval gate + guard floor — the injected tool goes through the SAME gates.
-    const approved: string[] = [];
-    const session = createConsoleSession({
-      runtime,
-      allowModelSelfExtension: true,
-      approveTool: async (c) => {
-        approved.push(c.name);
-        return true;
+      {
+        content: [{ type: "tool_use", id: "submit", name: "self_extend", input: { manifest } }],
+        stopReason: "tool_use", durationMs: 0,
       },
-    });
-
-    const outcome = await session.send("build yourself a tool");
-
-    // Registration succeeded (the registry accepted the manifest).
-    const reg = outcome.toolCalls.find((c) => c.call.name === "self_extend");
-    expect(reg?.result.success).toBe(true);
-    // The approval gate ran for the effectful self_extend call.
-    expect(approved).toContain("self_extend");
-
-    // Turn-boundary refresh: acme_probe is absent from the FIRST model call's
-    // tool set and present on the SECOND (after registration).
-    expect(runtime.calls[0].tools.map((t) => t.name)).not.toContain("acme_probe");
-    expect(runtime.calls[1].tools.map((t) => t.name)).toContain("acme_probe");
-
-    // Calling it was guard-evaluated and returned the honest no-body result.
-    const probe = outcome.toolCalls.find((c) => c.call.name === "acme_probe");
-    expect(probe?.result.success).toBe(false);
-    expect(probe?.result.error).toContain("passed its declared guards");
-    expect(probe?.result.error).toContain("no executable implementation");
-  });
-
-  it("does not construct a registry when self-extension is disabled (self_extend refuses if reached)", async () => {
-    // Even if the model somehow emits `self_extend` with the feature OFF, it is
-    // not advertised AND the executor's front door refuses (no registry wired).
-    const runtime = new ScriptedRuntime([
-      toolUseRound("r1", "self_extend", { manifest: EXT_MANIFEST }),
-      endTurn("done"),
+      endTurn("finished"),
     ]);
-    const session = createConsoleSession({ runtime, autonomyMode: "yolo" });
-    const outcome = await session.send("try to self-extend");
-    const reg = outcome.toolCalls.find((c) => c.call.name === "self_extend");
-    expect(reg?.result.success).toBe(false);
-    expect(reg?.result.error).toContain("self-extension is disabled");
+    const result = await session(runtime, true).send("Create the tool");
+    expect(result.toolCalls[0]!.result.success).toBe(false);
+    expect(runtime.calls[1]!.tools.map((tool) => tool.name)).not.toContain("console_probe");
   });
 
-  it("unions an enabled plugin's tools into the model set and dispatches them THROUGH the host", async () => {
-    const host = makePluginHost();
+  it("rejects an unadvertised self-extension call when explicitly disabled", async () => {
     const runtime = new ScriptedRuntime([
-      toolUseRound("p1", "plug_tool", { q: "hello" }),
-      endTurn("done"),
+      {
+        content: [{
+          type: "tool_use", id: "submit", name: "self_extend",
+          input: { manifest, files: { "main.ts": "export function run() { return 1; }" }, entry: "main.ts" },
+        }],
+        stopReason: "tool_use", durationMs: 0,
+      },
+      endTurn("finished"),
     ]);
-    const session = createConsoleSession({ runtime, pluginHost: host });
-
-    const outcome = await session.send("use the plugin");
-
-    // The enabled plugin tool was advertised to the model.
-    expect(runtime.calls[0].tools.map((t) => t.name)).toContain("plug_tool");
-    // It was dispatched through the host and its content came back as the result.
-    expect(host.calls).toEqual(["plug_tool"]);
-    const call = outcome.toolCalls.find((c) => c.call.name === "plug_tool");
-    expect(call?.result.success).toBe(true);
-    expect(call?.result.output).toBe("plugin says hi");
-  });
-
-  it("injects plugin tools ONLY when a host is supplied, and ONLY the tools it owns", async () => {
-    // No host → no plugin tool in the model set.
-    const noHost = new ScriptedRuntime([endTurn("x")]);
-    const s1 = createConsoleSession({ runtime: noHost });
-    await s1.send("go");
-    expect(noHost.calls[0].tools.map((t) => t.name)).not.toContain("plug_tool");
-
-    // Host supplied → exactly the host's owned/enabled tool is present; a name
-    // the host does not own is never injected.
-    const host = makePluginHost();
-    const withHost = new ScriptedRuntime([endTurn("x")]);
-    const s2 = createConsoleSession({ runtime: withHost, pluginHost: host });
-    await s2.send("go");
-    const names = withHost.calls[0].tools.map((t) => t.name);
-    expect(names).toContain("plug_tool");
-    expect(names).not.toContain("disabled_tool");
-  });
-
-  it("leaves the model-facing tool set unchanged when NEITHER feature is configured", async () => {
-    const runtime = new ScriptedRuntime([endTurn("x")]);
-    const session = createConsoleSession({ runtime });
-    await session.send("go");
-    const advertised = runtime.calls[0].tools.map((t) => t.name).sort();
-    const base = session.tools.map((t) => t.name).sort();
-    // Byte-for-byte the built-in registry: no self_extend, no plugin tools.
-    expect(advertised).toEqual(base);
-    expect(advertised).not.toContain("self_extend");
+    const result = await session(runtime, false).send("Attempt a disabled operation");
+    expect(result.toolCalls[0]!.result.success).toBe(false);
+    expect(runtime.calls[1]!.tools.map((tool) => tool.name)).not.toContain("console_probe");
   });
 });
 
