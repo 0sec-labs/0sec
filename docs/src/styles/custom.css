@@ -319,56 +319,34 @@ pre {
   color: var(--sl-color-accent-high);
 }
 
-/* The landing page explains product boundaries before the reference catalog. */
+/* Compact documentation entry; detailed guidance lives on the linked pages. */
 .docs-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-  align-items: center;
-  gap: clamp(2rem, 5vw, 5rem);
-  padding-block: 2rem 3rem;
+  padding-block: 1rem 0.5rem;
 }
 
-.docs-preview,
-.docs-status {
-  display: inline-block;
-  border: 1px solid var(--sl-color-hairline-shade);
-  border-radius: 999px;
-  padding: 0.25rem 0.65rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--sl-color-gray-2);
-  background: var(--sl-color-black);
-  font-family: var(--sl-font);
-  text-decoration: none;
-}
 
 .docs-hero h1 {
-  font-size: clamp(2.4rem, 4.5vw, 4.25rem);
-  line-height: 1.06;
-  letter-spacing: -0.045em;
-  font-weight: 750;
+  font-size: clamp(2rem, 3vw, 2.75rem);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+  font-weight: 700;
   color: var(--sl-color-white);
-  margin-block: 1.25rem;
+  margin-block: 0 0.75rem;
 }
 
 .docs-hero-copy > p {
-  max-width: 52ch;
-  font-size: 1.1rem;
-  line-height: 1.7;
+  max-width: 65ch;
+  font-size: 1.05rem;
+  line-height: 1.6;
   color: var(--sl-color-gray-2);
 }
 
-.docs-hero-copy > .docs-availability {
-  margin-top: 1.25rem;
-  font-size: var(--sl-text-sm);
-  line-height: 1.6;
-}
 
 .docs-hero-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
-  margin-top: 1.75rem;
+  margin-top: 1.25rem;
 }
 
 .docs-hero-actions a {
@@ -387,76 +365,6 @@ pre {
   border-color: #991B1B;
 }
 
-.docs-workflow {
-  border: 1px solid var(--sl-color-hairline-shade);
-  border-radius: 1rem;
-  background: var(--sl-color-black);
-  padding: clamp(1.25rem, 3vw, 2rem);
-}
-
-.docs-workflow h2 {
-  color: var(--sl-color-white);
-  font-size: 1.1rem;
-  font-weight: 650;
-  margin: 0;
-}
-
-.docs-workflow ol {
-  list-style: none;
-  counter-reset: workflow;
-  padding: 0;
-  margin-block: 1.5rem;
-}
-
-.docs-workflow li {
-  counter-increment: workflow;
-  position: relative;
-  padding-inline-start: 2.75rem;
-}
-
-.docs-workflow li + li {
-  margin-top: 1.5rem;
-}
-
-.docs-workflow li::before {
-  content: counter(workflow);
-  position: absolute;
-  inset-inline-start: 0;
-  display: grid;
-  place-items: center;
-  width: 1.8rem;
-  height: 1.8rem;
-  border: 1px solid var(--sl-color-hairline);
-  border-radius: 50%;
-  font-size: 0.8rem;
-  color: var(--sl-color-gray-2);
-}
-
-.docs-workflow strong,
-.docs-workflow span {
-  display: block;
-}
-
-.docs-workflow strong {
-  color: var(--sl-color-white);
-  font-size: 0.95rem;
-}
-
-.docs-workflow span {
-  font-size: var(--sl-text-sm);
-  line-height: 1.6;
-  margin-top: 0.3rem;
-}
-
-.docs-workflow > a {
-  font-size: var(--sl-text-sm);
-  color: var(--sl-color-gray-1);
-  text-underline-offset: 0.2em;
-}
-
-.docs-workflow > a span {
-  display: inline;
-}
 
 .card-grid {
   gap: 1rem;
@@ -491,26 +399,16 @@ pre {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.docs-contract {
-  border-block: 1px solid var(--sl-color-hairline-shade);
-  padding-block: 1.5rem;
-  margin-block: 2.5rem;
+.docs-resources {
+  margin-top: 1.5rem;
 }
 
-.docs-contract p {
-  max-width: 80ch;
-}
 
 :root:not([data-has-sidebar]) .sl-markdown-content > p {
   max-width: 80ch;
 }
 
 @media (max-width: 60rem) {
-  .docs-hero {
-    grid-template-columns: 1fr;
-    gap: 2rem;
-    padding-block: 1rem 2rem;
-  }
   .docs-journeys .card-grid {
     grid-template-columns: 1fr;
   }

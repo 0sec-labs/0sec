@@ -59,15 +59,15 @@ export default defineConfig({
       },
       sidebar: [
         {
-          label: "Documentation overview",
+          label: "Overview",
           slug: "index",
         },
         {
-          label: "Start with 0sec",
+          label: "Get started",
           items: [
             { label: "Install & first run", slug: "getting-started" },
-            { label: "Persistent chat & settings", slug: "console" },
-            { label: "Scan & review evidence", slug: "scan-workflows" },
+            { label: "Chat & settings", slug: "console" },
+            { label: "Scan workflows", slug: "scan-workflows" },
             { label: "Scope & authorization", slug: "scope" },
             { label: "Recipes", slug: "recipes" },
             { label: "Capabilities", slug: "features" },
@@ -75,19 +75,18 @@ export default defineConfig({
           ],
         },
         {
-          label: "0sec Cloud · hosted models",
-          badge: { text: "Draft", class: "docs-status" },
+          label: "0sec Cloud",
           items: [
-            { label: "Account & model journey", link: "/getting-started/#hosted-models-draft" },
-            { label: "Credentials & availability", link: "/api-keys/#hosted-inference-draft" },
-            { label: "Charging & interruptions", link: "/api-keys/#charging-and-interrupted-requests" },
-            { label: "Provider selection", link: "/configuration/#hosted-configuration-draft" },
+            { label: "Setup", link: "/getting-started/#hosted-models-draft" },
+            { label: "Access & credentials", link: "/api-keys/#hosted-inference-draft" },
+            { label: "Billing", link: "/api-keys/#charging-and-interrupted-requests" },
+            { label: "Models", link: "/configuration/#hosted-configuration-draft" },
           ],
         },
         {
           label: "Self-evolving agents",
           items: [
-            { label: "Mechanisms & status", slug: "improvement-plane" },
+            { label: "Overview", slug: "improvement-plane" },
             { label: "Executable plugin evolution", link: "/improvement-plane/#executable-plugin-evolution" },
             { label: "Live driver & UI contract", link: "/improvement-plane/#live-harness-component-contract" },
             { label: "Autonomy & workspace trust", link: "/configuration/#self-extension-and-workspace-trust" },
@@ -96,7 +95,7 @@ export default defineConfig({
           ],
         },
         {
-          label: "Reference & advanced workflows",
+          label: "Reference",
           collapsed: true,
           items: [
             { label: "CLI commands", slug: "commands" },

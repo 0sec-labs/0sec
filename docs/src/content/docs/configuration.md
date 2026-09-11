@@ -3,14 +3,12 @@ title: Configuration
 description: Runtime modes, scan modes, depth settings, state paths, env vars, feature flags, and diagnostics.
 ---
 
-Configuration has separate layers: command options, runtime/provider environment,
-console settings, and run storage. There is no single settings file or universal
-precedence rule that overrides every subsystem.
+Configure command options, provider credentials, console settings and run storage
+separately. Each section below gives its precedence rules.
 
 ## Runtime modes
 
-Models propose and explore; scoped tools, evidence, and verification decide what
-counts. `--runtime` selects the LLM backend.
+`--runtime` selects the LLM backend.
 
 | Runtime | Flag | Description |
 |---------|------|-------------|
@@ -326,45 +324,25 @@ changes are printed so you know what was rejected.
 
 ### Self-extension and workspace trust
 
-New sessions use the shared `DEFAULT_ALLOW_MODEL_SELF_EXTENSION=true`.
-An explicitly selected or persisted `false` overrides the default. The desktop
-checkbox initializes from that shared default; existing disabled sessions aren't
-reconstructed or silently enabled.
+Self-extension defaults on for new sessions, including the desktop checkbox.
+Explicit or saved `false` stays off. Workspace-trusted ESM requires a separate,
+acknowledged grant scoped to the canonical workspace.
 
-Sandboxed self-extension isn't a separate opt-in. Workspace-trusted ESM
-execution requires its own explicit acknowledgement and a trust grant scoped
-to the canonical workspace. Enabling self-extension never grants host trust.
-
-Autonomy mode, self-extension and trusted ESM are separate controls. The desktop
-keeps its unscoped-standard and scoped-YOLO authorization flow; the shared defaults
-don't make every desktop launch globally YOLO. See
-[Improvement Plane](/improvement-plane/) for lifecycle and qualification boundaries.
+Autonomy, self-extension and host trust are separate controls. Desktop retains
+unscoped-standard and scoped-YOLO authorization.
+See [self-evolution](/improvement-plane/) for details.
 
 ## Console credential store
 
-The console credential store is for API-key providers only. Run `/providers`
-to open the chat-owned OpenTUI connection pane, then select a provider to paste
-its API key. ChatGPT Codex never uses this generic key path: it uses device
-OAuth and the Codex auth file instead. Each API-key row shows `configured via
-<VAR>` or `not configured`, reflecting the real environment.
+Use `/connect` or `/providers` to save an API key. ChatGPT Codex uses device
+sign-in and its own auth file instead.
 
-Keys are written to `credentials.json` in the [state directory](#state-directory)
-(`~/.0sec/` by default), re-tightened to owner-only (`0600` file, `0700` dir) on
-every save.
+Keys are stored in plaintext at `~/.0sec/credentials.json` by default, with
+`0600` file and `0700` directory permissions. Explicit environment values win.
+See [credential storage](/api-keys/#console-credential-store).
 
-**An explicit environment value always wins over the stored value** — the store only
-fills a variable the environment doesn't already carry. This keeps "which key did
-that run use?" answerable when a request 401s or a metered key overspends.
-
-**Stored credentials are not encrypted.** They're plaintext, protected only by
-file permissions. Treat `credentials.json` like an exported secret in a shell
-profile.
-
-The `/model` picker starts with curated models; **Tab** opens the full catalog.
-A listing is not proof of credentials or account access. The detail pane shows
-credential sources and setup hints; an unknown price is shown as `—`, not zero.
-Use `/connect` to add credentials and `/providers` to inspect the configured
-provider before making a request.
+In `/model`, **Tab** opens the full catalog. Check credentials and account access
+before selecting a model; an unknown price isn't zero.
 
 ## Cloud authentication
 
@@ -390,31 +368,23 @@ The token is never printed. `0sec auth status` echoes the host on success; on
 auth failure it surfaces the status code + path, never the token or Authorization
 header.
 
-### Hosted configuration (draft)
+<a id="hosted-configuration-draft"></a>
 
-> Status: 2026-09-11. Hosted-inference candidate configuration, not production
-> availability. See [draft setup](/getting-started/#hosted-models-draft).
+### Hosted configuration
 
-**0sec Cloud** is the account and hosted-services surface, with hosted inference
-first. Onboarding presents Cloud first and **Use my own API key** second.
-This is a product choice, not an instruction to override existing credentials.
-Local/BYOK and provider-subscription workflows remain account-optional.
-The name doesn't combine inference credit, 0review credit or managed
-0cloud engagement access.
+See [Cloud setup and availability](/getting-started/#hosted-models-draft).
+Planned Cloud access combines open cybersecurity models and 0sec-curated options
+under one connection and inference-credit balance, without supplier-account setup.
+The hosted-enabled CLI adds `0sec login` (alias of `0sec auth login`),
+`0sec models [--json]` and `0sec balance [--json]`, and defaults to
+`https://cloud.0.security`. Older releases use `https://cloud.0sec.ai`.
+Check `0sec login --help` and use the operator-provided host for testing.
 
-The candidate adds `0sec login` as an alias for `0sec auth login`, plus
-`0sec models [--json]` and `0sec balance [--json]`. It changes the default host
-to `https://cloud.0.security`; the existing-release table above describes
-`https://cloud.0sec.ai`. Use an explicit approved host during qualification,
-and check `0sec login --help` on the binary you're running.
+An environment `0SEC_CLOUD_TOKEN` takes precedence over `cloud.env`.
+Without it, host and token come from the file or default; setting
+`0SEC_CLOUD_HOST` alone won't redirect a saved token.
 
-Hosted credentials use the same `0SEC_CLOUD_TOKEN`, `0SEC_CLOUD_HOST` and
-`cloud.env` resolution as cloud auth. An environment token takes precedence
-over the file; without an environment token, the host comes from the file or
-default, not a standalone `0SEC_CLOUD_HOST` override. Authenticate against the
-intended host rather than mixing a saved token with a different service.
-
-| Setting or action | Hosted candidate behavior |
+| Setting or action | Behavior |
 | --- | --- |
 | `--runtime api` | Uses the HTTP runtime; `hosted` is a provider, not a new runtime name. |
 | `0SEC_SELECTED_PROVIDER=hosted` | Pins hosted inference instead of ambient BYOK credentials. |
@@ -425,14 +395,12 @@ intended host rather than mixing a saved token with a different service.
 | `0sec auth status` | Checks credentials and service health, not model entitlement, credit sufficiency or paid-flow readiness. |
 | `0sec auth logout` | Removes local credential files; it doesn't revoke an issued token or clear a token exported in the environment. |
 
-Use the dashboard's hosted session controls to revoke an issued CLI credential.
-Membership and token scopes are checked by the gateway. The CLI credential
-can read balance and invoke models, but doesn't authorize purchases.
+Revoke issued credentials through the dashboard's session controls.
+The gateway checks membership and scopes; a CLI credential doesn't authorize
+purchases.
 
-Local cost ceilings and token estimates aren't the hosted wallet ledger.
-The gateway reserves and settles each hosted request separately; a local
-cancellation isn't a refund instruction. See the
-[accounting and failure contract](/api-keys/#charging-and-interrupted-requests).
+Local cost ceilings are separate from the hosted ledger. Cancellation can still
+incur charges. See [billing and errors](/api-keys/#charging-and-interrupted-requests).
 
 ## Provider selection and model routing
 
