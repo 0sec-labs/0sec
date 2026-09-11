@@ -198,6 +198,23 @@ The palette is available on every screen. On the home screen it lists workspace
 commands and navigation destinations; on the chat screen it lists session
 actions, settings toggles, and screen switches.
 
+### Model picker
+
+`/model` opens a curated list, including the active model even when it is a
+custom deployment. **Tab** switches between curated models and the full catalog
+without clearing your search. Type or paste a model/provider query; **↑ / ↓**
+select, **Enter** applies the model, **Ctrl+U** clears the query, and **Esc**
+clears a query before going back.
+
+The detail pane keeps its height while filtering, so a single result still
+shows its price estimate, credential source, and setup guidance. A listed model
+is not a guarantee of account access, and `—` means the price is unknown.
+
+Switching models keeps the conversation and unsent draft open, including when
+you reach the picker through **Ctrl+P**. A failed switch keeps the old runtime;
+an active turn must finish before switching. Provider selection also respects
+your configured API endpoint, including `OPENAI_BASE_URL`.
+
 ## Keyboard shortcuts
 
 All shortcuts apply in the main Chat screen unless otherwise noted.
@@ -368,6 +385,17 @@ In the TUI, `/resume` or `/sessions` opens the same picker, showing preview
 text, relative age (`12s`, `5m`, `3h`, `2d`, `6w`), model, and turn count for
 each saved session.
 
+The browser starts with **this project's** sessions. **Tab** includes all
+projects without clearing your query. Type or paste to search, **Ctrl+U** clears
+the query, and **Enter** resumes the highlighted conversation directly.
+
+To remove a saved transcript, press **Delete** twice on the same session;
+**Esc** cancels. Typing `d` searches rather than deleting. A failed deletion
+leaves the session visible and reports the error.
+A session that cannot be loaded reports the failure in the browser rather than
+closing the console.
+
+
 ### Session management
 
 | Command | Action |
@@ -477,6 +505,46 @@ The full settings table lives in [Configuration](/configuration/). Key
 console-specific controls include sidebar visibility (`showLeftSidebar`,
 `showRightSidebar`), transcript density and style, theme, and cost display
 toggles.
+
+Type to search across groups, or use **/** before a query beginning with `r`.
+Bracketed paste and Unicode backspace work in search. **↑ / ↓** select a
+setting; **← / →** cycle its value in either direction; **Enter** changes it
+without leaving the search. **Ctrl+U** clears the query, and **Tab** switches
+groups when no query is active.
+
+The detail pane retains room for the description, current/default values, and
+a visual preview where one exists. Changed settings carry a dot; the status
+line reports how many differ from their defaults. Changes save immediately.
+**r** resets the selected setting and **Shift+R** resets all settings, after
+confirmation. A failed save remains explicitly marked as session-only.
+
+## Working feedback and live plans
+
+Working feedback distinguishes connecting, thinking, streaming, tool execution,
+and waiting for operator input. A failed startup is **unavailable**, not an
+endless connecting spinner. During a turn, the composer explains that entering
+a follow-up interrupts the current turn and sends the queued message.
+
+Enable **Reduce motion** in settings for static activity glyphs, logo, and
+highlights; elapsed time remains visible. Working highlights keep their text
+stationary and use normal foreground colors rather than failure red.
+
+The right-hand plan sidebar prioritizes active tasks, then pending work, then
+completed work. Phase labels provide context when space permits; tight layouts
+favor the task itself. Overflow reports remaining/completed counts, and a fully
+completed plan collapses to a compact summary.
+
+## Monitoring subagents
+
+Open **/herd** or **/workers** for the worker overview. **s** searches worker
+names, identifiers, tasks, and activity. **Enter** accepts the search; another
+**Enter** opens the selected worker. The header counts agents rather than
+including group headings in the count.
+
+Worker states have distinct text/glyphs as well as color. Focus view retains
+live progress and failure details, with **↑ / ↓** scrolling, **m** for a steering
+message, and **Esc** returning to the list. Wide terminals show the overview
+and detail side by side; narrow terminals use a stacked layout.
 
 ## TUI crash handling
 

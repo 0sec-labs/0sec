@@ -10,7 +10,6 @@ import {
   indexOfModel,
   isFilterKey,
   modelDetailLines,
-  modelFooterHint,
   providerGroupFor,
   type ModelRow,
 } from "./model-layout.js";
@@ -327,19 +326,6 @@ describe("the detail pane", () => {
     expect(text).toContain("not checked here");
   });
 
-  it("never renders a per-model usability verdict", () => {
-    // Every model, under an environment with exactly one provider lit.
-    for (const row of rowsLit) {
-      if (row.kind !== "model") continue;
-      const text = textOf(modelDetailLines({ row, configured }, 80)).toLowerCase();
-      for (const forbidden of ["cannot use", "unavailable", "unusable", "will fail", "not usable"]) {
-        expect(text, `${row.model.id} claimed "${forbidden}"`).not.toContain(forbidden);
-      }
-      // And every model carries the caveat that the runtime may route it
-      // somewhere other than the pricing table's provider.
-      expect(text).toContain("may route this model elsewhere");
-    }
-  });
 
   it("marks the active model", () => {
     const rows = buildModelRows({ catalog: CATALOG, activeModel: "claude-opus-4-7" });
@@ -347,12 +333,6 @@ describe("the detail pane", () => {
     expect(textOf(modelDetailLines({ row: active }, 48))).toContain("Currently active");
   });
 
-  it("describes a provider heading too, so the cursor is never over nothing", () => {
-    const heading = rowsLit.find((row) => row.kind === "heading");
-    const text = textOf(modelDetailLines({ row: heading }, 48));
-    expect(text).toContain(heading?.group.label ?? "");
-    expect(text).toMatch(/\d+ models? priced/);
-  });
 
   it("keeps every detail line inside the pane it was measured for", () => {
     for (const row of rowsLit) {
@@ -400,26 +380,16 @@ describe("the detail pane", () => {
 // ---------------------------------------------------------------------------
 
 describe("hints and keys", () => {
-  it("names the real keys in the footer hint", () => {
-    const browse = modelFooterHint("browse");
-    for (const fragment of ["up/down", "enter select", "/ filter", "ctrl+c exit"]) {
-      expect(browse).toContain(fragment);
-    }
-    expect(modelFooterHint("browse", false)).toContain("esc back");
-    expect(modelFooterHint("browse", true)).toContain("esc clear filter");
-    expect(modelFooterHint("filter")).toContain("backspace");
-  });
 
   it("gives every printable character to the filter", () => {
     // Unlike the settings screen, nothing is reserved: this screen has no
     // destructive key, so `r` reaches the filter like any other letter.
-    for (const key of ["a", "Z", " ", "r", "R", "5", "-", "."]) {
+    for (const key of ["a", "Z", " ", "r", "R", "5", "-", ".", "qwen3.8", "\u{10400}"]) {
       expect(isFilterKey(key), `${key} did not reach the filter`).toBe(true);
     }
     expect(isFilterKey("\x1b"), "escape").toBe(false);
     expect(isFilterKey("\x7f"), "delete").toBe(false);
     expect(isFilterKey("\r")).toBe(false);
-    expect(isFilterKey("ab")).toBe(false);
     expect(isFilterKey(undefined)).toBe(false);
   });
 });

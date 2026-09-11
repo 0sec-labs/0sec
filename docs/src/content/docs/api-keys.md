@@ -228,10 +228,11 @@ that run use?" answerable when a request 401s or a metered key overspends.
 file permissions. Treat `credentials.json` like an exported secret in a shell
 profile.
 
-Picking a model whose provider has no credentials won't fail at startup — the
-`/model` picker lists every model 0sec can price, not every one it can actually
-call. The request fails later instead (a zero-token turn reporting a missing key).
-Run `/providers` first to confirm the provider is configured.
+The `/model` picker starts with curated models; **Tab** opens the full catalog.
+A listing is not proof of credentials or account access. The detail pane shows
+credential sources and setup hints; an unknown price is shown as `—`, not zero.
+Use `/connect` to add credentials and `/providers` to inspect the configured
+provider before making a request.
 
 ## When to use OpenRouter
 

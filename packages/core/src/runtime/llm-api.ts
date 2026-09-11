@@ -850,7 +850,7 @@ export function resolveFailoverProvider(
     case "openai": {
       const key = process.env.OPENAI_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: "https://api.openai.com/v1", wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", wireApi: "chat_completions" };
     }
     case "anthropic": {
       const key = process.env.ANTHROPIC_API_KEY;
@@ -1710,7 +1710,7 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     return {
       provider: "openai",
       apiKey: openaiKey,
-      baseUrl: "https://api.openai.com/v1",
+      baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       defaultModel: DEFAULT_OPENAI_MODEL,
       wireApi: "chat_completions",
     };

@@ -536,7 +536,7 @@ function transcriptDetailBlocks(value: string, width: number): PreviewBlock[] {
 }
 
 function contextMeterBlocks(value: boolean, width: number): PreviewBlock[] {
-  if (!value) return stateChipBlocks(false, width);
+  if (!value) return [];
   return [
     {
       key: "meter-sample",
@@ -619,7 +619,7 @@ function themeBlocks(width: number): PreviewBlock[] {
  * the live rail reserves it.
  */
 function rightSidebarBlocks(value: boolean, width: number): PreviewBlock[] {
-  if (!value) return stateChipBlocks(false, width);
+  if (!value) return [];
   return [
     line("rail-title", width, "AGENTS 2", (t) => t.MUTED),
     {
@@ -671,7 +671,7 @@ function rightSidebarBlocks(value: boolean, width: number): PreviewBlock[] {
 }
 
 function leftSidebarBlocks(value: boolean, width: number): PreviewBlock[] {
-  if (!value) return stateChipBlocks(false, width);
+  if (!value) return [];
   return [
     line("left-sessions-title", width, "SESSIONS", (t) => t.MUTED),
     {
@@ -705,30 +705,6 @@ function leftSidebarBlocks(value: boolean, width: number): PreviewBlock[] {
   ];
 }
 
-/** Booleans and any non-visual setting: an on/off state chip, no faked sample. */
-function stateChipBlocks(value: boolean, width: number): PreviewBlock[] {
-  return [
-    {
-      key: "state-chip",
-      rows: 1,
-      render: (theme) => (
-        <Columns
-          available={width}
-          gap={1}
-          columns={[
-            {
-              content: value ? " on " : " off ",
-              fg: theme.CANVAS,
-              bg: value ? theme.SUCCESS : theme.MUTED,
-              key: "chip",
-            },
-            { flex: 1, min: 1, text: "no visual sample", fg: theme.MUTED, key: "note" },
-          ]}
-        />
-      ),
-    },
-  ];
-}
 
 // ---------------------------------------------------------------------------
 // Assembly
@@ -791,10 +767,7 @@ export function previewBlocks({ def, value, width, settings }: PreviewInput): Pr
       body = themeBlocks(w);
       break;
     default:
-      body =
-        def.kind === "boolean"
-          ? stateChipBlocks(value === true, w)
-          : [line("value", w, `current: ${String(value)}`, (t) => t.ACCENT)];
+      return [];
   }
 
   if (body.length === 0) return [];

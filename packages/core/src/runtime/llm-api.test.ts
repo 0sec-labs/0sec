@@ -28,6 +28,7 @@ describe("LlmApiRuntime provider detection", () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.AZURE_OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_BASE_URL;
     delete process.env.AZURE_OPENAI_BASE_URL;
     delete process.env.AZURE_OPENAI_MODEL;
     delete process.env.AZURE_OPENAI_WIRE_API;
@@ -73,6 +74,30 @@ describe("LlmApiRuntime provider detection", () => {
     expect(await rt.isAvailable()).toBe(true);
   });
 
+
+  it.each([undefined, "openai"])("keeps the configured OpenAI endpoint with provider pin %s", async (selectedProvider) => {
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENAI_BASE_URL = "https://gateway.example.test/v1";
+    process.env["0SEC_MODEL"] = "gpt-6-astra";
+    if (selectedProvider) process.env["0SEC_SELECTED_PROVIDER"] = selectedProvider;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        choices: [{ message: { content: "Gateway response" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 2 },
+      }), { headers: { "content-type": "application/json" } }),
+    );
+    try {
+      const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+      const result = await rt.executeNative("sys", [
+        { role: "user", content: [{ type: "text", text: "hello" }] },
+      ], []);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("https://gateway.example.test/v1/chat/completions");
+      expect(result.content).toContainEqual({ type: "text", text: "Gateway response" });
+      expect(result.error).toBeUndefined();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
   it("selects direct DeepSeek Flash 0731 before Azure for its exact API model", async () => {
     process.env.DEEPSEEK_API_KEY = "deepseek-key-123";
     process.env.AZURE_OPENAI_API_KEY = "azure-key-should-not-win";

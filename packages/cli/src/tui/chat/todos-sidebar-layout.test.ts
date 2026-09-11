@@ -4,6 +4,8 @@ import {
   budgetWrappedRows,
   todoTextWidth,
   wrapCells,
+  buildSidebarOverflowText,
+  buildSidebarHeader,
 } from "./todos-sidebar-layout.js";
 import { fitTuiText } from "../text.js";
 
@@ -178,5 +180,26 @@ describe("budgetWrappedRows", () => {
         expect(visible + overflow).toBe(costs.length);
       }
     }
+  });
+});
+
+describe("buildSidebarOverflowText", () => {
+  it("returns empty for zero hidden items", () => {
+    expect(buildSidebarOverflowText([], 20)).toBe("");
+  });
+
+  it("fits result to width", () => {
+    const text = buildSidebarOverflowText(
+      [{ status: "pending" }, { status: "pending" }],
+      6,
+    );
+    expect(text.length).toBeLessThanOrEqual(6);
+  });
+});
+
+describe("buildSidebarHeader", () => {
+  it("fits result to width", () => {
+    const text = buildSidebarHeader(5, 5, 5);
+    expect(text.length).toBeLessThanOrEqual(5);
   });
 });

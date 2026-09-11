@@ -19,12 +19,13 @@
  * own children.
  */
 
-import React, { useMemo, useState, type ReactNode } from "react";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { TextAttributes } from "@opentui/core";
+import React, { useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
+import { TextAttributes, decodePasteBytes } from "@opentui/core";
 
 import { useTheme } from "./theme-context.js";
 import { Cells, textCells } from "./primitives.js";
+import { sanitizeTuiText } from "./text.js";
 import {
   buildDialogRows,
   clampDialogSelection,
@@ -353,6 +354,8 @@ export function DialogSelect({
   const initialSelected = useMemo(() => normalizeValue(value), [value]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(new Set(initialSelected));
+  const queryRef = useRef(query);
+  const selectedRef = useRef(selected);
 
   // The filtered, ranked list the cursor moves over — never the full input.
   const filtered = useMemo(() => filterDialogItems(items, query), [items, query]);
@@ -363,10 +366,10 @@ export function DialogSelect({
     const at = currentId ? items.findIndex((item) => item.id === currentId && !item.disabled) : -1;
     return at >= 0 ? at : firstEnabled(items);
   });
+  const cursorRef = useRef(rawCursor);
   // The highlighted row can vanish as the filter narrows, so the rendered
   // cursor is always the clamped one and the stored index catches up on input.
   const cursor = clampDialogSelection(filtered, rawCursor);
-  const activeItem = filtered[cursor];
 
   // ── geometry ──────────────────────────────────────────────────────────
   const totalRows = useMemo(() => buildDialogRows(filtered).length, [filtered]);
@@ -385,65 +388,93 @@ export function DialogSelect({
   const isCurrent = (item: DialogItem): boolean =>
     multiSelect ? selected.has(item.id) : item.current === true || selected.has(item.id);
 
+  // Input can contain a query and Enter before React paints the query.
+  const currentItems = () => queryRef.current === query ? filtered : filterDialogItems(items, queryRef.current);
+  const moveTo = (next: number) => {
+    cursorRef.current = next;
+    setRawCursor(next);
+  };
+
   const commit = () => {
     if (multiSelect) {
-      const ids = items.filter((item) => selected.has(item.id)).map((item) => item.id);
+      const ids = items.filter((item) => selectedRef.current.has(item.id)).map((item) => item.id);
       onSelect(ids);
       return;
     }
+    const visible = currentItems();
+    const activeItem = visible[clampDialogSelection(visible, cursorRef.current)];
     if (activeItem && !activeItem.disabled) onSelect(activeItem.id);
   };
 
   const move = (step: number) => {
-    if (filtered.length === 0) return;
-    let next = cursor;
+    const visible = currentItems();
+    if (visible.length === 0) return;
+    let next = clampDialogSelection(visible, cursorRef.current);
     const dir: 1 | -1 = step >= 0 ? 1 : -1;
-    for (let i = 0; i < Math.abs(step); i += 1) next = moveDialogSelection(filtered, next, dir);
-    setRawCursor(next);
+    for (let i = 0; i < Math.abs(step); i += 1) next = moveDialogSelection(visible, next, dir);
+    moveTo(next);
   };
 
-  const setFilter = (next: string) => {
-    setQuery(next);
-    setRawCursor(0);
+  const setFilter = (next: SetStateAction<string>) => {
+    queryRef.current = typeof next === "function" ? next(queryRef.current) : next;
+    setQuery(queryRef.current);
+    moveTo(0);
   };
+
+  usePaste((event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const text = sanitizeTuiText(decodePasteBytes(event.bytes));
+    if (text) setFilter((current) => current + text);
+  });
 
   useKeyboard((key) => {
+    key.preventDefault();
+    key.stopPropagation();
     const seq = typeof key.sequence === "string" ? key.sequence : "";
+    if (key.ctrl && key.name === "c") return onCancel();
+    if (key.ctrl && key.name === "u") return setFilter("");
+    if (key.ctrl || key.meta || key.option) return;
 
     if (key.name === "up") return move(-1);
     if (key.name === "down") return move(1);
     if (key.name === "pageup") return move(-PAGE_STEP);
     if (key.name === "pagedown") return move(PAGE_STEP);
+    if (key.name === "home") return moveTo(firstEnabled(currentItems()));
+    if (key.name === "end") {
+      const visible = currentItems();
+      return moveTo(clampDialogSelection(visible, visible.length - 1));
+    }
 
     if (key.name === "return") return commit();
 
     if (key.name === "escape") {
       // Esc unwinds one step: clear the filter first, dismiss second.
-      if (query) return setFilter("");
+      if (queryRef.current) return setFilter("");
       return onCancel();
     }
 
     if (key.name === "backspace") {
-      if (query) setFilter(query.slice(0, -1));
+      setFilter((current) => Array.from(current).slice(0, -1).join(""));
       return;
     }
 
     // Space toggles in multi-select; otherwise it is an ordinary filter char.
     if (multiSelect && (key.name === "space" || seq === " ")) {
+      const visible = currentItems();
+      const activeItem = visible[clampDialogSelection(visible, cursorRef.current)];
       if (activeItem && !activeItem.disabled) {
-        setSelected((prev) => {
-          const next = new Set(prev);
-          if (next.has(activeItem.id)) next.delete(activeItem.id);
-          else next.add(activeItem.id);
-          return next;
-        });
+        const next = new Set(selectedRef.current);
+        if (next.has(activeItem.id)) next.delete(activeItem.id);
+        else next.add(activeItem.id);
+        selectedRef.current = next;
+        setSelected(next);
       }
       return;
     }
 
-    // Any other printable single character extends the filter.
-    if (seq.length === 1 && seq.charCodeAt(0) >= 0x20 && seq.charCodeAt(0) !== 0x7f) {
-      setFilter(query + seq);
+    if (seq.length > 0 && !/[\x00-\x1f\x7f-\x9f]/.test(seq)) {
+      setFilter((current) => current + seq);
     }
   });
 
@@ -500,7 +531,7 @@ export function DialogSelect({
 
         {/* Footer hint */}
         <Cells width={panel.innerWidth} fg={theme.MUTED}>
-          {multiSelect ? "↑↓ move · space toggle · enter confirm · esc close" : "↑↓ move · enter select · esc close"}
+          {multiSelect ? "↑↓ move · space toggle · enter confirm · esc back" : "↑↓ select · enter run · ctrl+u clear · esc back"}
         </Cells>
       </box>
     </box>

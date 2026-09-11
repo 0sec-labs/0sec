@@ -28,13 +28,14 @@
  * the repaint) when nothing observable changed between two polls.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { TextAttributes } from "@opentui/core";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
+import { decodePasteBytes, TextAttributes } from "@opentui/core";
 import { eventBus, peekInbox, sendOperatorMessage, type MessagingRuntime } from "@0sec/core";
 
 import { useTheme, type Theme } from "./theme-context.js";
 import { Cells } from "./primitives.js";
+import { sanitizeTuiText } from "./text.js";
 import {
   HERD_COMPOSER_CURSOR,
   HERD_COMPOSER_PROMPT,
@@ -48,7 +49,9 @@ import {
   computeHerdFocusLayout,
   computeHerdLayout,
   computeHerdWindow,
+  filterHerdPeers,
   focusHeaderLines,
+  focusScrollPosition,
   herdComposerFooterHint,
   herdComposerVisibleDraft,
   herdDetailLines,
@@ -57,12 +60,14 @@ import {
   herdFooterHint,
   herdListHeading,
   herdRowLabelText,
+  herdRowMarker,
   paneTitleColumns,
   herdRowStatusText,
   herdStatusLabel,
   mergeSubagentRoster,
   moveHerdSelection,
   renderFocusActivity,
+  siblingLabel,
   subagentPeers,
   subagentStatusLabel,
   windowFocusTail,
@@ -301,6 +306,32 @@ export function HerdScreen({
   const draftRef = useRef("");
   const [notice, setNotice] = useState<{ text: string; tone: "ok" | "error" } | null>(null);
 
+  // ── Search/filter: a text filter that narrows the roster by id, label, or
+  // activity. Bound to `s` in list mode; cleared on Esc. The filter input is
+  // modelled on the steering composer — a single-row overlay with a prompt,
+  // Backspace, printable characters, and paste support.
+  const [searching, setSearching] = useState(false);
+  const searchingRef = useRef(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchQueryRef = useRef("");
+
+  const setSearchingBoth = (value: boolean) => {
+    searchingRef.current = value;
+    setSearching(value);
+  };
+  const setSearchQueryBoth = (value: string) => {
+    searchQueryRef.current = value;
+    setSearchQuery(value);
+  };
+
+  // Paste into the search field. Only fires while search is active so a paste
+  // never escapes into navigation or focus mode.
+  usePaste((event) => {
+    if (!searchingRef.current) return;
+    const text = sanitizeTuiText(decodePasteBytes(event.bytes));
+    if (text) setSearchQueryBoth(searchQueryRef.current + text);
+  });
+
   const setComposingBoth = (value: boolean) => {
     composingRef.current = value;
     setComposing(value);
@@ -361,7 +392,13 @@ export function HerdScreen({
     [peers, livePeers],
   );
 
-  const rows = useMemo(() => buildHerdRows(mergedPeers, now), [mergedPeers, now]);
+  // Apply the live search filter. When the query is empty the peers pass
+  // through unchanged (same identity, same output).
+  const filteredPeers = useMemo(
+    () => filterHerdPeers(mergedPeers, searchQuery),
+    [mergedPeers, searchQuery],
+  );
+  const rows = useMemo(() => buildHerdRows(filteredPeers, now), [filteredPeers, now]);
   const cursor = clampHerdSelection(rows, selected);
   const activeRow = cursor >= 0 ? rows[cursor] : undefined;
   const activePeer = activeRow?.kind === "peer" ? activeRow.peer : undefined;
@@ -385,10 +422,10 @@ export function HerdScreen({
     }
   }, [focusId, focusedPeer]);
 
-  // A composer or a delivery notice claims one row above the footer; reserve it
-  // through the layout's own `noticeRows` budget so the panes shrink by exactly
-  // that row and nothing overlaps.
-  const overlayRow = composing || notice !== null;
+  // A composer, search bar, or a delivery notice claims one row above the
+  // footer; reserve it through the layout's own `noticeRows` budget so the
+  // panes shrink by exactly that row and nothing overlaps.
+  const overlayRow = composing || notice !== null || searching;
   const layout = computeHerdLayout({ width, height, noticeRows: overlayRow ? 1 : 0 });
   const focusLayout = computeHerdFocusLayout({ width, height, noticeRows: overlayRow ? 1 : 0 });
   const window = computeHerdWindow({
@@ -445,6 +482,34 @@ export function HerdScreen({
     // Ctrl+C always exits — a modal composer must never trap the operator.
     if (key.ctrl && key.name === "c") {
       onExit();
+      return;
+    }
+
+    // ── Search mode: type-ahead filter on the roster ──
+    if (searchingRef.current) {
+      if (key.name === "escape") {
+        setSearchingBoth(false);
+        setSearchQueryBoth("");
+        return;
+      }
+      if (key.name === "return") {
+        // Commit the search: keep the filter, close the input.
+        setSearchingBoth(false);
+        return;
+      }
+      if (key.name === "backspace") {
+        setSearchQueryBoth(searchQueryRef.current.slice(0, -1));
+        return;
+      }
+      if (
+        typeof key.sequence === "string" &&
+        key.sequence.length === 1 &&
+        !key.ctrl &&
+        !key.meta &&
+        key.sequence.charCodeAt(0) >= 32
+      ) {
+        setSearchQueryBoth(`${searchQueryRef.current}${key.sequence}`);
+      }
       return;
     }
 
@@ -561,6 +626,14 @@ export function HerdScreen({
       }
       return;
     }
+    // `s` starts an incremental text filter of the roster. Opens even when the
+    // roster is empty so an operator who types `s` reflexively gets feedback.
+    if (!key.ctrl && !key.meta && (key.sequence === "s" || key.sequence === "S")) {
+      setNotice(null);
+      setSearchQueryBoth("");
+      setSearchingBoth(true);
+      return;
+    }
     // `m` opens the steering composer bound to the highlighted peer. A no-op
     // when the roster is empty, so it can never open a composer with no target.
     if (!key.ctrl && !key.meta && (key.sequence === "m" || key.sequence === "M")) {
@@ -615,11 +688,12 @@ export function HerdScreen({
 
         const active = index === cursor;
         const background = active ? theme.PANEL_ALT : undefined;
-        // The marker column doubles as a selection caret and a live-status dot,
-        // exactly like the shared agent row: a selected row shows an accent "▸",
-        // otherwise a status-coloured "●". The highlighted row's label is accent
-        // + bold; other rows are muted.
-        const markerGlyph = active ? "▸" : "●";
+        // The marker column doubles as a selection caret and a status glyph.
+        // A selected row shows an accent "▸"; otherwise a distinct glyph per
+        // status (filled dot, ring, warning ring, checkmark, faint ring) so
+        // state is recognisable without colour. The highlighted row's label is
+        // accent + bold; other rows are muted.
+        const markerGlyph = active ? "▸" : herdRowMarker(entry.status);
         const markerFg = active ? theme.ACCENT : statusColor(theme, entry.status);
         return (
           <box
@@ -679,10 +753,17 @@ export function HerdScreen({
         </Cells>
       );
 
-  // The single reserved overlay row: the composer while composing, otherwise the
-  // most recent delivery notice. Both are budgeted to `contentWidth` by `Cells`,
-  // so neither can overrun the row `noticeRows` reserved for it.
-  const overlayBody = composing ? (
+  // The single reserved overlay row: while searching the filter input; while
+  // composing the steering draft; otherwise the most recent delivery notice.
+  // All are budgeted to `contentWidth` by `Cells`, so none can overrun the row
+  // `noticeRows` reserved for it.
+  const overlayBody = searching ? (
+    <box flexDirection="row" width={layout.contentWidth} flexShrink={0} minWidth={0}>
+      <Cells width={layout.contentWidth} fg={theme.TEXT}>
+        {`/${HERD_COMPOSER_PROMPT}${herdComposerVisibleDraft(searchQuery, layout.contentWidth)}${HERD_COMPOSER_CURSOR}`}
+      </Cells>
+    </box>
+  ) : composing ? (
     <box flexDirection="row" width={layout.contentWidth} flexShrink={0} minWidth={0}>
       <Cells width={layout.contentWidth} fg={theme.TEXT}>
         {`${HERD_COMPOSER_PROMPT}${herdComposerVisibleDraft(draft, layout.contentWidth)}${HERD_COMPOSER_CURSOR}`}
@@ -696,6 +777,7 @@ export function HerdScreen({
     </box>
   ) : null;
 
+  const listHeading = herdListHeading(window, filteredPeers.length);
   const listView = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
       <box
@@ -707,8 +789,8 @@ export function HerdScreen({
         <Pane
           pane={layout.list}
           bordered={layout.bordered}
-          title={herdListHeading(window).title}
-          meta={herdListHeading(window).meta}
+          title={listHeading.title}
+          meta={listHeading.meta}
         >
           {listBody}
         </Pane>
@@ -734,6 +816,28 @@ export function HerdScreen({
     ? clipDetailLines(
         focusHeaderLines(focusedPeer, focusRecord, focusLayout.meta.innerWidth, now, {
           compact: !focusLayout.bordered,
+          // Sibling index/total mirrors OpenCode's subagent-footer identity:
+          // tells the operator where this subagent sits among its siblings in
+          // the merged roster. Computed from same-parent live subagent records.
+          siblingIndex: focusId
+            ? Object.values(subagents)
+                .filter((r) => r.parentScanId === focusRecord?.parentScanId && r.agentId !== focusId)
+                .findIndex(() => true) >= 0
+              ? // All subagents sharing the same parent; find this agent's position.
+                (() => {
+                  const siblings = Object.values(subagents).filter(
+                    (r) => r.parentScanId === focusRecord?.parentScanId,
+                  );
+                  const idx = siblings.findIndex((r) => r.agentId === focusId);
+                  return idx >= 0 ? idx + 1 : undefined;
+                })()
+              : undefined
+            : undefined,
+          siblingTotal: focusId
+            ? Object.values(subagents).filter(
+                (r) => r.parentScanId === focusRecord?.parentScanId,
+              ).length || undefined
+            : undefined,
         }),
         focusLayout.meta.bodyRows,
         focusLayout.meta.innerWidth,
@@ -749,6 +853,14 @@ export function HerdScreen({
     scrollOffset,
   );
   const focusVisibleActivity = focusActivityLines.slice(focusTail.start, focusTail.end);
+
+  // Scroll position label: tells the operator whether they are at the newest
+  // activity (↓ new), scrolled back (−N), or at the very top (↑ top).
+  const focusPos = focusScrollPosition(
+    focusActivityLines.length,
+    focusLayout.transcript.bodyRows,
+    scrollOffset,
+  );
 
   const focusView = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
@@ -773,6 +885,7 @@ export function HerdScreen({
           pane={focusLayout.transcript}
           bordered={focusLayout.bordered}
           title={herdFocusTranscriptTitle(focusActivityLines.length)}
+          meta={focusPos || undefined}
         >
           {focusVisibleActivity.length === 0 ? (
             <Cells width={focusLayout.transcript.innerWidth} fg={theme.MUTED}>

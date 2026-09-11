@@ -13,7 +13,6 @@ import {
   settingValue,
   settingValueLabel,
   settingsDetailLines,
-  settingsFooterHint,
   settingsGroups,
   settingsTabBar,
   wrapCells,
@@ -411,31 +410,13 @@ describe("text", () => {
     expect(clipDetailLines(lines, 3, 6).at(-1)?.text).toBe("...");
   });
 
-  it("names the real keys in the footer hint", () => {
-    const browse = settingsFooterHint("browse");
-    // "tab" joins the browse hint now that tab / shift-tab (and left/right)
-    // switch group tabs; the value change moved onto enter/space alone.
-    for (const fragment of [
-      "up/down",
-      "enter/space",
-      "left/right",
-      "tab",
-      "/ filter",
-      "r reset",
-      "shift+r",
-    ]) {
-      expect(browse).toContain(fragment);
-    }
-    expect(settingsFooterHint("browse", false)).toContain("esc back");
-    expect(settingsFooterHint("browse", true)).toContain("esc clear filter");
-    expect(settingsFooterHint("confirm-reset-all")).toContain("y confirm");
-    expect(settingsFooterHint("filter")).toContain("backspace");
-  });
 
   it("reserves the reset keys from the type-to-filter path", () => {
     expect(isFilterKey("a")).toBe(true);
     expect(isFilterKey("Z")).toBe(true);
     expect(isFilterKey(" ")).toBe(true);
+    expect(isFilterKey("\u{10400}")).toBe(true);
+    expect(isFilterKey("\u0085")).toBe(false);
     expect(isFilterKey("r")).toBe(false);
     expect(isFilterKey("R")).toBe(false);
     expect(isFilterKey("")).toBe(false);

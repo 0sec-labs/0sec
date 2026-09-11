@@ -194,6 +194,31 @@ export function herdStatusOf(peer: HerdPeer, now: number, ttlMs?: number): HerdS
   return peer.activity?.phase ?? "idle";
 }
 
+/**
+ * A distinct marker glyph per status, so state is recognisable without colour.
+ * Each glyph occupies exactly one terminal cell.
+ *
+ * - working: filled accent dot
+ * - idle: open ring — alive, waiting
+ * - blocked: dot-in-ring — needs attention
+ * - done: checkmark — finished
+ * - stale: faint ring — heartbeat lost
+ */
+export function herdRowMarker(status: HerdStatus): string {
+  switch (status) {
+    case "working":
+      return "●";
+    case "idle":
+      return "○";
+    case "blocked":
+      return "◉";
+    case "done":
+      return "✓";
+    default:
+      return "◌";
+  }
+}
+
 /** Human heading for a status group. */
 export function herdStatusLabel(status: HerdStatus): string {
   switch (status) {
@@ -248,6 +273,26 @@ export function buildHerdRows(
     for (const peer of group) rows.push({ kind: "peer", status, peer });
   }
   return rows;
+}
+
+/**
+ * Filter peers by a search query. Matches case-insensitively against id, label,
+ * activity tool, and activity note. Returns the same array when query is empty
+ * or only whitespace, so a cleared search is invisible.
+ */
+export function filterHerdPeers(peers: readonly HerdPeer[], query: string): HerdPeer[] {
+  const q = sanitizeHerdText(query).toLowerCase();
+  if (!q) return [...peers];
+  return peers.filter((p) => {
+    if (p.id.toLowerCase().includes(q)) return true;
+    if (typeof p.label === "string" && sanitizeHerdText(p.label).toLowerCase().includes(q)) return true;
+    const a = p.activity;
+    if (a) {
+      if (typeof a.tool === "string" && a.tool.toLowerCase().includes(q)) return true;
+      if (typeof a.note === "string" && a.note.toLowerCase().includes(q)) return true;
+    }
+    return false;
+  });
 }
 
 /** Index of the first selectable (peer) row, or -1 when there are none. */
@@ -725,12 +770,15 @@ export function herdListTitle(window: HerdWindow): string {
  * visible window when the list is scrolled, so an operator always knows how
  * many agents there are and how much is off-screen.
  */
-export function herdListHeading(window: HerdWindow): { title: string; meta: string } {
-  if (window.total === 0) return { title: "HERD", meta: "empty" };
-  if (!window.hasAbove && !window.hasBelow) {
-    return { title: "HERD", meta: `${window.total}` };
-  }
-  return { title: "HERD", meta: `${window.start + 1}-${window.end} / ${window.total}` };
+export function herdListHeading(window: HerdWindow, peerCount: number): { title: string; meta: string } {
+  if (peerCount === 0) return { title: "HERD", meta: "empty" };
+  const count = `${peerCount} agent${peerCount === 1 ? "" : "s"}`;
+  return {
+    title: "HERD",
+    meta: window.hasAbove || window.hasBelow
+      ? `${count} · rows ${window.start + 1}-${window.end}/${window.total}`
+      : count,
+  };
 }
 
 export { paneTitleColumns, type PaneTitleColumns } from "./pane-layout.js";
@@ -743,7 +791,7 @@ export { paneTitleColumns, type PaneTitleColumns } from "./pane-layout.js";
 export const HERD_EMPTY_TEXT = "no other agents in this project";
 
 export function herdFooterHint(): string {
-  return ["↑/↓ move", "enter focus", "m message", "esc back", "ctrl+c exit"].join(" · ");
+  return ["↑/↓ move", "enter focus", "s search", "m message", "esc back", "ctrl+c exit"].join(" · ");
 }
 
 /** The footer hint while the steering composer is open. */
@@ -1108,18 +1156,53 @@ function focusStatusTone(status: SubagentStatus): HerdDetailTone {
 }
 
 /**
+ * Human-readable label for a subagent's sibling position, matching OpenCode's
+ * `Solver (3 of 8)` pattern. Returns nothing when indices are unavailable.
+ */
+export function siblingLabel(index: number | undefined, total: number | undefined): string {
+  if (typeof index !== "number" || typeof total !== "number" || total <= 0) return "";
+  return `(${Math.trunc(index)} of ${Math.trunc(total)})`;
+}
+
+/**
+ * Position indicator for the focus-mode live transcript scroll state: tells the
+ * operator whether they are at the newest activity or scrolled back through
+ * history. Empty string when there is nothing to indicate (all content visible).
+ */
+export function focusScrollPosition(
+  total: number,
+  capacity: number,
+  offsetFromBottom: number,
+): string {
+  if (total <= 0 || capacity <= 0) return "";
+  if (total <= capacity) return "all";
+  const maxOffset = total - capacity;
+  if (offsetFromBottom <= 0) return "↓ new";
+  if (offsetFromBottom >= maxOffset) return "↑ top";
+  return `↑ −${offsetFromBottom}`;
+}
+
+/**
  * The focus header: identity + live status counters for one subagent, as flat
  * tone-tagged lines wrapped to `width`. Prefers the live record when present
  * (its lifecycle status/findings/summary are richer than the roster row), and
  * falls back to the peer's own roster fields otherwise, so focusing a peer
  * with no live record still reads.
+ *
+ * When `siblingIndex` and `siblingTotal` are provided, they are shown as
+ * `Name (3 of 8)` — the OpenCode pattern that tells the operator where this
+ * subagent sits among its siblings.
  */
 export function focusHeaderLines(
   peer: HerdPeer | undefined,
   record: HerdSubagentRecord | undefined,
   width: number,
   now: number,
-  { compact = false }: { compact?: boolean } = {},
+  {
+    compact = false,
+    siblingIndex,
+    siblingTotal,
+  }: { compact?: boolean; siblingIndex?: number; siblingTotal?: number } = {},
 ): HerdDetailLine[] {
   const limit = cells(width);
   if (!peer || limit <= 0) return [];
@@ -1132,7 +1215,9 @@ export function focusHeaderLines(
   };
 
   const task = record?.task || peer.label || "";
-  push(sanitizeHerdText(task).length > 0 ? task : peer.id, "title");
+  const sibling = siblingLabel(siblingIndex, siblingTotal);
+  const titleText = sanitizeHerdText(task).length > 0 ? task : peer.id;
+  push(sibling ? `${titleText}  ${sibling}` : titleText, "title");
   if (sanitizeHerdText(task).length > 0) push(peer.id, "muted");
   separate();
 

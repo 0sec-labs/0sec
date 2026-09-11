@@ -24,6 +24,17 @@ on the published npm package and the GitHub Release tag.
   GPT-6 requests use the reasoning-model output cap and Responses reasoning
   defaults. Astra remains opt-in; estimates use base rates, not long-context,
   cache-write, or off-peak billing tiers.
+- Console interaction improvements: curated/all model browsing, stable detail
+  panes, searchable command navigation across control screens, and model changes
+  that preserve the transcript and unsent draft. Fast input followed by Enter
+  selects the current query rather than the previous highlight.
+  Settings support paste, Unicode editing, immediate value cycling, and clearer
+  changed-state/save feedback. Saved sessions default to the current project,
+  retain recoverable errors, and require explicit, cancellable deletion.
+  Worker monitoring adds search and clearer state labels; live plans prioritize
+  active tasks without overflowing their sidebar. Working indicators honor
+  reduced motion and no longer animate failed startup as connecting.
+  OpenAI model selection retains configured custom API endpoints.
 - Evolution passes recover compatible development feedback from retained
   proposals and evaluation receipts, including after promotion. Proposal and
   receipt digests are checked; held-out and negative-control feedback stays

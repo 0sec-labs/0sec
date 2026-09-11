@@ -10,7 +10,6 @@ import {
   formatSavedAt,
   isFilterKey,
   resumeDetailLines,
-  resumeFooterHint,
   resumeItems,
   sessionCategory,
   sessionLabel,
@@ -202,22 +201,6 @@ describe("clipResumeDetailLines", () => {
 // ---------------------------------------------------------------------------
 // Hints and keys
 // ---------------------------------------------------------------------------
-
-describe("resumeFooterHint", () => {
-  it("names the real bindings per mode", () => {
-    expect(resumeFooterHint("browse")).toContain("enter resume");
-    expect(resumeFooterHint("browse")).toContain("d delete");
-    expect(resumeFooterHint("browse", true)).toContain("esc clear filter");
-    expect(resumeFooterHint("filter")).toContain("type to filter");
-    expect(resumeFooterHint("confirm-delete")).toContain("confirm delete");
-  });
-
-  it("drops resume/delete when there is nothing to act on", () => {
-    const empty = resumeFooterHint("browse", false, false);
-    expect(empty).not.toContain("enter resume");
-    expect(empty).not.toContain("d delete");
-  });
-});
 
 describe("isFilterKey", () => {
   it("accepts printable single characters and rejects control/non-strings", () => {

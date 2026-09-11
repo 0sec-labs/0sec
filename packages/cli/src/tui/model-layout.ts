@@ -388,13 +388,14 @@ export function modelDetailLines(
   if (row.kind === "heading") {
     push(group.label, "title");
     separate();
-    push(`${row.count} model${row.count === 1 ? "" : "s"} priced under this provider`, "text");
+    push(`${row.count} model${row.count === 1 ? "" : "s"} in this group`, "text");
   } else {
     push(row.model.id, "title");
     separate();
     push(`Provider: ${group.label}`, "text");
     push(`Price: ${row.model.price}`, "text");
     if (row.active) push("Currently active", "accent");
+    else push("Enter to use this model", "accent");
   }
 
   separate();
@@ -404,7 +405,7 @@ export function modelDetailLines(
       push(`Credentials: found in ${group.via ?? "the environment"}`, "ok");
       break;
     case "missing":
-      push("Credentials: not found in this environment", "warn");
+      push("Credentials: not found · /connect to set up", "warn");
       if (group.envVars.length > 0) push(`Reads: ${group.envVars.join(", ")}`, "muted");
       if (group.hint) push(`Setup: ${group.hint}`, "muted");
       if (group.fileSource) {
@@ -421,7 +422,7 @@ export function modelDetailLines(
     default:
       push("Credentials: no direct provider path", "muted");
       push(
-        `The pricing table knows ${group.label}, but the runtime has no env var for it — reach it through an aggregator such as OpenRouter.`,
+        "Use a gateway such as OpenRouter or OpenCode Zen.",
         "muted",
       );
       if (configured.length > 0) {
@@ -435,7 +436,7 @@ export function modelDetailLines(
   // pricing table's, and the runtime resolves the backend independently
   // (`providerForModel`), so the two can legitimately disagree.
   push(
-    "Provider is from the pricing table. The runtime picks a backend at call time and may route this model elsewhere.",
+    "Provider labels do not determine routing; configured credentials do.",
     "muted",
   );
 
@@ -489,34 +490,18 @@ export function clipModelDetailLines(
 
 export type ModelMode = "browse" | "filter";
 
-/**
- * The footer hint, per mode.
- *
- * These are the real bindings. Unlike the settings screen there is no
- * destructive key to reserve, so browse mode gives every printable character
- * to the filter — with 43 models across ten vendors, type-to-filter is the
- * primary way anyone reaches a row.
- */
+/** Contextual shortcuts for the model picker. */
 export function modelFooterHint(mode: ModelMode, hasFilter = false): string {
-  if (mode === "filter") return "type to filter · enter/esc done · backspace delete";
   return [
-    "up/down move",
-    "enter select",
-    "/ filter",
-    hasFilter ? "esc clear filter" : "esc back",
-    "ctrl+c exit",
+    "↑↓ select",
+    "enter switch",
+    "tab curated/all",
+    mode === "filter" || hasFilter ? "esc clear" : "esc back",
+    "ctrl+u clear",
   ].join(" · ");
 }
 
-/**
- * Every printable character starts a filter.
- *
- * `settings-layout.ts` has to carve `r` and `R` out of this path because that
- * screen binds them to reset. This screen has no destructive key, so nothing
- * is reserved and the whole alphabet reaches the filter.
- */
+/** Printable search text, including multi-character input; controls are excluded. */
 export function isFilterKey(sequence: unknown): boolean {
-  if (typeof sequence !== "string" || sequence.length !== 1) return false;
-  const code = sequence.charCodeAt(0);
-  return code >= 0x20 && code !== 0x7f;
+  return typeof sequence === "string" && sequence.length > 0 && !/[\x00-\x1f\x7f-\x9f]/.test(sequence);
 }
