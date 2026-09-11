@@ -699,6 +699,9 @@ For each iteration:
    warm-cache bias. Wilson 95% intervals count distinct fixtures, not repeat
    executions; unstable repeats receive an uninformative `[0, 1]` interval and
    fail the stability gate. These intervals do not correct adaptive holdout reuse.
+   A candidate must also retain every case/repeat the baseline solved. Higher
+   aggregate scores cannot compensate for losing established behavior; a
+   retention failure rejects the candidate through the execution-check gate.
 5. **Promotion assessment** — the pure function
    `evaluateImprovementPromotion` checks identity, artifact binding, evaluator
    integrity, evidence, sample size, development lift, held-out lift, precision,
@@ -745,7 +748,7 @@ The default policy rejects a candidate unless **every** check passes:
 | --- | --- |
 | Identity | Candidate ID matches the sealed result. |
 | Artifact binding | Distinct SHA-256 base and candidate artifacts. |
-| Execution checks | Complete, repeatable scenario executions, including the configured build command when present. This is not an attestation from an external CI service. |
+| Execution checks | Complete, repeatable scenario executions, including the configured build command when present, with every baseline-successful case/repeat retained by the candidate. This is not an attestation from an external CI service. |
 | Evaluator | Identical evaluator digest before and after evaluation. |
 | Evidence | At least one retained evidence reference. |
 | Sample size | At least 10 distinct cases per lane by default. Repeating a case does not increase the distinct-case count. |

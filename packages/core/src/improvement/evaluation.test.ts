@@ -111,6 +111,31 @@ describe("independent evolution oracle", () => {
     expect(evaluation.decision.status).toBe("rejected");
   });
 
+  it("rejects aggregate gains that discard an established capability", async () => {
+    const { config, baseline, candidate } = await setup();
+    const sandbox: EvolutionSandbox = async ({ snapshot, input }) => {
+      const value = input as { key: number; index: number; negative: boolean };
+      const challenger = snapshot.id === candidate.id;
+      // The candidate learns two held-out cases but forgets the one the
+      // baseline already solved. Both aggregate positive-lane scores improve.
+      const detects = challenger ? value.key !== 3 : value.index === 0;
+      const findings = !value.negative && detects
+        ? [{ category: "intended", location: value.index }]
+        : [];
+      return {
+        exitCode: 0, stdout: JSON.stringify({ findings }), stderr: "",
+        durationMs: 10, timedOut: false,
+      };
+    };
+    const evaluation = await evaluateEvolutionCandidate(baseline, candidate, config, { sandbox });
+    for (const lane of ["development", "heldOut"] as const) {
+      expect(evaluation.result[lane].challenger.successRate).toBeGreaterThan(
+        evaluation.result[lane].champion.successRate,
+      );
+    }
+    expect(evaluation.decision.status).toBe("rejected");
+  });
+
   it("rejects missing controls and reused development inputs in held-out lanes", async () => {
     const { config } = await setup();
     expect(() => parseEvolutionConfig({ ...config, cases: config.cases.filter((entry) => entry.lane !== "negative-control") })).toThrow(/negative-control/);

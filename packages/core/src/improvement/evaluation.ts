@@ -109,6 +109,12 @@ export async function evaluateEvolutionCandidate(
     }
     return true;
   });
+  // Each variant records the same case/repeat order, even when execution
+  // order alternates. Aggregate gains must not hide a previously solved
+  // case becoming a failure (or losing its paired candidate execution).
+  const baselineBehaviorRetained = attempts.baseline.every((entry, index) =>
+    !entry.matched || attempts.candidate[index]?.matched === true,
+  );
   const result: EvolutionEvaluation["result"] = {
     schemaVersion: 1,
     candidateId: candidate.id,
@@ -118,7 +124,8 @@ export async function evaluateEvolutionCandidate(
     negativeControlCorpusDigest: evolutionDigest(config.cases.filter((entry) => entry.lane === "negative-control")),
     evaluatorDigestBefore: evaluatorDigest,
     evaluatorDigestAfter: evolutionDigest(evaluatorIdentity),
-    ciPassed: repeatedResultsStable && [...attempts.baseline, ...attempts.candidate].every((entry) => !entry.inconclusive),
+    ciPassed: baselineBehaviorRetained && repeatedResultsStable
+      && [...attempts.baseline, ...attempts.candidate].every((entry) => !entry.inconclusive),
     development: { champion: score(attempts.baseline, "development"), challenger: score(attempts.candidate, "development") },
     heldOut: { champion: score(attempts.baseline, "held-out"), challenger: score(attempts.candidate, "held-out") },
     negativeControls: {
