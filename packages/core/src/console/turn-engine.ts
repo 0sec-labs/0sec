@@ -46,6 +46,9 @@ import { eventBus } from "../events/bus.js";
 import { createSessionObjectiveService } from "./session-objective.js";
 import { shellTokens } from "../agent/shell-tokens.js";
 import { parseRepositoryAcquisition, repositoryAcquisitionAllowed } from "../agent/repository-acquisition.js";
+import { drainInbox } from "../hub/mailbox.js";
+import { renderInboundBatch } from "../agent/agent-messaging.js";
+import type { MessagingRuntime } from "../agent/agent-messaging.js";
 
 /**
  * Unified interactive chat console — engine-side turn driver.
@@ -2573,6 +2576,17 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         return { assistantText, toolCalls: runCalls, usage, budget: budgetSnapshot(), stopReason: "cancelled" };
       }
 
+      // Background results enter the model at request boundaries, not only if
+      // the model happens to call check_messages. Never inject raw peer text.
+      const messaging = config.agentMessaging as MessagingRuntime | undefined;
+      if (messaging?.projectPath && messaging.selfId) {
+        const batch = renderInboundBatch(drainInbox(messaging.projectPath, messaging.selfId, messaging.homeDir));
+        const last = messages[messages.length - 1];
+        for (const message of batch.rendered) {
+          if (last?.role === "user") last.content.push({ type: "text", text: message.text });
+          else messages.push({ role: "user", content: [{ type: "text", text: message.text }] });
+        }
+      }
       streamedUsage = undefined;
       // HONEST LIMIT: this call cannot be interrupted once issued. NativeRuntime
       // .executeNative takes no AbortSignal, so an abort that fires while the

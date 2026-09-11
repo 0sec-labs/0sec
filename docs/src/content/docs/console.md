@@ -273,7 +273,7 @@ All shortcuts apply in the main Chat screen unless otherwise noted.
 | Shortcut | Action |
 |----------|--------|
 | **Ctrl+P** / **Ctrl+K** | Open command palette (all screens) |
-| **Ctrl+O** | Open transcript review overlay (scrollable full session) |
+| **Ctrl+O** | Open transcript review; in worker focus, expand/collapse its tool output |
 | **Ctrl+R** | Toggle collapsed/expanded tool call detail across the entire transcript |
 | **Esc** | Clear composer / close overlay / go back / interrupt running turn |
 | **Esc** (with no overlay or draft) | Stop a running turn, or navigate back |
@@ -329,7 +329,9 @@ All shortcuts apply in the main Chat screen unless otherwise noted.
 | **↑ / ↓** (in list) | Navigate subagent list |
 | **Enter** (on agent) | Drill into focused subagent |
 | **Esc / Left** (focused) | Return from subagent focus |
-| **PageUp / PageDown** | Scroll subagent activity log |
+| **↑ / ↓**, **PageUp / PageDown** | Scroll the retained worker transcript |
+| **Ctrl+O** (focused) | Expand/collapse commands, output, diffs, and tool details |
+| Type + **Enter** (focused) | Steer a live worker; follow up with Main when a one-shot worker has finished |
 
 ### Transcript review overlay (Ctrl+O)
 
@@ -585,6 +587,28 @@ Worker states have distinct text/glyphs as well as color. Focus view retains
 live progress and failure details, with **↑ / ↓** scrolling, **m** for a steering
 message, and **Esc** returning to the list. Wide terminals show the overview
 and detail side by side; narrow terminals use a stacked layout.
+
+Inside chat, **/agents** opens the retained worker roster without leaving the
+conversation. Completed and failed workers stay selectable. A focused worker
+shows its task, assistant replies, tool start/completion state, and final answer.
+**Ctrl+O** or a tool card's disclosure expands the retained output rather than
+another shortened preview. Execution-level truncation limits still apply.
+
+Messages to a live or parked worker use its mailbox. A follow-up to a finished
+one-shot worker returns to Main with the worker's result quoted as untrusted
+context, instead of disappearing into a dead mailbox. Persistent workers send
+their result back to the parent; the parent consumes queued results at its next
+model-request boundary.
+
+The bottom status area distinguishes measured context from the **turn spend**
+budget. Worker focus shows that worker's reported model, input/output/cache
+tokens, and duration; missing measurements remain unknown. Main shows worker
+counts, plan progress, queued input, and measured context alongside the existing
+model, mode, directory, Git, and enabled usage indicators.
+
+Click **PLAN** in the right sidebar to expand and scroll every task, including
+full wrapped descriptions; click again to collapse it. The unabridged plan stays
+in the main transcript when the sidebar is hidden.
 
 ## TUI crash handling
 

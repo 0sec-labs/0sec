@@ -14,6 +14,15 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Worker inspection now retains text-only final answers, live tool snapshots,
+  and expandable commands, output, diffs, and tool details. Completed workers
+  remain navigable; live steering is consumed at model boundaries, finished
+  one-shot follow-ups return to Main with quoted context, and persistent workers
+  notify their parent. Status rows distinguish worker measurements and context
+  from turn-spend limits. Plans expand into scrollable full descriptions, and
+  worker transcripts preserve their scrollable extent through detail and size
+  changes without leaking layout state into the Main conversation.
+
 - Rebuilt the unreleased desktop as a dedicated project-and-session workspace,
   separate from the operations dashboard. Adds session tabs, a command palette,
   progressive conversation and approval views, system/light/dark appearance,

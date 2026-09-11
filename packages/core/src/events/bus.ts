@@ -459,6 +459,15 @@ export interface PhaseCompletedPayload {
 
 // ── Subagent lifecycle events (live TUI agent cards) ────────────────────
 
+/** Measured worker telemetry, never inferred from the parent or its spend cap. */
+interface SubagentTelemetry {
+  usage?: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
+  /** Latest measured request prompt plus its generated output, not a capacity. */
+  contextTokens?: number;
+  durationMs?: number;
+  model?: string;
+}
+
 /**
  * A sub-agent emits queued → running → completed|failed after runtime setup,
  * or queued → failed when startup itself fails. The event has no graph, DAG,
@@ -468,7 +477,7 @@ export interface PhaseCompletedPayload {
  * unsubscribe on unmount. `agent_id` uniquely identifies the sub-agent
  * instance across the parent scan's lifetime.
  */
-export interface SubagentLifecyclePayload {
+export interface SubagentLifecyclePayload extends SubagentTelemetry {
   /** Opaque instance id for this sub-agent, unique within the parent scan. */
   agent_id: string;
   /**
@@ -498,6 +507,9 @@ export interface SubagentLifecyclePayload {
   summary?: string;
   /** Error message on failure (truncated to 500 chars). */
   error?: string;
+  /** Whether the task finished, rather than merely exhausting its run. */
+  done?: boolean;
+  completion_reason?: "done" | "turn_limit" | "cost_limit" | "early_stop" | "error";
   /** Scope rules inherited from the parent — only when scope is active. */
   scope_rules?: string[];
   [k: string]: unknown;
@@ -568,6 +580,8 @@ export interface SubagentProgressPayload {
 export interface SubagentToolMessage {
   call: ToolCall;
   result: ToolResult;
+  /** A live tool snapshot with no result yet. */
+  running?: boolean;
 }
 
 /**
@@ -575,17 +589,12 @@ export interface SubagentToolMessage {
  * tools it ran — so a UI can render a focused child's transcript IDENTICALLY to
  * the main agent's (fed through the same `planTranscript`/`renderEntry`).
  *
- * Fires ONCE per completed child turn: turn-granular, so full messages appear
- * per turn rather than token-by-token. This is deliberate — it keeps the
- * child's content OFF the high-volume per-delta channel (which the parent UI
- * still does not subscribe to), while giving the operator the real transcript
- * instead of the coarse `subagent_progress` tool-name ping.
- *
- * ADDITIVE sibling of `subagent_progress` / `subagent_lifecycle`: existing
- * subscribers are untouched. Content is bounded at emit time so neither the bus
- * nor the UI's retained-transcript memory can be flooded by a large fleet.
+ * Published at tool start/end and at completed turns. Partial snapshots and
+ * final turns share stable agent/turn/tool ordering; consumers upsert rather
+ * than append duplicate rows. Visible assistant prose is included, never the
+ * provider's private reasoning. Content uses the shared tool-output bounds.
  */
-export interface SubagentMessagePayload {
+export interface SubagentMessagePayload extends SubagentTelemetry {
   /** Same opaque id as this child's `subagent_lifecycle`/`subagent_progress`. */
   agent_id: string;
   /** Scan id of the parent that called spawn_agent(s). */
@@ -598,6 +607,8 @@ export interface SubagentMessagePayload {
   assistant?: string;
   /** Tools the child ran this turn (bounded results). Absent when none. */
   tools?: SubagentToolMessage[];
+  /** Tool progress snapshot; false/absent denotes a completed turn. */
+  partial?: boolean;
   [k: string]: unknown;
 }
 

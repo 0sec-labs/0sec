@@ -22,6 +22,7 @@ import {
   UNTRUSTED_CLOSE,
 } from "../untrusted-sanitizer.js";
 import { HuntMemoryStore } from "../memory/index.js";
+import { buildSubagentMessage } from "./tools.js";
 
 // Hunt memory defaults ON in the engine; keep the suite from writing to the
 // real ~/.0sec store. The dedicated hunt-memory describe below re-enables it and
@@ -85,6 +86,69 @@ describe("runNativeAgentLoop", () => {
     expect(state.done).toBe(true);
     expect(state.summary).toBe("All done");
     expect(state.turnCount).toBe(1);
+  });
+
+  it("delivers a text-only final answer to the worker transcript observer", async () => {
+    const finalAnswer = "Source review complete. No verified parser defect.";
+    const observed: string[] = [];
+    const state = await runNativeAgentLoop({
+      config: { role: "discovery", systemPrompt: "test", tools: [], maxTurns: 1, target: "https://example.com", scanId: randomUUID() },
+      runtime: createMockRuntime([{ content: [{ type: "text", text: finalAnswer }], stopReason: "end_turn", durationMs: 1 }]),
+      db: null,
+      onTurn: (turn, calls, results, assistant) => {
+        const message = buildSubagentMessage({ agent_id: "worker", name: "Worker", parent_scan_id: "parent", task: "review", max_turns: 1 }, turn, assistant, calls, results, Date.now());
+        if (message.assistant) observed.push(message.assistant);
+      },
+    });
+    expect(state.summary).toBe(finalAnswer);
+    expect(observed).toEqual([finalAnswer]);
+  });
+
+  it("exposes a tool as running before execution and completed once its result arrives", async () => {
+    const states: string[] = [];
+    await runNativeAgentLoop({
+      config: { role: "discovery", systemPrompt: "test", tools: [], maxTurns: 1, target: "https://example.com", scanId: randomUUID() },
+      runtime: createMockRuntime([{
+        content: [{ type: "tool_use", id: "update", name: "update_target", input: { type: "api" } }],
+        stopReason: "tool_use", durationMs: 1,
+      }]),
+      db: null,
+      onToolUpdate: (turn, calls, results, assistant) => {
+        const message = buildSubagentMessage({ agent_id: "worker", name: "Worker", parent_scan_id: "parent", task: "review", max_turns: 1 }, turn, assistant, calls, results, Date.now(), { partial: true });
+        const tool = message.tools?.[0];
+        states.push(tool?.running ? "running" : tool?.result.success ? "completed" : "failed");
+      },
+    });
+    expect(states).toEqual(["running", "completed"]);
+  });
+
+  it("honors steering that arrives during a final tool call before retiring the worker", async () => {
+    let pending: string[] = [];
+    let receivedSteer = false;
+    const runtime: NativeRuntime = {
+      type: "api",
+      isAvailable: async () => true,
+      async executeNative(_system, messages) {
+        receivedSteer = messages.some((message) => message.content.some((block) =>
+          block.type === "text" && block.text.includes("Also inspect the parser boundary"),
+        ));
+        if (!receivedSteer) pending.push("Also inspect the parser boundary");
+        return {
+          content: [{ type: "tool_use", id: receivedSteer ? "followup" : "initial", name: "done", input: { summary: receivedSteer ? "Parser boundary inspected." : "Initial review complete." } }],
+          stopReason: "tool_use",
+          durationMs: 1,
+        };
+      },
+    };
+    const state = await runNativeAgentLoop({
+      config: { role: "discovery", systemPrompt: "test", tools: [], maxTurns: 3, target: "https://example.com", scanId: randomUUID() },
+      runtime,
+      db: null,
+      getPendingUserMessages: () => pending.splice(0),
+    });
+    expect(receivedSteer).toBe(true);
+    expect(state.summary).toBe("Parser boundary inspected.");
+    expect(state.done).toBe(true);
   });
 
   it("regression: preserves error summary instead of clobbering with 'reached max turns'", async () => {
@@ -424,50 +488,6 @@ describe("runNativeAgentLoop", () => {
     expect(state.totalUsage.outputTokens).toBe(130);
   });
 
-  it("invokes onTurn callback with tool calls", async () => {
-    let turnNum = 0;
-    const runtime: NativeRuntime = {
-      type: "api" as const,
-      async executeNative() {
-        turnNum++;
-        if (turnNum === 1) {
-          return {
-            content: [{ type: "tool_use", id: "tc1", name: "http_request", input: { url: "https://example.com" } }],
-            stopReason: "tool_use",
-            durationMs: 100,
-          };
-        }
-        return {
-          content: [{ type: "tool_use", id: "tc2", name: "done", input: { summary: "Done" } }],
-          stopReason: "tool_use",
-          durationMs: 50,
-        };
-      },
-      async isAvailable() { return true; },
-    };
-
-    const turnCalls: Array<{ turn: number; tools: string[] }> = [];
-
-    await runNativeAgentLoop({
-      config: {
-        role: "discovery",
-        systemPrompt: "test",
-        tools: [],
-        maxTurns: 5,
-        target: "https://example.com",
-        scanId: "test-scan",
-      },
-      runtime,
-      db: null,
-      onTurn: (turn, toolCalls) => {
-        turnCalls.push({ turn, tools: toolCalls.map((c) => c.name) });
-      },
-    });
-
-    expect(turnCalls).toHaveLength(2);
-    expect(turnCalls[0].tools).toContain("http_request");
-    expect(turnCalls[1].tools).toContain("done");
-  });
 
   it("triggers early stop for attack role at 50% budget when no save_finding called", async () => {
     let turnNum = 0;

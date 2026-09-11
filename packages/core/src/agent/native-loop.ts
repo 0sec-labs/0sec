@@ -342,7 +342,10 @@ export interface NativeAgentLoopOptions {
     toolCalls: ToolCall[],
     results: ToolResult[],
     assistantText: string,
+    telemetry?: { usage?: NativeAgentState["totalUsage"]; contextTokens?: number },
   ) => void;
+  /** Visible tool snapshots before/after execution, without token-level floods. */
+  onToolUpdate?: NativeAgentLoopOptions["onTurn"];
   /** Called only after a new finding has passed save_finding validation. */
   onFindingSaved?: (finding: Finding) => void | Promise<void>;
   onEvent?: (eventType: string, payload: Record<string, unknown>) => void;
@@ -460,6 +463,7 @@ export async function runNativeAgentLoop(
     runtime,
     db,
     onTurn,
+    onToolUpdate,
     onFindingSaved,
     onEvent,
     getPendingUserMessages,
@@ -1348,6 +1352,18 @@ export async function runNativeAgentLoop(
     return frac < 0.3 ? "recon" : frac < 0.8 ? "exploit" : "report";
   };
 
+  const injectPendingUserMessages = getPendingUserMessages ? () => {
+    const pending = getPendingUserMessages();
+    for (const text of pending) {
+      state.messages.push({
+        role: "user",
+        content: [{ type: "text", text: `[User interrupt]: ${text}` }],
+      });
+      onEvent?.("user:injected", { turn: state.turnCount, text });
+    }
+    return pending.length > 0;
+  } : undefined;
+
   try {
   while (!state.done && state.turnCount < config.maxTurns) {
     // ── Coordinator rails: supervise sub-agents BETWEEN iterations ──
@@ -1426,16 +1442,7 @@ export async function runNativeAgentLoop(
     try {
 
     // ── Inject user messages queued from the TUI ──
-    if (getPendingUserMessages) {
-      const pending = getPendingUserMessages();
-      for (const text of pending) {
-        state.messages.push({
-          role: "user",
-          content: [{ type: "text", text: `[User interrupt]: ${text}` }],
-        });
-        onEvent?.("user:injected", { turn: state.turnCount, text });
-      }
-    }
+    injectPendingUserMessages?.();
 
     // ── Two-stage budget warnings (#408, Strix-inspired) ──
     // Fire before the LLM call on the turn the threshold is reached so
@@ -1745,6 +1752,10 @@ export async function runNativeAgentLoop(
       (b): b is Extract<NativeContentBlock, { type: "text" }> => b.type === "text",
     );
     const textContent = textBlocks.map((b) => b.text).join("\n");
+    const turnTelemetry = (onTurn || onToolUpdate) && result.usage ? {
+      usage: { ...state.totalUsage },
+      contextTokens: result.usage.inputTokens + result.usage.outputTokens,
+    } : undefined;
     if (textContent.trim() && textContent.trim() !== streamedThinkingText.trim()) {
       onEvent?.("thinking", {
         turn: state.turnCount,
@@ -1789,6 +1800,8 @@ export async function runNativeAgentLoop(
 
     // If no tool calls, the model responded with text only
     if (toolUseBlocks.length === 0) {
+      // Text-only turns used to bypass observers, losing the worker's final answer.
+      onTurn?.(state.turnCount, [], [], textContent, turnTelemetry);
       // Only allow early exit if the agent has done meaningful work:
       // - At least 4 turns (read files, ran commands, analyzed code)
       // - OR explicitly called the done tool (handled below in tool execution)
@@ -1802,6 +1815,9 @@ export async function runNativeAgentLoop(
       // string from the tail of this function. Nudge the agent instead.
       const minTurns = Math.min(4, config.maxTurns);
       if (state.turnCount >= minTurns && result.stopReason === "end_turn" && textContent.trim()) {
+        // A steer can arrive while the final response is in flight. Honor it
+        // before retiring this worker, without extending its turn budget.
+        if (state.turnCount < config.maxTurns && injectPendingUserMessages?.()) continue;
         state.summary = textContent;
         state.done = true;
         break;
@@ -1844,6 +1860,7 @@ export async function runNativeAgentLoop(
     for (const block of toolUseBlocks) {
       const call: ToolCall = { name: block.name, arguments: block.input };
       toolCalls.push(call);
+      onToolUpdate?.(state.turnCount, toolCalls, toolResults, textContent, turnTelemetry);
       // Track the call signature for doom-loop detection (see after the loop).
       toolCallLog.push(toolCallSignature(call.name, call.arguments));
       if (toolCallLog.length > 12) toolCallLog.shift();
@@ -1911,6 +1928,7 @@ export async function runNativeAgentLoop(
       const toolResult = await executor.execute(call, { correlationId });
       const toolEndedAt = Date.now();
       toolResults.push(toolResult);
+      onToolUpdate?.(state.turnCount, toolCalls, toolResults, textContent, turnTelemetry);
       actionLog.push(
         buildToolCallLogEntry({
           call,
@@ -2447,6 +2465,9 @@ export async function runNativeAgentLoop(
       }
     }
 
+    // Publish the completed turn even when a subsequent budget/early-stop exits.
+    onTurn?.(state.turnCount, toolCalls, toolResults, textContent, turnTelemetry);
+
     // ── Early-stop check at 50% budget ──
     // If the agent is at the halfway point, hasn't found anything, and this
     // is the first attempt (retryCount === 0), bail out so the caller can
@@ -2503,8 +2524,6 @@ export async function runNativeAgentLoop(
       break;
     }
 
-    // Notify callback
-    onTurn?.(state.turnCount, toolCalls, toolResults, textContent);
 
     // Log tool calls
     if (db) {
@@ -2567,6 +2586,9 @@ export async function runNativeAgentLoop(
         }
         break;
       }
+    }
+    if (state.done && state.turnCount < config.maxTurns && injectPendingUserMessages?.()) {
+      state.done = false;
     }
     } finally {
       // Bus event: agent turn boundary end. Exit reason is inferred from

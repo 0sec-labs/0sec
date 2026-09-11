@@ -109,6 +109,7 @@ describe("sanitizeSubagentNote (Task 2 — bounded, single-line, sanitized)", ()
 describe("buildSubagentProgress (Task 1 — payload shape & discipline)", () => {
   const base = {
     agent_id: "parent-scan-sub-abc",
+    name: "AmberScout",
     parent_scan_id: "parent-scan",
     task: "exploit the thing",
     max_turns: 10,
@@ -165,6 +166,7 @@ describe("buildSubagentProgress (Task 1 — payload shape & discipline)", () => 
 describe("buildSubagentMessage (full per-turn transcript for the focus view)", () => {
   const base = {
     agent_id: "parent-scan-sub-abc",
+    name: "AmberScout",
     parent_scan_id: "parent-scan",
     task: "exploit the thing",
     max_turns: 10,
@@ -214,22 +216,39 @@ describe("buildSubagentMessage (full per-turn transcript for the focus view)", (
     expect(JSON.stringify(p)).not.toContain("enumerating");
   });
 
-  it("bounds a huge tool output and huge assistant prose", () => {
-    const bigOut = "A".repeat(20_000);
-    const bigText = "B".repeat(20_000);
-    const p = buildSubagentMessage(
-      base,
-      1,
-      bigText,
-      [{ name: "bash", arguments: {} }],
-      [{ success: true, output: bigOut }],
-      1,
-    );
-    expect((p.assistant ?? "").length).toBeLessThan(bigText.length);
-    expect(p.assistant).toContain("…[truncated]");
-    const out = p.tools?.[0].result.output as string;
-    expect(out.length).toBeLessThan(bigOut.length);
-    expect(out).toContain("…[truncated]");
+  it("retains the tail verdict and middle of ordinary output instead of an extra 4k head slice", () => {
+    const body = `beginning\n${"source line\n".repeat(900)}\nfinal verdict`;
+    const retained = buildSubagentMessage(base, 1, body, [
+      { name: "bash", arguments: { command: "inspect source" } },
+    ], [{ success: true, output: body, meta: { kind: "command", command: "inspect source", stdout: body, exitCode: 0, durationMs: 42 } }], 1);
+    expect(retained.assistant).toBe(body);
+    expect(retained.tools?.[0].result.output).toBe(body);
+    expect(retained.tools?.[0].result.meta?.stdout).toBe(body);
+    const huge = `beginning\n${"source line\n".repeat(20_000)}\nfinal verdict`;
+    const bounded = buildSubagentMessage(base, 2, huge, [
+      { name: "bash", arguments: {} },
+    ], [{ success: true, output: huge }], 2);
+    expect((bounded.assistant ?? "").length).toBeLessThan(huge.length);
+    expect(bounded.assistant).toContain("beginning");
+    expect(bounded.assistant).toContain("final verdict");
+    expect(String(bounded.tools?.[0].result.output)).toContain("final verdict");
+  });
+
+  it("renders the done result as the worker's answer, not a hidden control-tool result", () => {
+    const result = buildSubagentMessage(base, 4, "", [
+      { name: "done", arguments: { summary: "Reviewed the parser; no verified findings." } },
+    ], [{ success: true, output: { summary: "Reviewed the parser; no verified findings." } }], 4);
+    expect(result.assistant).toBe("Reviewed the parser; no verified findings.");
+    expect(result.tools).toBeUndefined();
+  });
+
+  it("distinguishes a running tool from a failed tool until its result arrives", () => {
+    const call = { name: "bash", arguments: { command: "inspect source" } };
+    const running = buildSubagentMessage(base, 1, "", [call], [], 1, { partial: true });
+    expect(running.tools?.[0].running).toBe(true);
+    const failed = buildSubagentMessage(base, 1, "", [call], [{ success: false, output: null, error: "Permission denied" }], 2);
+    expect(failed.tools?.[0].running).not.toBe(true);
+    expect(failed.tools?.[0].result.error).toBe("Permission denied");
   });
 
   it("omits assistant + tools cleanly on an empty turn", () => {

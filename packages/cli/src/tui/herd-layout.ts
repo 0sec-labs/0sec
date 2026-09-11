@@ -1213,6 +1213,12 @@ export function focusHeaderLines(
   const separate = () => {
     if (!compact) lines.push({ text: "", tone: "blank" });
   };
+  if (compact && record) {
+    push(record.name ?? peer.id, "title");
+    push(`${subagentStatusLabel(record.status)} · ${record.turns ?? record.turn ?? 0} turns${record.findings !== undefined ? ` · ${record.findings} findings` : ""}`, "text");
+    if (record.note && record.status === "running") push(record.note, "muted");
+    return lines;
+  }
 
   const task = record?.task || peer.label || "";
   const sibling = siblingLabel(siblingIndex, siblingTotal);

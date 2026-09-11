@@ -184,6 +184,7 @@ export function renderEntry(
   // disclosure gutter and shrink the content budget so the wrapped row still
   // fits its column — the 80-col invariant holds exactly as the fold's does.
   const interactive = Boolean(interaction);
+  const fullDetails = display.transcriptDetail === "expanded";
   const maxWidth = interactive ? Math.max(8, maxWidthOuter - 2) : maxWidthOuter;
   const finish = (node: React.ReactNode): React.ReactNode => {
     if (!interaction) return node;
@@ -191,6 +192,7 @@ export function renderEntry(
       <box
         key={entry.id}
         flexDirection="row"
+        flexShrink={0}
         minWidth={0}
         backgroundColor={interaction.hovered ? PANEL_ALT : undefined}
         onMouseDown={interaction.onToggle}
@@ -198,7 +200,7 @@ export function renderEntry(
         onMouseOut={interaction.onHover ? () => interaction.onHover?.(false) : undefined}
       >
         <box width={2} flexShrink={0} minWidth={0} marginTop={display.spacing}>
-          <text fg={MUTED}>▾ </text>
+          <text fg={MUTED}>{fullDetails ? "▾ " : "▸ "}</text>
         </box>
         <box flexDirection="column" flexGrow={1} minWidth={0}>
           {node}
@@ -371,9 +373,9 @@ export function renderEntry(
         });
         // The header `$ ` + command; the command is fitted to whatever the
         // inner width can pay for after the two-cell prompt.
-        const cmdText = fitTuiText(entry.command, Math.max(1, cardFrame.innerWidth - 2));
+        const cmdText = fullDetails ? sanitizeTuiText(entry.command) : fitTuiText(entry.command, Math.max(1, cardFrame.innerWidth - 2));
         const body = entry.commandOutput ?? "";
-        const bodyLines = body.trim().length > 0 ? foldBodyLines(body, COMMAND_CARD_MAX_LINES) : [];
+        const bodyLines = body.trim().length > 0 ? foldBodyLines(body, fullDetails ? Number.MAX_SAFE_INTEGER : COMMAND_CARD_MAX_LINES) : [];
         return finish(
           <box
             key={entry.id}
@@ -395,7 +397,7 @@ export function renderEntry(
                 <text fg={MUTED}>Output</text>
                 {bodyLines.map((line, i) => (
                   <text key={`o-${i}`} fg={line.startsWith("… ") ? MUTED : TEXT}>
-                    {fitTuiText(line, cardFrame.innerWidth)}
+                    {fullDetails ? sanitizeTuiText(line) : fitTuiText(line, cardFrame.innerWidth)}
                   </text>
                 ))}
               </box>
@@ -418,7 +420,7 @@ export function renderEntry(
         const removed = entry.editRemoved ?? 0;
         const header = `✎ Edit: ${entry.editPath} (+${added}/-${removed})`;
         const diff = entry.editDiff ?? "";
-        const diffLines = diff.trim().length > 0 ? foldBodyLines(diff, EDIT_CARD_MAX_LINES) : [];
+        const diffLines = diff.trim().length > 0 ? foldBodyLines(diff, fullDetails ? Number.MAX_SAFE_INTEGER : EDIT_CARD_MAX_LINES) : [];
         return finish(
           <box
             key={entry.id}
@@ -446,7 +448,7 @@ export function renderEntry(
                         : TEXT;
                   return (
                     <text key={`d-${i}`} fg={diffTone}>
-                      {fitTuiText(line, cardFrame.innerWidth)}
+                      {fullDetails ? sanitizeTuiText(line) : fitTuiText(line, cardFrame.innerWidth)}
                     </text>
                   );
                 })}
@@ -471,8 +473,8 @@ export function renderEntry(
         const sources = entry.webSources ?? [];
         const query = entry.webQuery?.trim() ?? "";
         const answer = entry.webAnswer?.trim() ?? "";
-        const answerLines = answer.length > 0 ? wrapAnswerLines(answer, inner, WEB_CARD_ANSWER_MAX_LINES) : [];
-        const shownSources = sources.slice(0, WEB_CARD_MAX_SOURCES);
+        const answerLines = answer.length > 0 ? wrapAnswerLines(answer, inner, fullDetails ? Number.MAX_SAFE_INTEGER : WEB_CARD_ANSWER_MAX_LINES) : [];
+        const shownSources = fullDetails ? sources : sources.slice(0, WEB_CARD_MAX_SOURCES);
         const hiddenSources = sources.length - shownSources.length;
         const header = `⌕ Web Search: ${provider} · ${sources.length} source${sources.length === 1 ? "" : "s"}`;
         const QUERY_LABEL = "Query ";
@@ -536,6 +538,15 @@ export function renderEntry(
       }
     }
 
+    if (fullDetails) {
+      return finish(
+        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={display.spacing}>
+          <text fg={tone}>{fitTuiText(`${icon} ${entry.text} · ${state}`, maxWidth)}</text>
+          {entry.toolArgs ? <text fg={MUTED} wrapMode="word">{sanitizeTuiText(entry.toolArgs)}</text> : null}
+          {(entry.detail ?? "").split("\n").map((line, index) => <text key={index} fg={failed ? ERROR : TEXT} wrapMode="word">{sanitizeTuiText(line)}</text>)}
+        </box>,
+      );
+    }
     const frame = toolFrame(toolCardStyle, maxWidth, entry.success);
     if (!frame.render) return null;
     const toolDetail = toolDetailWidth(frame.contentWidth, maxWidth);

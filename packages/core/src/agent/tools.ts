@@ -148,6 +148,7 @@ import {
 } from "./skills/index.js";
 import { eventBus } from "../events/bus.js";
 import type {
+  SubagentLifecyclePayload,
   SubagentProgressPayload,
   SubagentMessagePayload,
   SubagentToolMessage,
@@ -2503,7 +2504,9 @@ export function validateMonitorArgs(
  */
 type SubagentOutcome =
   | { ok: true; agent_id: string; findings: Finding[]; turns: number; summary: string; done: boolean }
-  | { ok: false; agent_id: string; error: string };
+  | { ok: false; agent_id: string; error: string; findings?: Finding[]; turns?: number };
+
+type SubagentRunReport = Pick<SubagentLifecyclePayload, "turns" | "summary" | "done" | "usage" | "durationMs" | "model" | "completion_reason">;
 
 /** Shared lifecycle payload base for one subagent (carries its unique id). */
 interface SubagentLifecycleBase {
@@ -2558,28 +2561,28 @@ export function buildSubagentProgress(
   };
 }
 
-/** Assistant prose over this cap is truncated in the subagent-message event. */
-const SUBAGENT_ASSISTANT_MAX = 8000;
-/** Tool output/error over this cap is truncated in the subagent-message event. */
-const SUBAGENT_TOOL_OUTPUT_MAX = 4000;
-
-/** Bound a value to a light display form for a subagent transcript event: a
- * many-child fleet's retained transcripts must not hold whole tool outputs. */
+/** Keep the same bounded head-and-tail output the main transcript receives. */
 function boundSubagentOutput(out: unknown): unknown {
-  if (typeof out === "string") {
-    return out.length > SUBAGENT_TOOL_OUTPUT_MAX
-      ? `${out.slice(0, SUBAGENT_TOOL_OUTPUT_MAX)}…[truncated]`
-      : out;
-  }
+  if (typeof out === "string") return formatTruncated(out);
   try {
-    const s = JSON.stringify(out);
-    if (s && s.length > SUBAGENT_TOOL_OUTPUT_MAX) {
-      return `${s.slice(0, SUBAGENT_TOOL_OUTPUT_MAX)}…[truncated]`;
-    }
-    return out;
+    const text = JSON.stringify(out);
+    if (!text) return out;
+    const bounded = formatTruncated(text);
+    return bounded === text ? out : bounded;
   } catch {
-    return String(out).slice(0, SUBAGENT_TOOL_OUTPUT_MAX);
+    return formatTruncated(String(out));
   }
+}
+
+function boundSubagentMeta(meta: ToolResult["meta"]): ToolResult["meta"] {
+  if (!meta) return undefined;
+  return {
+    ...meta,
+    ...(meta.command !== undefined ? { command: formatTruncated(meta.command) } : {}),
+    ...(meta.stdout !== undefined ? { stdout: formatTruncated(meta.stdout) } : {}),
+    ...(meta.diff !== undefined ? { diff: formatTruncated(meta.diff) } : {}),
+    ...(meta.answer !== undefined ? { answer: formatTruncated(meta.answer) } : {}),
+  };
 }
 
 /**
@@ -2597,39 +2600,41 @@ export function buildSubagentMessage(
   toolCalls: ReadonlyArray<ToolCall>,
   toolResults: ReadonlyArray<ToolResult>,
   now: number,
+  telemetry: Pick<SubagentMessagePayload, "partial" | "usage" | "contextTokens" | "durationMs" | "model"> = {},
 ): SubagentMessagePayload {
   // Defensive against a caller that omits the newer args (older onTurn shape).
   const calls = toolCalls ?? [];
   const results = toolResults ?? [];
   const tools: SubagentToolMessage[] = calls
     .map((call, i) => ({ call, result: results[i] }))
-    .filter(({ call }) => call.name !== "report_status")
+    .filter(({ call }) => call.name !== "report_status" && call.name !== "done")
     .map(({ call, result }) => ({
       call: { name: call.name, arguments: call.arguments ?? {} },
+      ...(telemetry.partial && !result ? { running: true } : {}),
       result: result
         ? {
             success: result.success,
             output: boundSubagentOutput(result.output),
             ...(result.error
-              ? { error: result.error.slice(0, SUBAGENT_TOOL_OUTPUT_MAX) }
+              ? { error: formatTruncated(result.error) }
               : {}),
+            ...(result.meta ? { meta: boundSubagentMeta(result.meta) } : {}),
           }
         : { success: false, output: null },
     }));
-  const assistant = (assistantText ?? "").trim();
+  const doneIndex = calls.findIndex((call, index) => call.name === "done" && results[index]?.success);
+  const doneOutput = doneIndex >= 0 ? results[doneIndex]?.output : undefined;
+  const summary = doneOutput && typeof doneOutput === "object" && "summary" in doneOutput && typeof doneOutput.summary === "string"
+    ? doneOutput.summary.trim() : "";
+  const prose = (assistantText ?? "").trim();
+  const assistant = summary && summary !== prose ? [prose, summary].filter(Boolean).join("\n\n") : prose;
   return {
+    ...telemetry,
     agent_id: base.agent_id,
     parent_scan_id: base.parent_scan_id,
     turn,
     ts: now,
-    ...(assistant
-      ? {
-          assistant:
-            assistant.length > SUBAGENT_ASSISTANT_MAX
-              ? `${assistant.slice(0, SUBAGENT_ASSISTANT_MAX)}…[truncated]`
-              : assistant,
-        }
-      : {}),
+    ...(assistant ? { assistant: formatTruncated(assistant) } : {}),
     ...(tools.length > 0 ? { tools } : {}),
   };
 }
@@ -5864,6 +5869,7 @@ export class ToolExecutor {
     deps?: SubagentDeps,
     messagingOverride?: MessagingRuntime,
   ): Promise<SubagentOutcome> {
+    const startedAt = Date.now();
     try {
       // Single-child path resolves deps here (inside the try, so an import
       // failure still emits `failed`); the concurrent batch pre-resolves once
@@ -5965,7 +5971,7 @@ export class ToolExecutor {
           tools: subTools,
           maxTurns,
           target: this.ctx.target,
-          scanId: this.ctx.scanId + "-sub",
+          scanId: base.agent_id,
           scope: this.ctx.scope,
           authConfig: this.ctx.authConfig,
           costLedger: this.ctx.costLedger,
@@ -5978,6 +5984,14 @@ export class ToolExecutor {
         } as Parameters<typeof runNativeAgentLoop>[0]["config"],
         runtime: rt,
         db: null,
+        getPendingUserMessages: childMessaging
+          ? () => renderInboundBatch(drainInbox(childMessaging.projectPath, base.agent_id, childMessaging.homeDir)).rendered.map((message) => message.text)
+          : undefined,
+        onToolUpdate: (turn, toolCalls, toolResults, assistantText, telemetry) => {
+          eventBus.emit("subagent_message", buildSubagentMessage(base, turn, assistantText, toolCalls, toolResults, Date.now(), {
+            ...telemetry, partial: true, durationMs: Date.now() - startedAt, model: rt.resolvedModel?.(),
+          }));
+        },
         // Per-turn child progress (Task 1 + Task 2). Fires ONCE per completed
         // child turn — the right granularity for a "what is this child doing"
         // indicator, and deliberately NOT per token/delta (that channel is
@@ -5986,7 +6000,7 @@ export class ToolExecutor {
         // and its per-turn tool calls, which is why the emission lives here and
         // not in the child's own tool handlers. `buildSubagentProgress` reads
         // only tool NAMES + the report_status line — never args or output.
-        onTurn: (turn, toolCalls, toolResults, assistantText) => {
+        onTurn: (turn, toolCalls, toolResults, assistantText, telemetry) => {
           eventBus.emit(
             "subagent_progress",
             buildSubagentProgress(base, turn, maxTurns, toolCalls),
@@ -5996,21 +6010,30 @@ export class ToolExecutor {
           // of the coarse progress ping above; both are bounded.
           eventBus.emit(
             "subagent_message",
-            buildSubagentMessage(base, turn, assistantText, toolCalls, toolResults, Date.now()),
+            buildSubagentMessage(base, turn, assistantText, toolCalls, toolResults, Date.now(), {
+              ...telemetry, durationMs: Date.now() - startedAt, model: rt.resolvedModel?.(),
+            }),
           );
         },
       });
 
-      // completed — exactly once after a normal return (including a partial
-      // return from a tripped cost ceiling or exhausted turn budget, whose
-      // `state.findings` still merge back at the caller).
+      // A finished invocation is not necessarily a fulfilled task.
       eventBus.emit("subagent_lifecycle", {
         ...base,
-        status: "completed" as const,
+        status: state.errorExit ? "failed" as const : "completed" as const,
         turns: state.turnCount,
         findings: state.findings.length,
         summary: state.summary,
+        done: state.done,
+        completion_reason: state.errorExit ? "error" : state.costCeilingExceeded ? "cost_limit" : state.earlyStopNoProgress ? "early_stop" : state.done ? "done" : "turn_limit",
+        ...(state.errorExit ? { error: state.errorExit.error } : {}),
+        ...(state.totalUsage && (state.totalUsage.inputTokens > 0 || state.totalUsage.outputTokens > 0) ? { usage: state.totalUsage } : {}),
+        durationMs: Date.now() - startedAt,
+        model: rt.resolvedModel?.(),
       });
+      if (state.errorExit) {
+        return { ok: false, agent_id: base.agent_id, error: state.errorExit.error, findings: state.findings, turns: state.turnCount };
+      }
 
       return {
         ok: true,
@@ -6054,7 +6077,9 @@ export class ToolExecutor {
     childMessaging: MessagingRuntime | undefined,
     task?: string,
     messages?: readonly HubMessage[],
-  ): Promise<void> {
+    turnOffset = 0,
+  ): Promise<SubagentRunReport> {
+    const startedAt = Date.now();
     const { runNativeAgentLoop, LlmApiRuntime } = await this.loadSubagentDeps();
     const rt = new LlmApiRuntime({ type: "api" as any, timeout: 60_000 });
     if (!(await rt.isAvailable())) throw new Error("No API key available for persistent agent");
@@ -6078,7 +6103,7 @@ export class ToolExecutor {
         tools: subTools,
         maxTurns,
         target: this.ctx.target,
-        scanId: `${this.ctx.scanId}-persist`,
+        scanId: base.agent_id,
         scope: this.ctx.scope,
         authConfig: this.ctx.authConfig,
         costLedger: this.ctx.costLedger,
@@ -6088,16 +6113,33 @@ export class ToolExecutor {
       } as Parameters<typeof runNativeAgentLoop>[0]["config"],
       runtime: rt,
       db: null,
-      onTurn: (turn, toolCalls, toolResults, assistantText) => {
-        eventBus.emit("subagent_progress", buildSubagentProgress(base, turn, maxTurns, toolCalls));
+      getPendingUserMessages: childMessaging
+        ? () => renderInboundBatch(drainInbox(childMessaging.projectPath, base.agent_id, childMessaging.homeDir)).rendered.map((message) => message.text)
+        : undefined,
+      onToolUpdate: (turn, toolCalls, toolResults, assistantText, telemetry) => {
+        eventBus.emit("subagent_message", buildSubagentMessage(base, turnOffset + turn, assistantText, toolCalls, toolResults, Date.now(), {
+          ...telemetry, partial: true, durationMs: Date.now() - startedAt, model: rt.resolvedModel?.(),
+        }));
+      },
+      onTurn: (turn, toolCalls, toolResults, assistantText, telemetry) => {
+        eventBus.emit("subagent_progress", buildSubagentProgress(base, turnOffset + turn, maxTurns, toolCalls));
         eventBus.emit(
           "subagent_message",
-          buildSubagentMessage(base, turn, assistantText, toolCalls, toolResults, Date.now()),
+          buildSubagentMessage(base, turnOffset + turn, assistantText, toolCalls, toolResults, Date.now(), {
+            ...telemetry, durationMs: Date.now() - startedAt, model: rt.resolvedModel?.(),
+          }),
         );
       },
     });
 
     if (state.findings?.length) this.ctx.findings.push(...state.findings);
+    if (state.errorExit) throw new Error(state.errorExit.error);
+    return {
+      turns: turnOffset + state.turnCount, summary: state.summary, done: state.done,
+      ...(state.totalUsage && (state.totalUsage.inputTokens > 0 || state.totalUsage.outputTokens > 0) ? { usage: state.totalUsage } : {}),
+      durationMs: Date.now() - startedAt, model: rt.resolvedModel?.(),
+      completion_reason: state.costCeilingExceeded ? "cost_limit" : state.earlyStopNoProgress ? "early_stop" : state.done ? "done" : "turn_limit",
+    };
   }
 
   /**
@@ -6146,6 +6188,7 @@ export class ToolExecutor {
 
     const supervisor = this.detachedSupervisor();
     let aborted = false;
+    let lastRun: SubagentRunReport = {};
 
     const run = runPersistentAgent(task, {
       now: () => Date.now(),
@@ -6155,10 +6198,25 @@ export class ToolExecutor {
       drain: () =>
         childMessaging ? drainInbox(childMessaging.projectPath, base.agent_id, childMessaging.homeDir) : [],
       emit: (status) => {
-        eventBus.emit("subagent_lifecycle", { ...persistentBase, status });
+        eventBus.emit("subagent_lifecycle", { ...persistentBase, ...lastRun, status });
       },
-      runLoop: ({ task: t, messages }) =>
-        this.runPersistentLoopOnce(persistentBase, maxTurns, childMessaging, t, messages),
+      runLoop: async ({ task: t, messages }) => {
+        try {
+          lastRun = await this.runPersistentLoopOnce(persistentBase, maxTurns, childMessaging, t, messages, lastRun.turns ?? 0);
+        } catch (error) {
+          lastRun = { ...lastRun, done: false, completion_reason: "error", summary: error instanceof Error ? error.message : String(error) };
+          throw error;
+        } finally {
+          if (childMessaging?.parentId && lastRun.summary) {
+            const ts = Date.now();
+            const { body } = clampOutboundBody(`${displayName} ${lastRun.done ? "finished" : "stopped"} (${lastRun.turns ?? 0} turns). Full transcript: ${base.agent_id}\n${lastRun.summary}`);
+            const message: HubMessage = { id: newMessageId(ts), from: base.agent_id, to: childMessaging.parentId, body, ts };
+            const delivered = sendMessage(childMessaging.projectPath, message, childMessaging.homeDir);
+            if (delivered.ok) eventBus.emit("peer_message", { ...message, kind: "peer" });
+            else lastRun = { ...lastRun, summary: `${lastRun.summary}\nParent notification could not be delivered (${delivered.reason}).` };
+          }
+        }
+      },
     });
     supervisor.register(base.agent_id, displayName, run, () => {
       aborted = true;
@@ -6326,14 +6384,12 @@ export class ToolExecutor {
     eventBus.emit("subagent_lifecycle", { ...base, status: "queued" as const });
 
     const outcome = await this.runOneSubagent(task, maxTurns, base);
+    // Preserve accepted findings even if a later model request failed.
+    for (const finding of outcome.findings ?? []) this.ctx.findings.push(finding);
     if (!outcome.ok) {
       return { success: false, output: null, error: outcome.error };
     }
 
-    // Merge sub-agent findings into parent context (single-threaded here).
-    for (const f of outcome.findings) {
-      this.ctx.findings.push(f);
-    }
 
     return {
       success: true,
@@ -6450,10 +6506,8 @@ export class ToolExecutor {
     // Merge findings AFTER the pool has fully joined — single-threaded, in
     // index order — so concurrent children never race on `this.ctx.findings`.
     const perChild = outcomes.map((outcome, index) => {
+      for (const finding of outcome.findings ?? []) this.ctx.findings.push(finding);
       if (outcome.ok) {
-        for (const f of outcome.findings) {
-          this.ctx.findings.push(f);
-        }
         return {
           index,
           agent_id: outcome.agent_id,

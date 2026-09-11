@@ -1820,6 +1820,7 @@ export {
   decideAddressing,
   clampOutboundBody,
   sendOperatorMessage,
+  renderInboundMessage,
 } from "./agent/agent-messaging.js";
 export type {
   MessagingRuntime,

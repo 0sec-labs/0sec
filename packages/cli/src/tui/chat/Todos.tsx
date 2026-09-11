@@ -1,16 +1,14 @@
 /** @jsxImportSource @opentui/react */
-import React from "react";
+import React, { useState } from "react";
 import { TextAttributes } from "@opentui/core";
 import type { TodosEventPayload, TodoStatus } from "@0sec/core";
 import { fitTuiText } from "../text.js";
 import type { Theme } from "../theme-context.js";
 import {
-  budgetWrappedRows,
   todoTextWidth,
   wrapCells,
   DEFAULT_WRAP_LINES,
   sidebarItemPriority,
-  buildSidebarOverflowText,
   buildSidebarHeader,
 } from "./todos-sidebar-layout.js";
 
@@ -112,7 +110,7 @@ export function Todos({
                       fg={textColor}
                       attributes={done ? TextAttributes.STRIKETHROUGH : undefined}
                     >
-                      {fitTuiText(item.content, Math.max(1, width - 2))}
+                      {item.content}
                     </text>
                   </box>
                 </box>
@@ -155,197 +153,106 @@ interface SidebarDisplayRow {
 
 /**
  * Build the sidebar's ordered display-row array from the flat payload.
- * Items are sorted by status priority (in_progress first, then pending, then
- * completed, preserving original order within each tier). Phase/group labels
- * are inserted as separate rows before the first item of each new named group,
- * so context is visible without reading the transcript.
+ * Items are sorted within each declared group by status priority
+ * (in_progress first, then pending, then completed, preserving original order
+ * within each tier). Phase/group labels are inserted as separate rows before
+ * the first item of each named group, so context is visible without reading
+ * the transcript and phase labels are never lost when prioritizing active work.
  */
-function buildSidebarRows(payload: TodosEventPayload, textCells: number): SidebarDisplayRow[] {
-  // Priority sort: active → pending → completed
-  const sorted = [...payload.todos].sort((a, b) => {
-    const pa = sidebarItemPriority(a.status);
-    const pb = sidebarItemPriority(b.status);
-    return pa - pb;
-  });
-
+function buildSidebarRows(
+  payload: TodosEventPayload,
+  textCells: number,
+  maxLines: number = DEFAULT_WRAP_LINES,
+): SidebarDisplayRow[] {
+  const groups = groupTodos(payload.todos);
   const rows: SidebarDisplayRow[] = [];
-  let prevGroup = "";
 
-  for (const item of sorted) {
-    const group = item.group ?? "";
-    if (group && group !== prevGroup) {
+  for (const { group, items } of groups) {
+    // Sort items within this group: active → pending → completed
+    const sorted = [...items].sort(
+      (a, b) => sidebarItemPriority(a.status) - sidebarItemPriority(b.status),
+    );
+    if (group) {
       rows.push({ kind: "group", label: group });
     }
-    rows.push({
-      kind: "item",
-      item,
-      lines: wrapCells(item.content, textCells, DEFAULT_WRAP_LINES),
-    });
-    prevGroup = group;
+    for (const item of sorted) {
+      rows.push({
+        kind: "item",
+        item,
+        lines: wrapCells(item.content, textCells, maxLines),
+      });
+    }
   }
 
   return rows;
 }
 
 /**
- * The RIGHT-sidebar variant of the plan: a compact section that prioritises
- * active/current work over completed items while preserving phase context.
- *
- * Items are sorted by status priority so in-progress work is always visible
- * before pending or completed items, even when earlier phases dominate the
- * declared order. Phase/group labels appear as compact muted headings before
- * the first item of each named group, so an operator can see which phase the
- * current work belongs to.
+ * The RIGHT-sidebar variant of the plan: a compact section that preserves
+ * declared phase-group order so the tree structure is readable at a glance.
+ * Within each phase, items are sorted by status priority so in-progress work
+ * is always visible before pending or completed items. Phase/group labels
+ * appear as compact muted headings before the first item of each named group.
  *
  * The section header reflects the honest status composition:
- *   - Active items present: "PLAN ● 1 active · 3/5" (compact if tight)
  *   - All completed:        "PLAN ● 5/5" header + "● All 5 tasks completed"
  *   - Normal:               "PLAN 3/5"
  *
- * The overflow tail describes hidden items by status rather than a bare count:
- *   "+3 remaining", "+2 remaining, 1 done", "+2 done"
+ * The collapsed overflow tail describes hidden items by status rather than a
+ * bare count: "+3 remaining", "+2 remaining, 1 done", "+2 done"
+ *
+ * Accepts optional `expanded`/`onToggle` for parent-driven expansion. When no
+ * parent wiring is provided, uses internal disclosure state — the sidebar
+ * starts collapsed and the toggle indicator replaces the overflow summary.
+ *
+ * Expanded mode shows EVERY item with full-text wrapping inside a scrollbox,
+ * so all declared work is reachable without overflowing the sidebar boundary.
  *
  * `rows` is the WHOLE section's row budget (header included). `width` is the
  * sidebar's inner content width (`sidebars.rightInnerWidth`). Renders nothing
  * when the plan is empty or the budget leaves no room for the header.
  */
 export function TodosSidebar({
-  payload,
-  width,
-  rows,
-  theme,
+  payload, width, rows, theme, expanded: expandedProp, onToggle,
 }: {
   payload: TodosEventPayload;
   width: number;
   rows: number;
   theme: Theme;
+  expanded?: boolean;
+  onToggle?: (expanded: boolean) => void;
 }) {
-  const { MUTED, TEXT, ACCENT, SUCCESS } = theme;
-  if (payload.total <= 0) return null;
-  if (rows < TODOS_SIDEBAR_HEADER_ROWS + 1) return null;
-  const { done, total } = payload;
-
-  const itemRows = Math.max(0, rows - TODOS_SIDEBAR_HEADER_ROWS);
-
-  // ── All completed: compact summary, no item listing ──────────────────────
-  if (done === total && total > 0) {
-    return (
-      <box flexDirection="column" flexShrink={0} minWidth={0} marginTop={1}>
-        <box width={width} flexShrink={0} minWidth={0}>
-          <text fg={MUTED}>{buildSidebarHeader(done, total, width)}</text>
-        </box>
-        <box width={width} flexShrink={0} minWidth={0}>
-          <text fg={SUCCESS}>
-            {fitTuiText(`● All ${total} tasks completed`, width)}
-          </text>
-        </box>
-      </box>
-    );
-  }
-
-  // ── Build priority-ordered rows with phase labels ────────────────────────
-  const textCells = todoTextWidth(width);
-  let displayRows = buildSidebarRows(payload, textCells);
-
-  // Cost array: group labels = 1 row, items = wrapped line count
-  const costs = displayRows.map((r) => (r.kind === "group" ? 1 : (r.lines?.length ?? 1)));
-  const { visible } = budgetWrappedRows(costs, itemRows);
-  let visibleDisplayRows = displayRows.slice(0, visible);
-
-  // Trim orphan phase headings: never show a group label without at least
-  // its first item — a bare heading wastes the budget and hides work.
-  while (visibleDisplayRows.length > 0 &&
-         visibleDisplayRows[visibleDisplayRows.length - 1].kind === "group") {
-    visibleDisplayRows.pop();
-  }
-  // Under pressure, spend scarce rows on the active task rather than its phase.
-  if (!visibleDisplayRows.some((row) => row.kind === "item")) {
-    displayRows = displayRows.filter((row) => row.kind === "item");
-    const compact = budgetWrappedRows(displayRows.map((row) => row.lines!.length), itemRows);
-    visibleDisplayRows = displayRows.slice(0, compact.visible);
-
-  }
-
-  // ── Overflow text from hidden ITEMS only ─────────────────────────────────
-  const visibleItems = visibleDisplayRows.filter((r) => r.kind === "item").length;
-  const hiddenItems: Array<{ status: string }> = [];
-  let itemsSeen = 0;
-  for (const row of displayRows) {
-    if (row.kind === "item") {
-      if (itemsSeen >= visibleItems) {
-        hiddenItems.push({ status: row.item!.status });
-      }
-      itemsSeen++;
-    }
-  }
-  const overflowText =
-    hiddenItems.length > 0
-      ? buildSidebarOverflowText(hiddenItems, width)
-      : "";
-
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const expanded = expandedProp ?? internalExpanded;
+  const toggle = () => onToggle ? onToggle(!expanded) : setInternalExpanded(!expanded);
+  if (payload.total <= 0 || rows < 3) return null;
+  const bodyWidth = Math.max(3, width - (expanded ? 1 : 0));
+  const textCells = todoTextWidth(bodyWidth);
+  const allRows = buildSidebarRows(payload, textCells, expanded ? Number.MAX_SAFE_INTEGER : DEFAULT_WRAP_LINES)
+    .flatMap((row) => row.kind === "group"
+      ? [{ key: `phase-${row.label}`, text: row.label ?? "", glyph: "", color: theme.ACCENT }]
+      : (row.lines ?? []).map((text, index) => ({
+          key: `${row.item!.id}-${index}`, text,
+          glyph: index === 0 ? SIDEBAR_STATUS_GLYPH[row.item!.status] : "",
+          color: row.item!.status === "completed" ? theme.SUCCESS : row.item!.status === "in_progress" ? theme.TEXT : theme.MUTED,
+        })));
+  const capacity = Math.max(1, rows - 2);
+  const visible = expanded ? allRows : allRows.slice(0, capacity);
+  const body = visible.map((row) => (
+    <box key={row.key} flexDirection="row" width={bodyWidth} flexShrink={0}>
+      <text width={2} flexShrink={0} fg={row.color}>{row.glyph}</text>
+      <text width={textCells} flexShrink={0} fg={row.color}>{row.text}</text>
+    </box>
+  ));
   return (
-    <box flexDirection="column" flexShrink={0} minWidth={0} marginTop={1}>
-      <box width={width} flexShrink={0} minWidth={0}>
-        <text fg={MUTED}>{buildSidebarHeader(done, total, width)}</text>
+    <box flexDirection="column" width={width} flexShrink={0} marginTop={1}>
+      <box width={width} flexShrink={0} onMouseDown={toggle}>
+        <text fg={theme.ACCENT}>{fitTuiText(`${expanded ? "▾" : "▸"} ${buildSidebarHeader(payload.done, payload.total, Math.max(1, width - 2))}`, width)}</text>
       </box>
-      {visibleDisplayRows.map((row, rowIdx) => {
-        if (row.kind === "group") {
-          return (
-            <box key={`phase-${rowIdx}`} flexDirection="row" width={width} flexShrink={0} minWidth={0}>
-              <text width={1} flexShrink={0}>
-                {" "}
-              </text>
-              <text fg={MUTED}>
-                {fitTuiText(row.label ?? "", textCells)}
-              </text>
-            </box>
-          );
-        }
-        // Item row
-        const item = row.item!;
-        const glyph = SIDEBAR_STATUS_GLYPH[item.status] ?? SIDEBAR_STATUS_GLYPH.pending;
-        const itemDone = item.status === "completed";
-        const itemActive = item.status === "in_progress";
-        const glyphColor = itemDone ? SUCCESS : itemActive ? ACCENT : MUTED;
-        const textColor = itemDone ? SUCCESS : itemActive ? TEXT : MUTED;
-        const lines = row.lines!;
-        return (
-          <box key={item.id} flexDirection="column" width={width} flexShrink={0} minWidth={0}>
-            {lines.map((line, lineIdx) => (
-              <box
-                key={lineIdx}
-                flexDirection="row"
-                width={width}
-                flexShrink={0}
-                minWidth={0}
-              >
-                <text width={1} flexShrink={0} fg={glyphColor}>
-                  {lineIdx === 0 ? glyph : " "}
-                </text>
-                <box width={textCells} flexShrink={0} minWidth={0} marginLeft={1}>
-                  <text
-                    fg={textColor}
-                    attributes={
-                      itemDone
-                        ? TextAttributes.STRIKETHROUGH
-                        : itemActive
-                          ? TextAttributes.BOLD
-                          : undefined
-                    }
-                  >
-                    {line}
-                  </text>
-                </box>
-              </box>
-            ))}
-          </box>
-        );
-      })}
-      {overflowText ? (
-        <box width={width} flexShrink={0} minWidth={0}>
-          <text fg={MUTED}>{overflowText}</text>
-        </box>
-      ) : null}
+      {expanded
+        ? <scrollbox width={width} height={capacity} flexShrink={0} scrollX={false}><box width={bodyWidth} flexDirection="column" flexShrink={0}>{body}</box></scrollbox>
+        : body}
+      <text fg={theme.MUTED}>{fitTuiText(expanded ? "scroll · click PLAN to collapse" : allRows.length > visible.length ? `+${allRows.length - visible.length} lines · click PLAN to expand` : "click PLAN to expand", width)}</text>
     </box>
   );
 }
