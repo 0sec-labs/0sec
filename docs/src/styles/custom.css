@@ -120,6 +120,48 @@
   --sl-content-width: 76rem;
 }
 
+/* Articles have one navigation column. The landing page keeps its section bar. */
+:root[data-has-sidebar] {
+  --sl-nav-height: 4rem;
+}
+
+:root[data-has-sidebar] .docs-header {
+  grid-template-rows: 1fr;
+  gap: 0;
+}
+
+@media (min-width: 50rem) {
+  :root[data-has-sidebar] {
+    --sl-nav-height: 0rem;
+    --docs-sidebar-header-height: 8rem;
+  }
+
+  :root[data-has-sidebar] header.header {
+    width: var(--sl-sidebar-width);
+    height: var(--docs-sidebar-header-height);
+    padding: 1rem var(--sl-sidebar-pad-x);
+    border-bottom: 0;
+    border-inline-end: 1px solid var(--sl-color-hairline-shade);
+    background: var(--sl-color-bg-sidebar);
+  }
+
+  :root[data-has-sidebar] .sidebar-pane {
+    inset-block-start: var(--docs-sidebar-header-height);
+  }
+
+  :root[data-has-sidebar] .docs-header-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-content: center;
+    gap: 0.75rem 0.375rem;
+  }
+
+  :root[data-has-sidebar] .docs-header-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
 header.header {
   border-bottom: 1px solid var(--sl-color-hairline-shade);
 }

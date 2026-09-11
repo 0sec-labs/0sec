@@ -4,6 +4,8 @@ import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
 import SocialIcons from '@astrojs/starlight/components/SocialIcons.astro';
 import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
 
+const { hasSidebar } = Astro.locals.starlightRoute;
+
 const links = [
   { label: 'Overview', href: '/' },
   { label: 'Guides', href: '/getting-started/' },
@@ -16,14 +18,16 @@ const links = [
 
 <div class="docs-header">
   <div class="docs-header-main">
-    <div class="docs-brand"><SiteTitle /><span class="docs-brand-label">Docs</span></div>
+    <div class="docs-brand"><SiteTitle />{!hasSidebar && <span class="docs-brand-label">Docs</span>}</div>
     <div class="docs-header-search"><Search /></div>
     <div class="docs-header-social"><SocialIcons /></div>
     <ThemeSelect />
   </div>
-  <nav class="docs-section-nav" aria-label="Documentation sections">
-    {links.map(({ label, href }) => (
-      <a href={href} aria-current={Astro.url.pathname === href ? 'page' : undefined}>{label}</a>
-    ))}
-  </nav>
+  {!hasSidebar && (
+    <nav class="docs-section-nav" aria-label="Documentation sections">
+      {links.map(({ label, href }) => (
+        <a href={href} aria-current={Astro.url.pathname === href ? 'page' : undefined}>{label}</a>
+      ))}
+    </nav>
+  )}
 </div>
