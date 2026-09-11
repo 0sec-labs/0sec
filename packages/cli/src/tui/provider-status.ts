@@ -1,5 +1,5 @@
 /**
- * Which LLM providers this machine can actually reach.
+ * Which LLM providers have local credential configuration.
  *
  * The `/model` picker is derived from the pricing table, which lists every
  * model the tool knows how to price — not every model it can currently call.
@@ -52,6 +52,7 @@ export interface ProviderState extends ProviderInfo {
  * Note the prose comments at llm-api.ts L1205-1207 and L1548 state a
  * DIFFERENT order; the code above is what actually runs, so this follows it.
  */
+
 export const PROVIDERS: readonly ProviderInfo[] = [
   {
     id: "chatgpt-codex",

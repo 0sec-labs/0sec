@@ -25,13 +25,24 @@
  * which providers are worth surfacing first for someone connecting their very
  * first one.
  *
+ * ## The cloud row
+ *
+ * The first row in the list is always the "0sec Cloud" cloud-sign-in row. It
+ * sits outside the Popular / All provider groups and is always selectable. It
+ * launches the hosted browser login flow (hostedBrowserLoginFlow from
+ * commands/auth.ts) which opens a browser, polls for session completion, and
+ * persists credentials to ~/.0sec/cloud.env.
+ *
  * ## The honesty rule
  *
  * A provider reads as connected — the green check — only when a credential
  * actually exists for it: an env var holds one, or the credential store on
  * disk does. The store is written by the screen's input sub-step. Nothing here
  * ever reports a connection that was not verified against one of those two
- * sources; there is no optimistic "connecting…" state that sticks.
+ * sources; there is no optimistic "connecting…" state that sticks. The cloud
+ * row's connected state is determined independently through
+ * `hasCloudCredentials` which checks 0SEC_CLOUD_TOKEN in env or
+ * ~/.0sec/cloud.env.
  *
  * ## Reuse
  *
@@ -41,7 +52,6 @@
  * for that move.
  */
 
-import { PROVIDERS, providerStates, type ProviderState } from "./provider-status.js";
 import { computeListWindow, computePaneSplit } from "./pane-layout.js";
 import { shellChromeRows, wrapCells } from "./settings-layout.js";
 import { sanitizeTuiText } from "./text.js";
@@ -71,14 +81,19 @@ function clamp(value: number, low: number, high: number): number {
 /**
  * The provider table owns the protocol taxonomy. OAuth entries launch their
  * real device flow; only API-key entries can enter the generic secret field.
+ * The "cloud" entry is an OAuth provider that uses the hosted browser login
+ * flow (hostedBrowserLoginFlow) rather than the Codex device-auth subprocess.
  */
 export type AuthKind = "api-key" | "oauth";
+
+
+import { PROVIDERS, type ProviderState } from "./provider-status.js";
 
 /**
  * Providers surfaced in the "Popular" group, in the order shown. Membership is
  * a curation decision, not a runtime fact, so it lives here and nowhere else.
  */
-export const RECOMMENDED_IDS: readonly string[] = ["chatgpt-codex", "anthropic", "openai"];
+export const RECOMMENDED_IDS: readonly string[] = ["anthropic", "openai"];
 
 /**
  * Plain-language subtitles for the recommended group. Kept short enough to sit
@@ -108,8 +123,9 @@ export interface ConnectGroup {
   readonly label: string;
 }
 
-const POPULAR_GROUP: ConnectGroup = { id: "popular", label: "Popular" };
-const ALL_GROUP: ConnectGroup = { id: "all", label: "All providers" };
+const POPULAR_GROUP: ConnectGroup = { id: "popular", label: "Use my own API key" };
+const ALL_GROUP: ConnectGroup = { id: "all", label: "Other API providers" };
+const SUBSCRIPTION_GROUP: ConnectGroup = { id: "subscription", label: "Provider subscription" };
 
 export interface ConnectProvider {
   readonly id: string;
@@ -135,11 +151,16 @@ export interface ConnectSources {
   states: readonly ProviderState[];
   /** Provider ids that have a value in the on-disk credential store. */
   stored?: ReadonlySet<string> | readonly string[];
+  /**
+   * Local Cloud credential presence, supplied by the component. Not a service
+   * readiness or funding assertion.
+   */
+  cloudConnected?: boolean;
 }
 
 /** Does any provider hold a real credential? Drives the onboarding nudge. */
-export function hasAnyConnection({ states, stored }: ConnectSources): boolean {
-  if (states.some((state) => state.configured)) return true;
+export function hasAnyConnection({ states, stored, cloudConnected }: ConnectSources): boolean {
+  if (cloudConnected || states.some((state) => state.configured)) return true;
   const storedSet = stored instanceof Set ? stored : new Set(stored ?? []);
   return storedSet.size > 0;
 }
@@ -175,6 +196,7 @@ function connectProviderFor(
 // ---------------------------------------------------------------------------
 
 export type ConnectRow =
+  | { readonly kind: "cloud" }
   | { readonly kind: "heading"; readonly group: ConnectGroup }
   | { readonly kind: "subtitle"; readonly group: ConnectGroup; readonly text: string }
   | {
@@ -194,25 +216,28 @@ function compareStrings(a: string, b: string): number {
 }
 
 /**
- * Flattens the provider table into a "Popular" group followed by "All
- * providers", each a heading then its provider rows. A recommended provider
- * with a subtitle emits a non-selectable subtitle row beneath it.
+ * Flattens the provider table into a cloud row, then a "Popular" group followed
+ * by "All providers", each a heading then its provider rows. A recommended
+ * provider with a subtitle emits a non-selectable subtitle row beneath it.
  *
  * A heading is only emitted when at least one provider under it survives the
  * filter, and the two groups are disjoint: a provider in the popular group is
  * not repeated under "all". The filter is AND-over-terms across the provider
- * id, its label and its auth hint.
+ * id, its label and its auth hint. The cloud row is always the first row and
+ * never removed by the filter.
  */
 export function buildConnectRows({
-  states = providerStates({}),
+  states = [],
   stored,
   filter = "",
 }: ConnectRowsInput = {}): ConnectRow[] {
   const storedSet = stored instanceof Set ? stored : new Set(stored ?? []);
   const terms = sanitizeTuiText(filter).toLowerCase().split(" ").filter(Boolean);
 
+  const resolvedStates = states;
+
   const byId = new Map<string, ConnectProvider>();
-  for (const state of states) {
+  for (const state of resolvedStates) {
     if (!state || typeof state.id !== "string" || state.id.length === 0) continue;
     byId.set(state.id, connectProviderFor(state, storedSet));
   }
@@ -229,10 +254,12 @@ export function buildConnectRows({
   );
   const recommendedIds = new Set(recommended.map((provider) => provider.id));
   const rest = [...byId.values()]
-    .filter((provider) => !recommendedIds.has(provider.id))
+    .filter((provider) => provider.auth === "api-key" && !recommendedIds.has(provider.id))
     .sort((a, b) => compareStrings(a.id, b.id));
 
   const rows: ConnectRow[] = [];
+  if (terms.every((term) => "hosted 0sec cloud sign in".includes(term))) rows.push({ kind: "cloud" });
+
   const pushGroup = (group: ConnectGroup, providers: readonly ConnectProvider[]) => {
     const shown = providers.filter(matches);
     if (shown.length === 0) return;
@@ -247,12 +274,13 @@ export function buildConnectRows({
 
   pushGroup(POPULAR_GROUP, recommended);
   pushGroup(ALL_GROUP, rest);
+  pushGroup(SUBSCRIPTION_GROUP, [...byId.values()].filter((provider) => provider.auth === "oauth"));
   return rows;
 }
 
 /** A provider row is selectable; headings and subtitles are not. */
 function isSelectable(row: ConnectRow | undefined): boolean {
-  return row?.kind === "provider";
+  return row?.kind === "provider" || row?.kind === "cloud";
 }
 
 /** Index of the first selectable row, or -1. */
@@ -274,6 +302,10 @@ export function lastSelectableIndex(rows: readonly ConnectRow[]): number {
 /** Index of a provider by id, or -1. */
 export function indexOfProvider(rows: readonly ConnectRow[], id: string | undefined): number {
   if (!id) return -1;
+  // The cloud row addresses via "hosted" id.
+  if (id === "hosted") {
+    return rows.findIndex((row) => row.kind === "cloud");
+  }
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index];
     if (row?.kind === "provider" && row.provider.id === id) return index;
@@ -527,6 +559,11 @@ export interface ConnectDetailLine {
 export interface ConnectDetailInput {
   row?: ConnectRow;
   compact?: boolean;
+  /**
+   * Local credential presence supplied by the component; this pure renderer
+   * never reads environment variables or credential files.
+   */
+  cloudConnected?: boolean;
 }
 
 /**
@@ -536,11 +573,44 @@ export interface ConnectDetailInput {
  * alignment columns, because `sanitizeTuiText` would trim padded literals.
  */
 export function connectDetailLines(
-  { row, compact = false }: ConnectDetailInput,
+  { row, compact = false, cloudConnected }: ConnectDetailInput,
   width: number,
 ): ConnectDetailLine[] {
   const limit = cells(width);
-  if (!row || row.kind !== "provider" || limit <= 0) return [];
+  if (!row || limit <= 0) return [];
+
+  // ── cloud row ──
+  if (row.kind === "cloud") {
+    const connected = cloudConnected === true;
+    const lines: ConnectDetailLine[] = [];
+    const push = (value: string, tone: ConnectDetailTone) => {
+      for (const text of wrapCells(value, limit)) lines.push({ text, tone });
+    };
+    const separate = () => {
+      if (!compact) lines.push({ text: "", tone: "blank" });
+    };
+
+    push("0sec Cloud", "title");
+    separate();
+    push("Sign in once to use the 0sec-managed model catalog.", "text");
+    push("Model access and credits are checked when used.", "muted");
+    separate();
+    if (connected) {
+      push("Cloud login saved locally; not verified here.", "text");
+    } else {
+      push("Cloud login not configured.", "muted");
+    }
+    push("Use your own API key or provider subscription without a 0sec account.", "muted");
+    separate();
+    push(
+      "Enter: open browser for 0sec Cloud sign-in.",
+      "muted",
+    );
+    return lines;
+  }
+
+  // ── provider rows ──
+  if (row.kind !== "provider") return [];
 
   const provider = row.provider;
   const lines: ConnectDetailLine[] = [];
@@ -559,7 +629,7 @@ export function connectDetailLines(
   separate();
 
   push(
-    provider.auth === "oauth" ? "Auth: ChatGPT Codex device OAuth" : "Auth: OpenAI-compatible API key",
+    provider.auth === "oauth" ? "Auth: ChatGPT Codex device OAuth" : "Auth: API key",
     "text",
   );
 
@@ -659,6 +729,7 @@ export function connectStatusLine(rows: readonly ConnectRow[]): string {
   const seen = new Set<string>();
   let connected = 0;
   for (const row of rows) {
+    if (row.kind === "cloud") continue; // cloud is not a counted provider
     if (row.kind !== "provider") continue;
     if (seen.has(row.provider.id)) continue;
     seen.add(row.provider.id);
@@ -677,7 +748,7 @@ export function connectListTitle(window: ConnectWindow): string {
 
 /** The list pane's stable, left-aligned header label. */
 export function connectListTitleLabel(): string {
-  return "PROVIDERS";
+  return "CONNECTION";
 }
 
 /** The right-aligned header meta: total count, or the on-screen window range. */
@@ -694,15 +765,23 @@ export function connectDetailTitleLabel(): string {
 
 /**
  * The detail header's right-aligned summary for the highlighted provider:
- * "connected" when a credential exists, "not connected" when it does not, and
- * "" when nothing is highlighted. Colour is the component's to choose.
+ * "connected" when a credential exists, "not connected" when it does not,
+ * "sign in" / "signed in" for the cloud row, and "" when nothing is
+ * highlighted. Colour is the component's to choose.
  */
-export function connectDetailTitleMeta(row: ConnectRow | undefined): string {
-  if (!row || row.kind !== "provider") return "";
+export function connectDetailTitleMeta(
+  row: ConnectRow | undefined,
+  cloudConnected?: boolean,
+): string {
+  if (!row) return "";
+  if (row.kind === "cloud") {
+    return cloudConnected ? "login saved" : "sign in";
+  }
+  if (row.kind !== "provider") return "";
   return row.provider.connected ? "connected" : "not connected";
 }
 
-export type ConnectMode = "browse" | "filter" | "input" | "oauth";
+export type ConnectMode = "browse" | "filter" | "input" | "oauth" | "hosted";
 
 /**
  * The prompt shown while the operator is pasting a credential. The secret is
@@ -720,6 +799,7 @@ export function connectInputMask(secretLength: number): string {
 export function connectFooterHint(mode: ConnectMode, hasFilter = false): string {
   if (mode === "input") return "paste credential · enter save · esc cancel";
   if (mode === "oauth") return "device sign-in running · esc cancel";
+  if (mode === "hosted") return "cloud sign-in running · esc cancel";
   if (mode === "filter") return "type to filter · enter connect · esc done · backspace delete";
   return [
     "↑↓ select",
