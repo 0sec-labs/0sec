@@ -1,16 +1,5 @@
-// 0sec-cloud HTTP client. Bearer-auth, JSON, scaffolding.
-//
-// Scope:
-//   - One method: `pingHealth()` — hits the configured health endpoint to
-//     verify cloud reachability.
-//
-// The hosted 0cloud dashboard serves health under `/api/health`; generic
-// self-hosted receivers retain the original `/health` convention.
-//
-// Out of scope:
-//   - `dispatchScan()`, `listScans()`, etc. — those will use real
-//     response schemas with zod once the cloud API surface is pinned.
-//   - No pagination, no rate-limit retry, no cursor-aware paginator.
+// Bearer-authenticated 0sec client for health, hosted model catalog,
+// inference balance, and request usage. Provider keys stay on the service.
 //
 // SECURITY:
 //   - The Authorization header value is built from the token but never
@@ -70,6 +59,42 @@ export interface CloudClientOptions {
 export interface CloudHealthResponse {
   status: string;
 }
+
+// ── Hosted inference API types ──
+
+/** A single model entry from the hosted inference catalog. */
+export interface InferenceModel {
+  id: string;
+  object: "model";
+  owned_by: string;
+  provider: string;
+  upstream_model: string;
+  wire_api: "chat_completions" | "responses";
+  context_length: number;
+  max_output_tokens: number;
+  pricing: {
+    input_per_million_usd: number;
+    output_per_million_usd: number;
+    cached_input_per_million_usd: number;
+  };
+}
+
+/** Response shape from GET /api/inference/v1/models */
+export interface InferenceModelsResponse {
+  object: "list";
+  data: InferenceModel[];
+}
+
+/** Account balance from GET /api/inference/account */
+export interface InferenceAccountResponse {
+  remainingUsd: number;
+  currency: "USD";
+}
+
+/** Usage metadata from GET /api/inference/usage */
+export interface InferenceUsageResponse {
+  requests: Record<string, unknown>[];
+}
 function healthPath(host: string): string {
   try {
     const hostname = new URL(host).hostname.toLowerCase();
@@ -96,10 +121,38 @@ export class CloudClient {
 
   /**
    * Verify cloud reachability through its health route. The hosted dashboard
-   * uses `/api/health`; a self-hosted receiver uses `/health`.
+   * uses `/api/health`; a self-hosted receiver uses `/host`.
    */
   async pingHealth(): Promise<CloudHealthResponse> {
     return this.getJson<CloudHealthResponse>(healthPath(this.host));
+  }
+
+  /**
+   * Fetch the hosted inference model catalog — available models, pricing,
+   * wire API protocol, and context limits. Used at runtime for model
+   * selection and by the hosted provider to determine per-model capabilities.
+   * Returns the raw list response; the caller caches/filters as needed.
+   */
+  async getInferenceModels(): Promise<InferenceModelsResponse> {
+    return this.getJson<InferenceModelsResponse>("/api/inference/v1/models");
+  }
+
+  /**
+   * Fetch the operator's hosted inference account balance. Reflects
+   * remaining prepaid credits (Autumn billing) in USD. A depleted balance
+   * will cause the inference endpoint to return 402 InsufficientFunds.
+   */
+  async getInferenceAccount(): Promise<InferenceAccountResponse> {
+    return this.getJson<InferenceAccountResponse>("/api/inference/account");
+  }
+
+  /**
+   * Fetch request-level usage metadata for the operator's hosted
+   * inference sessions. Returns lightweight metadata records (model,
+   * tokens, provider, timestamp) — no prompt/response payload.
+   */
+  async getInferenceUsage(): Promise<InferenceUsageResponse> {
+    return this.getJson<InferenceUsageResponse>("/api/inference/usage");
   }
 
   /**

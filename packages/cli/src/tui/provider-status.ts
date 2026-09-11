@@ -137,6 +137,14 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     envVars: ["ANTHROPIC_API_KEY"],
     hint: "set ANTHROPIC_API_KEY=sk-ant-... from console.anthropic.com",
   },
+  {
+    id: "hosted",
+    label: "0sec hosted models",
+    auth: "api-key",
+    envVars: ["0SEC_CLOUD_TOKEN"],
+    fileSource: "~/.0sec/cloud.env",
+    hint: "run `0sec login` to write ~/.0sec/cloud.env, or set 0SEC_CLOUD_TOKEN in env",
+  },
 ];
 
 /**

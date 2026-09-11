@@ -26,7 +26,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** Canonical production host. Override via 0SEC_CLOUD_HOST or cloud.env. */
-export const DEFAULT_CLOUD_HOST = "https://cloud.0sec.ai";
+export const DEFAULT_CLOUD_HOST = "https://cloud.0.security";
 
 export interface CloudCredentials {
   host: string;

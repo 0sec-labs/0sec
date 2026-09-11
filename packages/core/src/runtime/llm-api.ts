@@ -14,9 +14,11 @@ import type {
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { VERSION } from "@0sec/shared";
+import { VERSION, homeStateDir } from "@0sec/shared";
 import { features } from "../agent/features.js";
 import { diag } from "../diagnostics/channel.js";
+import { loadCloudCredentials, CloudAuthMissingError, DEFAULT_CLOUD_HOST } from "../cloud/credentials.js";
+import { CloudClient } from "../cloud/client.js";
 import {
   MESSAGE_CACHE_BREAKPOINTS,
   planMessageBreakpoints,
@@ -736,7 +738,7 @@ function opencodeWireApiForModel(model: string | undefined): WireApi {
   throw new Error(`OpenCode Zen has no wire mapping for model "${bare}"`);
 }
 
-type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen" | "xai" | "opencode";
+type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen" | "xai" | "opencode" | "hosted";
 /**
  * Azure Foundry deployment ids used by 0cloud. The worker can inject both
  * the Azure primary key and a direct-DeepSeek fallback key; route a Foundry
@@ -784,6 +786,7 @@ export function parseLlmFallbackChain(): FallbackEntry[] {
   const VALID_PROVIDERS: Record<string, true> = {
     openrouter: true, anthropic: true, openai: true, azure: true, deepseek: true,
     "chatgpt-codex": true, "z-ai": true, kimi: true, qwen: true, xai: true, opencode: true,
+    hosted: true,
   };
   for (const part of raw.split(",")) {
     const trimmed = part.trim();
@@ -886,6 +889,23 @@ export function resolveFailoverProvider(
       const key = process.env.OPENCODE_API_KEY;
       if (!key) return undefined;
       return { apiKey: key, baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, wireApi: opencodeWireApiForModel(model) };
+    }
+    case "hosted": {
+      // Hosted inference uses cloud credentials from env or cloud.env.
+      try {
+        const creds = loadCloudCredentials({
+          env: process.env,
+          warn: () => { /* silent — failover entries don't print warnings */ },
+        });
+        return {
+          apiKey: creds.token,
+          baseUrl: `${creds.host}/api/inference/v1`,
+          wireApi: "chat_completions",
+        };
+      } catch (err) {
+        if (err instanceof CloudAuthMissingError) return undefined;
+        throw err;
+      }
     }
   }
 }
@@ -1541,6 +1561,7 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       "qwen",
       "xai",
       "opencode",
+      "hosted",
     ];
     if (!supported.includes(pinnedProviderRaw as ApiProvider)) {
       throw new Error(`${source} is unsupported: ${pinnedProviderRaw}`);
@@ -1789,6 +1810,26 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
+  // 0sec Cloud hosted inference. Detected when cloud credentials are present
+  // and no explicit BYOK provider was configured above. The default model is
+  // a placeholder; the first async catalog fetch replaces it at invocation
+  // time with the actual first model from the server's catalog.
+  try {
+    const hostedCreds = loadCloudCredentials({
+      env: process.env,
+      warn: () => { /* silent in detection path */ },
+    });
+    return {
+      provider: "hosted",
+      apiKey: hostedCreds.token,
+      baseUrl: `${hostedCreds.host}/api/inference/v1`,
+      defaultModel: "",
+      wireApi: "chat_completions",
+    };
+  } catch {
+    // No cloud credentials — continue to BYOK fallbacks.
+  }
+
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     return {
@@ -1842,6 +1883,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   private fallbackChain: FallbackEntry[];
   /** Index into fallbackChain — which entry to try next. */
   private fallbackIndex: number;
+  /** Resolve and validate the hosted model and wire protocol once per runtime. */
+  private hostedCatalogPromise: Promise<void> | null = null;
 
   constructor(config: RuntimeConfig) {
     this.config = config;
@@ -1907,6 +1950,32 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     }
   }
 
+  /** The server catalog is authoritative even when a model was selected explicitly. */
+  private async ensureHostedModel(): Promise<void> {
+    if (this.provider !== "hosted") return;
+
+    if (!this.hostedCatalogPromise) {
+      this.hostedCatalogPromise = (async () => {
+        const client = new CloudClient({
+          host: this.baseUrl.replace(/\/api\/inference\/v1$/, ""),
+          token: this.apiKey,
+        });
+        const catalog = await client.getInferenceModels();
+        const selected = this.model
+          ? catalog.data.find((model) => model.id === this.model)
+          : catalog.data[0];
+        if (!selected) {
+          throw new Error(this.model
+            ? `Hosted model "${this.model}" is unavailable. Run \`0sec models\` for available models.`
+            : "No hosted models are available. Run `0sec models` to check service availability.");
+        }
+        this.model = selected.id;
+        this.wireApi = selected.wire_api;
+      })();
+    }
+    await this.hostedCatalogPromise;
+  }
+
   /**
    * A hard dollar ceiling needs a provider-enforced bound on the next response.
    * ChatGPT Codex OAuth rejects `max_output_tokens`, so it cannot support that
@@ -1933,6 +2002,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.provider === "deepseek" ||
       this.provider === "qwen" ||
       this.provider === "xai" ||
+      this.provider === "hosted" ||
       (this.provider === "opencode" &&
         (this.wireApi === "chat_completions" || this.wireApi === "responses")) ||
       // chatgpt-codex always speaks Responses API; treat it as
@@ -2246,6 +2316,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       case "qwen": return "Qwen (Alibaba Model Studio)";
       case "xai": return "xAI (Grok)";
       case "opencode": return "OpenCode Zen";
+      case "hosted": return "0sec hosted models";
     }
   }
 
@@ -2262,7 +2333,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       "  export KIMI_API_KEY=...                (Moonshot Kimi K3 — flat-rate coding, Anthropic-compatible)\n" +
       "  export QWEN_API_KEY=...                (Alibaba Qwen — Token Plan sub, OpenAI-compatible)\n" +
       "  export XAI_API_KEY=...                 (xAI Grok — OpenAI-compatible)\n" +
-      "  export OPENCODE_API_KEY=...            (OpenCode Zen — multi-wire gateway)"
+      "  export OPENCODE_API_KEY=...            (OpenCode Zen — multi-wire gateway)\n" +
+      "  Run `0sec login`                     (0sec hosted inference)"
     );
   }
 
@@ -2625,6 +2697,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     prompt: string,
     context?: RuntimeContext,
   ): Promise<RuntimeResult> {
+    await this.ensureHostedModel();
     const start = Date.now();
 
     // chatgpt-codex's "key" is an OAuth refresh token in env, not
@@ -2829,6 +2902,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     callbacks?: NativeStreamCallbacks,
     signal?: AbortSignal,
   ): Promise<NativeRuntimeResult> {
+    await this.ensureHostedModel();
     const start = Date.now();
 
     // chatgpt-codex's "key" is an OAuth refresh token in env, not

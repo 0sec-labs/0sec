@@ -51,7 +51,7 @@ const EXIT_USER_ERROR = 1;
 const EXIT_AUTH = 2;
 const EXIT_NET = 3;
 
-interface LoginOptions {
+export interface LoginOptions {
   host?: string;
   token?: string;
   /** Override the poll-attempt budget (tests). Default 150 (~5min @ 2s). */

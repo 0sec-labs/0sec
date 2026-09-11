@@ -49,6 +49,25 @@ Only test systems you own or have permission to assess.
 See [Getting started](https://docs.0.security/getting-started/) for Docker,
 source builds, and your first scan.
 
+### Hosted models
+
+This source checkout adds optional hosted inference through a 0sec account.
+It requires a deployment with hosted models enabled; it does not indicate
+that production access or a compatible CLI release is available.
+
+```bash
+0sec login
+0sec models
+0sec balance
+```
+
+Login uses the existing browser approval flow. An organization owner or admin
+funds model credits in the console. Provider keys stay on the service, while
+CLI tools run locally. Configured BYOK providers retain precedence over
+automatic hosted selection. An explicitly selected hosted model must appear
+in the service catalogue; the CLI does not silently substitute another model.
+Review subscriptions and managed testing are billed separately.
+
 ## Documentation
 
 [docs.0.security](https://docs.0.security/) is the public documentation
