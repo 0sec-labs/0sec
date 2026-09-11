@@ -8,8 +8,11 @@ import type {
   NativeToolDef,
   NativeRuntimeResult,
 } from "../runtime/types.js";
-import type { AuthConfig } from "@0sec/shared";
-import { resolveIdentities, DEFAULT_AUTONOMY_MODE, DEFAULT_ALLOW_MODEL_SELF_EXTENSION } from "@0sec/shared";
+import { join, resolve } from "node:path";
+import type { AuthConfig, HarnessUiInput, HarnessSnapshot } from "@0sec/shared";
+import { resolveIdentities, DEFAULT_AUTONOMY_MODE, DEFAULT_ALLOW_MODEL_SELF_EXTENSION, homeStateDir } from "@0sec/shared";
+import { LiveHarnessHost } from "../plugins/live-harness.js";
+import { getWorkspaceHarnessTrust } from "../plugins/harness-trust.js";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
 import { toNativeToolDef, toNativeExtensionToolDef } from "./native-tooldef.js";
 import { SessionEngine } from "./session.js";
@@ -324,6 +327,10 @@ export interface NativeAgentConfig {
    * must either omit this or set it to false so tools/context stay cold.
    */
   codebaseLearning?: boolean;
+  /** Captured canonical workspace root for live-harness trust/enablement decisions. */
+  workspaceRoot?: string;
+  /** Live harness snapshot change callback. Fired on generation transitions, view updates, and errors. */
+  onHarnessUpdate?: (snapshot: HarnessSnapshot) => void;
 }
 
 export interface NativeAgentLoopOptions {
@@ -625,6 +632,13 @@ export async function runNativeAgentLoop(
   const executablePlugins = selfExtensionEnabled
     ? createExecutablePlugins(selfExtension, config.executablePlugins)
     : undefined;
+  const workspaceRoot = resolve(config.workspaceRoot ?? process.cwd());
+  const harness = executablePlugins ? new LiveHarnessHost({
+    executablePlugins, root: join(homeStateDir(), "live-harness", randomUUID()), workspaceRoot,
+    allowTrusted: () => getWorkspaceHarnessTrust(workspaceRoot), onChange: config.onHarnessUpdate,
+  }) : undefined;
+  toolCtx.liveHarness = harness;
+  toolCtx.workspaceRoot = workspaceRoot;
   const executionAbort = new AbortController();
   const executionSignal = opts.signal
     ? AbortSignal.any([opts.signal, executionAbort.signal])
@@ -665,7 +679,7 @@ export async function runNativeAgentLoop(
     }
     return huntMemory;
   }
-  const executor = new ToolExecutor(toolCtx, db);
+  const executor = new ToolExecutor(toolCtx, db, undefined, runtime.forkForSubagent?.bind(runtime));
   const baseTools = config.tools.length > 0 ? config.tools : getToolsForRole(config.role, { hasScope: !!config.scopePath, allowScanners: config.allowScanners });
 
   // ── Codebase learning (source-grounded hunt memory) ──
@@ -691,7 +705,7 @@ export async function runNativeAgentLoop(
 
   // `self_extend` is never advertised by getToolsForRole; inject it into the
   // model-facing set ONLY when enabled, and strip it out otherwise (defence in
-  // depth against a caller passing it in `config.tools`). Default OFF ⇒ absent.
+  // depth against a caller passing it in `config.tools`).
   const selfExtendDef = TOOL_DEFINITIONS.self_extend;
   const tools: ToolDefinition[] = (() => {
     let t = baseTools.filter((tool) => tool.name !== "remember_codebase");
@@ -893,6 +907,13 @@ export async function runNativeAgentLoop(
   };
   let pendingValidationNotes: string[] | undefined;
   let pendingActionLog: ToolCallLogEntry[] | undefined;
+  let directDriver = false;
+  let driverCalls: ToolCall[] | undefined;
+  let driverResults: ToolResult[] | undefined;
+  const harnessInput = (phase: HarnessUiInput["phase"]): HarnessUiInput => ({
+    sessionId: state.sessionId, phase, iterations: state.turnCount,
+    tokensUsed: state.totalUsage.inputTokens + state.totalUsage.outputTokens, tokenBudget: 0,
+  });
   const invokePluginModel = async (request: unknown, requestSignal?: AbortSignal) => {
     if (!pendingActionLog) throw new Error("No active parent tool round.");
     const parsed = parseExecutableModelRequest(request);
@@ -956,6 +977,9 @@ export async function runNativeAgentLoop(
       const effectiveSignal = signal ? AbortSignal.any([executionSignal, signal]) : executionSignal;
       effectiveSignal.throwIfAborted();
       const call: ToolCall = { name, arguments: args };
+      const driverCallId = directDriver ? `harness-${randomUUID()}` : undefined;
+      const driverIndex = driverCallId ? driverCalls!.push(call) - 1 : -1;
+      if (driverCallId) onToolUpdate?.(state.turnCount, driverCalls!, driverResults!, "", { usage: { ...state.totalUsage } });
       const correlationId = newCorrelationId();
       const startedAt = Date.now();
       toolsUsedSet.add(name);
@@ -964,7 +988,23 @@ export async function runNativeAgentLoop(
         tool: name, turn: state.turnCount, args_preview: toolCallPreview(call).slice(0, 200), ts: startedAt,
       });
       shadowJournal.append({ kind: "tool_call", tool: name, arguments: args, turn: state.turnCount, callId: correlationId });
-      const result = await executor.execute(call, { correlationId, signal: effectiveSignal });
+      let result: ToolResult;
+      try { result = await executor.execute(call, { correlationId, signal: effectiveSignal }); }
+      catch (error) { result = { success: false, output: null, error: error instanceof Error ? error.message : String(error) }; }
+      if (driverCallId) {
+        let content = result.success ? JSON.stringify(result.output) ?? "" : `Error: ${result.error}`;
+        if (result.success && isUntrustedSourceTool(name)) content = sanitizeUntrustedToolResult(content).content;
+        state.messages.push(
+          { role: "assistant", content: [{ type: "tool_use", id: driverCallId, name, input: structuredClone(args) }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: driverCallId, content, is_error: !result.success }] },
+        );
+        driverResults![driverIndex] = result;
+        if (name === "done" && result.success) {
+          state.done = true;
+          state.summary = (result.output as { summary: string }).summary;
+        }
+        onToolUpdate?.(state.turnCount, driverCalls!, driverResults!, "", { usage: { ...state.totalUsage } });
+      }
       actionLog.push(buildToolCallLogEntry({
         call, correlationId, startedAt, endedAt: Date.now(),
         result: { success: result.success, error: result.error },
@@ -1097,6 +1137,7 @@ export async function runNativeAgentLoop(
   // ── Graceful cleanup on signals ──
   const signalCleanup = () => {
     executionAbort.abort(new Error("Agent session interrupted."));
+    void harness?.close();
     void executablePlugins?.close();
     executor.cleanup();
   };
@@ -1682,6 +1723,12 @@ export async function runNativeAgentLoop(
     }
 
     try {
+    if (harness) {
+      pendingActionLog = [];
+      pendingValidationNotes = [];
+      driverCalls = [];
+      driverResults = [];
+    }
 
     // ── Inject user messages queued from the TUI ──
     injectPendingUserMessages?.();
@@ -1761,8 +1808,18 @@ export async function runNativeAgentLoop(
       role: config.role,
     });
 
-    // Call Claude API with native messages + tools
-    const result = await runtime.executeNative(
+    let supplied: NativeRuntimeResult | undefined;
+    let driven = false;
+    try {
+      await harness?.checkpoint(harnessInput("working"));
+      directDriver = true;
+      supplied = await harness?.drive({ system: config.systemPrompt, messages: state.messages, tools: nativeTools }, toolCtx.pluginExecutionContext?.());
+      driven = supplied !== undefined;
+    } catch (error) {
+      driven = true;
+      supplied = { content: [], stopReason: "error", durationMs: 0, error: error instanceof Error ? error.message : String(error) };
+    } finally { directDriver = false; }
+    const result = supplied ?? await runtime.executeNative(
       config.systemPrompt,
       state.messages,
       nativeTools,
@@ -1917,9 +1974,10 @@ export async function runNativeAgentLoop(
     }
 
     // Handle error or empty response
-    if (result.error || (result.content.length === 0 && (!result.usage || result.usage.outputTokens === 0))) {
+    if (result.stopReason === "error" || result.error || (result.content.length === 0 && (!result.usage || result.usage.outputTokens === 0))) {
       const errorMsg = result.error || "API returned empty response (0 tokens) — model may be rate-limited or unavailable";
       if (
+        !driven &&
         result.error
         && isContextWindowError(errorMsg)
         && contextOverflowRecoveries < 2
@@ -1948,7 +2006,7 @@ export async function runNativeAgentLoop(
       // Transient provider overload / rate-limit / 5xx → back off and retry the
       // SAME turn rather than killing the run. Doesn't consume a turn (the LLM
       // call failed before any tool ran), capped by MAX_TRANSIENT_RETRIES.
-      const transient = isTransientLlmError(errorMsg);
+      const transient = !driven && isTransientLlmError(errorMsg);
       if (transient && transientRetries < MAX_TRANSIENT_RETRIES) {
         transientRetries++;
         const backoffMs = Math.min(20_000, 500 * 2 ** transientRetries);
@@ -1965,8 +2023,10 @@ export async function runNativeAgentLoop(
       // for back-compat. The `errorExit` field below is the structured
       // signal modern callers should branch on to distinguish a planner
       // bailout from a clean completion.
+      state.done = false;
       state.summary = `Error: ${errorMsg}`;
       state.errorExit = { error: errorMsg, turn: state.turnCount };
+      if (driverCalls?.length) onTurn?.(state.turnCount, driverCalls, driverResults!, state.summary, { usage: { ...state.totalUsage } });
       if (db) {
         db.logEvent({
           scanId: config.scanId,
@@ -1995,9 +2055,9 @@ export async function runNativeAgentLoop(
       (b): b is Extract<NativeContentBlock, { type: "text" }> => b.type === "text",
     );
     const textContent = textBlocks.map((b) => b.text).join("\n");
-    const turnTelemetry = (onTurn || onToolUpdate) && result.usage ? {
+    const turnTelemetry = (onTurn || onToolUpdate) && (result.usage || driven) ? {
       usage: { ...state.totalUsage },
-      contextTokens: result.usage.inputTokens + result.usage.outputTokens,
+      ...(result.usage ? { contextTokens: result.usage.inputTokens + result.usage.outputTokens } : {}),
     } : undefined;
     if (textContent.trim() && textContent.trim() !== streamedThinkingText.trim()) {
       onEvent?.("thinking", {
@@ -2044,7 +2104,7 @@ export async function runNativeAgentLoop(
     // If no tool calls, the model responded with text only
     if (toolUseBlocks.length === 0) {
       // Text-only turns used to bypass observers, losing the worker's final answer.
-      onTurn?.(state.turnCount, [], [], textContent, turnTelemetry);
+      onTurn?.(state.turnCount, driverCalls ?? [], driverResults ?? [], textContent, turnTelemetry);
       // Only allow early exit if the agent has done meaningful work:
       // - At least 4 turns (read files, ran commands, analyzed code)
       // - OR explicitly called the done tool (handled below in tool execution)
@@ -2057,11 +2117,11 @@ export async function runNativeAgentLoop(
       // report `status: "success"` alongside the "reached max turns" fallback
       // string from the tail of this function. Nudge the agent instead.
       const minTurns = Math.min(4, config.maxTurns);
-      if (state.turnCount >= minTurns && result.stopReason === "end_turn" && textContent.trim()) {
+      if (state.done || (state.turnCount >= minTurns && result.stopReason === "end_turn" && textContent.trim())) {
         // A steer can arrive while the final response is in flight. Honor it
         // before retiring this worker, without extending its turn budget.
-        if (state.turnCount < config.maxTurns && injectPendingUserMessages?.()) continue;
-        state.summary = textContent;
+        if (state.turnCount < config.maxTurns && injectPendingUserMessages?.()) { state.done = false; continue; }
+        if (!state.done) state.summary = textContent;
         state.done = true;
         break;
       }
@@ -2085,8 +2145,8 @@ export async function runNativeAgentLoop(
     }
 
     // Execute each tool call and collect results
-    const toolCalls: ToolCall[] = [];
-    const toolResults: ToolResult[] = [];
+    const toolCalls: ToolCall[] = driverCalls ?? [];
+    const toolResults: ToolResult[] = driverResults ?? [];
     const toolResultBlocks: NativeContentBlock[] = [];
     // JIT rules matched by this turn's tool actions (see rules.ts); injected with
     // the tool-results message below.
@@ -2094,12 +2154,12 @@ export async function runNativeAgentLoop(
     // Action-level durable log for this turn (one entry per tool invocation,
     // each with its own wall clock + the correlation id that joins it to the
     // `tool_artifact` row). Persisted below as the `tool_calls` payload.
-    const actionLog: ToolCallLogEntry[] = [];
+    const actionLog: ToolCallLogEntry[] = pendingActionLog ?? [];
     pendingActionLog = actionLog;
     // Inline-validation context notes accumulated this turn (#554). Appended as
     // text blocks to the tool-results user message below so the agent sees the
     // confirmed/unconfirmed verdict on its NEXT turn.
-    const inlineValidationNotes: string[] = [];
+    const inlineValidationNotes: string[] = pendingValidationNotes ?? [];
     pendingValidationNotes = inlineValidationNotes;
 
     for (const block of toolUseBlocks) {
@@ -2687,6 +2747,10 @@ export async function runNativeAgentLoop(
     } finally {
       pendingActionLog = undefined;
       pendingValidationNotes = undefined;
+      driverCalls = undefined;
+      driverResults = undefined;
+      try { await harness?.refreshViews(harnessInput("idle")); }
+      catch (error) { onEvent?.("harness_error", { error: error instanceof Error ? error.message : String(error) }); }
       // Bus event: agent turn boundary end. Exit reason is inferred from
       // state flags set by the various break paths inside the body. If the
       // loop will iterate again (done=false and no early/error flag),
@@ -2848,6 +2912,7 @@ export async function runNativeAgentLoop(
   return state;
   } finally {
     executionAbort.abort(new Error("Agent session ended."));
+    await harness?.close();
     await executor.cleanup();
     await executablePlugins?.close();
     unregisterSignalCleanup();

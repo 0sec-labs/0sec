@@ -1891,6 +1891,9 @@ export type {
   PluginVersionRecord,
   PluginListEntry,
 } from "./plugins/executable.js";
+export { LiveHarnessHost, parseHarnessGenerationSpec } from "./plugins/live-harness.js";
+export type { LiveHarnessOptions } from "./plugins/live-harness.js";
+export { getWorkspaceHarnessTrust, setWorkspaceHarnessTrust } from "./plugins/harness-trust.js";
 export type { ExecutablePluginConfiguration } from "./agent/executable-plugins.js";
 export type { InteractiveExecutionChannel } from "./runtime/interactive.js";
 // ── Third-party plugin lifecycle (install → enable → run → hot-swap) ──────────
@@ -2194,6 +2197,10 @@ export type {
   LoadCloudCredentialsOptions,
   CloudClientOptions,
   CloudHealthResponse,
+  InferenceModel,
+  InferenceModelsResponse,
+  InferenceAccountResponse,
+  InferenceUsageResponse,
   WindowsEvidenceStoredBlob,
   WindowsEvidenceSubmissionReceipt,
   WindowsEvidenceWorkerBlob,

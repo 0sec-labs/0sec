@@ -23,6 +23,7 @@ import {
 } from "../untrusted-sanitizer.js";
 import { HuntMemoryStore } from "../memory/index.js";
 import { buildSubagentMessage } from "./tools.js";
+import { LiveHarnessHost } from "../plugins/live-harness.js";
 
 // Hunt memory defaults ON in the engine; keep the suite from writing to the
 // real ~/.0sec store. The dedicated hunt-memory describe below re-enables it and
@@ -59,6 +60,57 @@ function createMockRuntime(responses: NativeRuntimeResult[]): NativeRuntime {
 // ── Tests ──
 
 describe("runNativeAgentLoop", () => {
+  it("reports failure after a driver executes done then throws without replaying tools or losing usage", async () => {
+    const home = mkdtempSync(join(tmpdir(), "0sec-native-driver-failure-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    const failure = new Error("503 driver failure after completion tool");
+    const executeNative = vi.fn(async (): Promise<NativeRuntimeResult> => ({
+      content: [{ type: "text", text: "Model receipt" }], stopReason: "end_turn", durationMs: 1,
+      usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4 },
+    }));
+    const driver = vi.spyOn(LiveHarnessHost.prototype, "drive").mockImplementation(async (request, execution = {}) => {
+      await execution.invokeModel!(request);
+      const receipt = await execution.invokeTool!("done", { summary: "Tool completed" });
+      expect(receipt.success).toBe(true);
+      throw failure;
+    });
+    const reasons: unknown[] = [];
+    const unsubscribe = eventBus.subscribe({ emit(type, payload) {
+      if (type === "agent_turn_completed") reasons.push(payload.reason);
+    } });
+    const onTurn = vi.fn();
+    try {
+      const state = await runNativeAgentLoop({
+        config: {
+          role: "discovery", systemPrompt: "test", tools: [], maxTurns: 3,
+          target: "https://example.com", scanId: randomUUID(), workspaceRoot: home,
+          allowModelSelfExtension: true, executablePlugins: { backend: "docker", root: join(home, "plugins") },
+          executableEvolutionProfiles: {},
+        },
+        runtime: { type: "api", executeNative, isAvailable: async () => true },
+        db: null, onTurn,
+      });
+      expect({ done: state.done, errorExit: state.errorExit, reasons }).toEqual({
+        done: false, errorExit: { error: failure.message, turn: 1 }, reasons: ["error"],
+      });
+      expect(driver).toHaveBeenCalledTimes(1);
+      expect(executeNative).toHaveBeenCalledTimes(1);
+      expect(state.totalUsage).toEqual({ inputTokens: 12, outputTokens: 3, cachedInputTokens: 4 });
+      const receipts = state.messages.flatMap(message => message.content).filter(block => block.type === "tool_result");
+      expect(receipts.map(receipt => ({ failed: receipt.is_error, output: JSON.parse(receipt.content) }))).toEqual([
+        { failed: false, output: { done: true, summary: "Tool completed" } },
+      ]);
+      expect(onTurn).toHaveBeenCalledTimes(1);
+      expect(onTurn.mock.calls[0]?.[1]).toEqual([expect.objectContaining({ name: "done" })]);
+      expect(onTurn.mock.calls[0]?.[2]).toEqual([expect.objectContaining({ success: true })]);
+    } finally {
+      unsubscribe(); driver.mockRestore();
+      if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("calls done tool and returns summary", async () => {
     const runtime = createMockRuntime([
       {

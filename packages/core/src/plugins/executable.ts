@@ -333,6 +333,36 @@ export class ExecutablePluginManager {
     });
   }
 
+  /** Invoke an immutable retained version without changing discovery or active pointers. */
+  executeVersion(pluginId: string, versionId: string, toolName: string,
+    args: Record<string, unknown>, context: ExecutablePluginContext = {}): Promise<ToolResult> {
+    return this.operation(async () => {
+      try {
+        await this.ready;
+        this.shutdown.signal.throwIfAborted();
+        context.signal?.throwIfAborted();
+        const version = this.inspectVersion(pluginId, versionId);
+        if (!version || !version.manifest.tools.some(tool => tool.name === toolName)) {
+          throw new Error(`Retained executable tool not found: ${pluginId}@${versionId}/${toolName}`);
+        }
+        const state = this.invocation(context);
+        state.stack.push(toolName);
+        return await this.run(version, toolName, args, context, state);
+      } catch (error) { return failure(error); }
+    });
+  }
+
+  /** Verify retained source before admission or dispatch; never activate it implicitly. */
+  inspectVersion(pluginId: string, versionId: string): PluginVersionRecord | undefined {
+    this.shutdown.signal.throwIfAborted();
+    const version = this.readRegistry().plugins[pluginId]?.versions.find(item => item.versionId === versionId);
+    if (version) {
+      if (version.backend !== this.options.backend) throw new Error("Executable version backend mismatch");
+      verifyEvolutionSnapshot(version.snapshot);
+    }
+    return version;
+  }
+
   private async invoke(name: string, args: Record<string, unknown>, context: ExecutablePluginContext, state: Invocation,
     allowed?: readonly PluginCapability[]): Promise<ToolResult> {
     state.signal.throwIfAborted();

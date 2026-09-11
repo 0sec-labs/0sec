@@ -22,6 +22,7 @@ import type {
   OperatorQuestionOption,
   OperatorQuestionRequest,
 } from "./types.js";
+import type { NativeRuntime } from "../runtime/types.js";
 import type { LootKind } from "./loot.js";
 import { applyPlanAction, validatePlanArgs } from "./task-ledger.js";
 import type { OastHandle } from "../oast/types.js";
@@ -232,6 +233,7 @@ import { TOOL_DISPATCH } from "./tools/dispatch.js";
 import { z } from "zod";
 import type { SelfExtensionRegistry } from "../plugins/self-extension.js";
 import type { GuardContext } from "../plugins/guards.js";
+import { parseHarnessGenerationSpec } from "../plugins/live-harness.js";
 
 export { sanitizedEnv } from "./sanitized-env.js";
 
@@ -261,6 +263,22 @@ const selfExtendArgsSchema = z.discriminatedUnion("action", [
     action: z.literal("evolve"), plugin_id: z.string().min(1),
     profile: z.string().min(1),
   }).strip(),
+  z.object({
+    action: z.literal("harness_submit"),
+    generation: z.unknown().transform((value, context) => {
+      try { return parseHarnessGenerationSpec(value); }
+      catch (error) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : String(error) });
+        return z.NEVER;
+      }
+    }),
+  }).strip(),
+  z.object({ action: z.literal("harness_list") }).strip(),
+  z.object({
+    action: z.literal("harness_rollback"),
+    generation_id: z.string().min(1).max(128).optional(),
+  }).strip(),
+  z.object({ action: z.literal("harness_disable") }).strip(),
 ]);
 
 export type SelfExtendArgs = z.infer<typeof selfExtendArgsSchema>;
@@ -274,7 +292,7 @@ export function validateSelfExtendArgs(
   raw: unknown,
 ): { ok: true; args: SelfExtendArgs } | { ok: false; error: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ok: false, error: "self_extend: arguments must be an object with a `manifest`" };
+    return { ok: false, error: "self_extend: arguments must be an object with a lifecycle action" };
   }
   const parsed = selfExtendArgsSchema.safeParse({
     ...raw, action: (raw as Record<string, unknown>).action ?? "submit",
@@ -2641,14 +2659,13 @@ export function buildSubagentMessage(
 }
 
 /**
- * The two lazily-imported dependencies a subagent needs. Dynamic import breaks
- * the tools ↔ native-loop circular dependency; resolving them ONCE (here, via
- * `loadSubagentDeps`) and sharing them across a `spawn_agents` batch also keeps
+ * The one lazily-imported dependency a subagent needs. Dynamic import breaks
+ * the tools ↔ native-loop circular dependency; resolving it ONCE (here, via
+ * `loadSubagentDeps`) and sharing it across a `spawn_agents` batch also keeps
  * every child off the concurrent-first-import path.
  */
 type SubagentDeps = {
   runNativeAgentLoop: typeof import("./native-loop.js")["runNativeAgentLoop"];
-  LlmApiRuntime: typeof import("../runtime/llm-api.js")["LlmApiRuntime"];
 };
 
 // ── Operator question tool (`ask_operator`) ─────────────────────────────────
@@ -2872,6 +2889,13 @@ export class ToolExecutor {
   private _idFactory: () => string;
 
   /**
+   * Optional bound factory for creating independent child (subagent) runtimes.
+   * Received as the fourth constructor argument. Without this capability,
+   * child construction fails closed rather than rediscovering credentials.
+   */
+  private _childRuntimeFactory: ((timeoutMs: number) => Promise<NativeRuntime>) | undefined;
+
+  /**
    * Tool-health recorder (0sec#tool-reliability). Uses the shared tracker on
    * the ToolContext when the caller wired one (so the run summary sees the same
    * events), else a private per-executor tracker so recording is always safe.
@@ -2892,10 +2916,12 @@ export class ToolExecutor {
     ctx: ToolContext,
     db: osecDB | null = null,
     idFactory: () => string = () => randomUUID(),
+    childRuntimeFactory?: (timeoutMs: number) => Promise<NativeRuntime>,
   ) {
     this.ctx = ctx;
     this.db = db;
     this._idFactory = idFactory;
+    this._childRuntimeFactory = childRuntimeFactory;
     this._toolHealth =
       ctx.toolHealth ??
       new ToolHealthTracker({
@@ -3266,6 +3292,22 @@ export class ToolExecutor {
     }
     const parsed = validateSelfExtendArgs(args);
     if (!parsed.ok) return { success: false, output: null, error: parsed.error };
+    const request = parsed.args;
+    if (request.action === "harness_submit" || request.action === "harness_list" ||
+      request.action === "harness_rollback" || request.action === "harness_disable") {
+      const harness = this.ctx.liveHarness;
+      if (!harness) return { success: false, output: null, error: "Live harness services are unavailable in this session." };
+      try {
+        const snapshot = await harness.control(
+          request.action === "harness_submit" ? { action: "submit", generation: request.generation } :
+          request.action === "harness_rollback" ? { action: "rollback", generationId: request.generation_id } :
+          request.action === "harness_disable" ? { action: "disable" } : { action: "list" },
+        );
+        return { success: true, output: snapshot };
+      } catch (error) {
+        return { success: false, output: null, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
     const manager = this.ctx.executablePlugins;
     if (!manager) {
       return {
@@ -3274,7 +3316,6 @@ export class ToolExecutor {
       };
     }
     await manager.ready;
-    const request = parsed.args;
     const context = this._executableContext("self_extend");
     if (request.action === "list") {
       return { success: true, output: { plugins: manager.list(), evolutionProfiles: Object.keys(this.ctx.executableEvolutionProfiles ?? {}) } };
@@ -5827,8 +5868,7 @@ export class ToolExecutor {
   private async loadSubagentDeps(): Promise<SubagentDeps> {
     // Dynamic import to avoid the tools ↔ native-loop circular dependency.
     const { runNativeAgentLoop } = await import("./native-loop.js");
-    const { LlmApiRuntime } = await import("../runtime/llm-api.js");
-    return { runNativeAgentLoop, LlmApiRuntime };
+    return { runNativeAgentLoop };
   }
 
   private async runOneSubagent(
@@ -5840,12 +5880,13 @@ export class ToolExecutor {
   ): Promise<SubagentOutcome> {
     const startedAt = Date.now();
     try {
+      if (!this._childRuntimeFactory) throw new Error("Parent runtime does not support subagent inference");
       // Single-child path resolves deps here (inside the try, so an import
       // failure still emits `failed`); the concurrent batch pre-resolves once
       // and passes them in to stay off the per-child first-import path.
-      const { runNativeAgentLoop, LlmApiRuntime } = deps ?? (await this.loadSubagentDeps());
+      const { runNativeAgentLoop } = deps ?? (await this.loadSubagentDeps());
 
-      const rt = new LlmApiRuntime({ type: "api" as any, timeout: 60_000 });
+      const rt = await this._childRuntimeFactory(60_000);
       if (!(await rt.isAvailable())) {
         eventBus.emit("subagent_lifecycle", {
           ...base,
@@ -5945,11 +5986,12 @@ export class ToolExecutor {
           authConfig: this.ctx.authConfig,
           costLedger: this.ctx.costLedger,
           costCeilingUsd: this.ctx.costCeilingUsd,
-          costModel: this.ctx.costModel,
+          costModel: rt.resolvedModel?.() ?? this.ctx.costModel,
           scopePath: this.ctx.scopePath,
           autonomyMode: this.ctx.autonomyMode,
           allowModelSelfExtension: this.ctx.selfExtension?.isEnabled() ?? false,
           executablePlugins: this.ctx.executablePluginConfiguration,
+          workspaceRoot: this.ctx.workspaceRoot,
           executableEvolutionProfiles: this.ctx.executableEvolutionProfiles,
           enforcement: this.ctx.enforcement,
           rateLimiter: this.ctx.rateLimiter,
@@ -6057,8 +6099,9 @@ export class ToolExecutor {
     turnOffset = 0,
   ): Promise<SubagentRunReport> {
     const startedAt = Date.now();
-    const { runNativeAgentLoop, LlmApiRuntime } = await this.loadSubagentDeps();
-    const rt = new LlmApiRuntime({ type: "api" as any, timeout: 60_000 });
+    if (!this._childRuntimeFactory) throw new Error("Parent runtime does not support subagent inference");
+    const { runNativeAgentLoop } = await this.loadSubagentDeps();
+    const rt = await this._childRuntimeFactory(60_000);
     if (!(await rt.isAvailable())) throw new Error("No API key available for persistent agent");
 
     const subTools: ToolDefinition[] = ["bash", "save_finding", "done"]
@@ -6085,11 +6128,12 @@ export class ToolExecutor {
         authConfig: this.ctx.authConfig,
         costLedger: this.ctx.costLedger,
         costCeilingUsd: this.ctx.costCeilingUsd,
-        costModel: this.ctx.costModel,
+        costModel: rt.resolvedModel?.() ?? this.ctx.costModel,
         scopePath: this.ctx.scopePath,
         autonomyMode: this.ctx.autonomyMode,
         allowModelSelfExtension: this.ctx.selfExtension?.isEnabled() ?? false,
         executablePlugins: this.ctx.executablePluginConfiguration,
+        workspaceRoot: this.ctx.workspaceRoot,
         executableEvolutionProfiles: this.ctx.executableEvolutionProfiles,
         enforcement: this.ctx.enforcement,
         rateLimiter: this.ctx.rateLimiter,

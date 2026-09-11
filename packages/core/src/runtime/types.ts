@@ -43,6 +43,8 @@ export interface Runtime {
   readonly type: RuntimeType;
   execute(prompt: string, context?: RuntimeContext): Promise<RuntimeResult>;
   isAvailable(): Promise<boolean>;
+  /** Fork the resolved parent identity without ambient provider/credential discovery. */
+  forkForSubagent?(timeoutMs: number): Promise<NativeRuntime>;
 }
 
 export interface RuntimeContext {
@@ -203,4 +205,8 @@ export interface NativeRuntime {
     signal?: AbortSignal,
   ): Promise<NativeRuntimeResult>;
   isAvailable(): Promise<boolean>;
+  /** Fork the resolved parent identity with independent request state and a capped timeout. */
+  forkForSubagent?(timeoutMs: number): Promise<NativeRuntime>;
+  /** Current model identifier; not a per-request billing identity or rate receipt. */
+  resolvedModel?(): string;
 }

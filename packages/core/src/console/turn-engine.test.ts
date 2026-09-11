@@ -1999,6 +1999,152 @@ describe("Console scope gate — unresolvable shell destinations", () => {
   });
 });
 
+describe("Console operator target selection", () => {
+  const sessions: ReturnType<typeof createConsoleSession>[] = [];
+  afterEach(async () => {
+    for (const session of sessions.splice(0)) await session.cleanup();
+  });
+
+  function openSession(runtime: NativeRuntime, options: Partial<Parameters<typeof createConsoleSession>[0]> = {}) {
+    const session = createConsoleSession({
+      runtime, autonomyMode: "yolo", allowModelSelfExtension: false, refineObjective: false, ...options,
+    });
+    sessions.push(session);
+    return session;
+  }
+
+  function profileAndProbe(url: string): NativeRuntimeResult {
+    return {
+      content: [
+        { type: "tool_use", id: "profile", name: "update_target", input: { endpoints: JSON.stringify([url]) } },
+        // Exercise the real shared network authorization gate without contacting
+        // an external server: bash prints the URL instead of fetching it.
+        { type: "tool_use", id: "probe", name: "bash", input: { command: `printf '%s' ${JSON.stringify(url)}` } },
+      ],
+      stopReason: "tool_use", durationMs: 1,
+    };
+  }
+
+  it("adopts a bare operator target and changes anchors without discarding the conversation", async () => {
+    const runtime = new ScriptedRuntime([
+      endTurn("Welcome"), profileAndProbe("https://doruk.ch/"), endTurn("Ready"),
+      profileAndProbe("https://api.next.test/"), endTurn("Changed"),
+    ]);
+    const session = openSession(runtime);
+    await session.send("hello");
+    const messages = session.messages;
+    const first = await session.send("doruk.ch");
+    expect(first.toolCalls.map(({ result }) => result.success)).toEqual([true, true]);
+    expect(JSON.stringify(first.toolCalls[1].result.output)).toContain("https://doruk.ch/");
+    expect(session.target).toBe("https://doruk.ch/");
+    expect(session.scope?.match("https://doruk.ch/").allowed).toBe(true);
+    expect(runtime.calls[1].system).toContain("Current target: https://doruk.ch/");
+
+    const second = await session.send("https://next.test/");
+    expect(second.toolCalls[1].result.success).toBe(true);
+    expect(session.target).toBe("https://next.test/");
+    expect(session.scope?.match("https://api.next.test/").allowed).toBe(true);
+    expect(session.messages).toBe(messages);
+    expect(runtime.calls[3].messages[0].content).toEqual([{ type: "text", text: "hello" }]);
+    expect(runtime.calls[3].system).toContain("Current target: https://next.test/");
+  });
+
+  it("does not authorize unrelated endpoints discovered by update_target", async () => {
+    const runtime = new ScriptedRuntime([profileAndProbe("https://unrelated.test/"), endTurn("Discovered")]);
+    const session = openSession(runtime);
+    const outcome = await session.send("doruk.ch");
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+    expect(outcome.toolCalls[1].result.error).toContain("outside the yolo authorization anchor");
+    expect(session.target).toBe("https://doruk.ch/");
+    expect(session.scope?.match("https://unrelated.test/").allowed).toBe(false);
+  });
+
+  it("does not derive authority from quoted prose, imported history, or model text", async () => {
+    const runtime = new ScriptedRuntime([
+      profileAndProbe("https://outside.test/"), endTurn("https://outside.test/"),
+      profileAndProbe("https://outside.test/"), endTurn("No authorization"),
+    ]);
+    const session = openSession(runtime, {
+      initialMessages: [{ role: "user", content: [{ type: "text", text: "outside.test" }] }],
+    });
+    const prose = await session.send('Explain this link: "https://outside.test/"');
+    const quoted = await session.send('"https://outside.test/"');
+    expect(prose.toolCalls[1].result.success).toBe(false);
+    expect(quoted.toolCalls[1].result.success).toBe(false);
+    expect(session.target).toBe("");
+    expect(session.scope).toBeUndefined();
+  });
+
+  it("preserves explicit exclusions when the operator selects an excluded target", async () => {
+    const scope = ScopePolicy.fromJson({ in_scope: ["current.test"], out_of_scope: ["excluded.test"] });
+    const session = openSession(new ScriptedRuntime([profileAndProbe("https://excluded.test/"), endTurn("Denied")]), {
+      target: "https://current.test/", scope,
+    });
+    const outcome = await session.send("excluded.test");
+    expect(outcome.toolCalls[1].result.success).toBe(false);
+    expect(session.target).toBe("https://current.test/");
+    expect(session.scope).toBe(scope);
+    expect(session.scope?.match("https://excluded.test/").allowed).toBe(false);
+  });
+
+  it("preserves an explicit declined-host decision across later target-only input", async () => {
+    let prompts = 0;
+    const session = openSession(new ScriptedRuntime([
+      profileAndProbe("https://declined.test/"), endTurn("Denied"),
+      profileAndProbe("https://declined.test/"), endTurn("Still denied"),
+    ]), {
+      autonomyMode: "standard", approveTool: async () => true,
+      requestScope: async () => { prompts++; return null; },
+    });
+    await session.send("Inspect the requested endpoint");
+    session.setAutonomyMode("yolo");
+    const outcome = await session.send("declined.test");
+    expect(outcome.toolCalls[1].result.error).toContain("already declined");
+    expect(prompts).toBe(1);
+    expect(session.target).toBe("");
+    expect(session.scope).toBeUndefined();
+  });
+
+  it("does not change authorization for cancelled or concurrently rejected sends", async () => {
+    let enter!: () => void;
+    let finish!: (value: NativeRuntimeResult) => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const result = new Promise<NativeRuntimeResult>((resolve) => { finish = resolve; });
+    const session = openSession({
+      type: "api", isAvailable: async () => true,
+      executeNative: async () => { enter(); return result; },
+    }, { target: "https://current.test/" });
+    const controller = new AbortController();
+    controller.abort();
+    expect((await session.send("cancelled.test", undefined, { signal: controller.signal })).stopReason).toBe("cancelled");
+    expect(session.messages).toEqual([]);
+    expect(session.target).toBe("https://current.test/");
+    const pending = session.send("Continue current work");
+    await entered;
+    try {
+      await expect(session.send("concurrent.test")).rejects.toThrow("already has an active turn");
+      expect(session.target).toBe("https://current.test/");
+      expect(session.scope).toBeUndefined();
+    } finally {
+      finish(endTurn("Done"));
+      await pending;
+    }
+  });
+
+  it("retains the public-target private-network boundary after target selection", async () => {
+    const runtime = new ScriptedRuntime([{
+      content: [{ type: "tool_use", id: "private", name: "http_request", input: { url: "http://169.254.169.254/latest/meta-data/" } }],
+      stopReason: "tool_use", durationMs: 1,
+    }, endTurn("Blocked")]);
+    const session = openSession(runtime, {
+      scope: ScopePolicy.fromJson({ in_scope: ["169.254.169.254"] }),
+    });
+    const outcome = await session.send("doruk.ch");
+    expect(outcome.toolCalls[0].result.error).toContain("Local/internal http_request blocked");
+    expect(session.target).toBe("https://doruk.ch/");
+  });
+});
+
 describe("Console autonomy — yolo: no preconfigured scope, but the target still anchors it", () => {
   it("runs a network-capable local command in yolo with NO scope and NO prompt", async () => {
     // The previous model refused this ("configure a scope first"). The new yolo

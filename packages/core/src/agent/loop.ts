@@ -89,7 +89,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
     loadedSkills: new Set<string>(),
   };
 
-  const executor = new ToolExecutor(toolCtx, db);
+  const executor = new ToolExecutor(toolCtx, db, undefined, runtime.forkForSubagent?.bind(runtime));
   const tools = config.tools.length > 0 ? config.tools : getToolsForRole(config.role, { hasScope: !!config.scopePath, allowScanners: config.allowScanners });
   const hasJitSkillTools =
     features.jitSkills &&
