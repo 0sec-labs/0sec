@@ -21,6 +21,7 @@ import {
 } from "./sidecar.js";
 import { hasSameOrigin, isExternalHttpsUrl } from "./security.js";
 import { parseDevelopmentDebugPort } from "./development.js";
+import { DesktopPreferences } from "./preferences.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const developmentDebugPort = parseDevelopmentDebugPort(process.env.OSEC_DESKTOP_DEBUG_PORT);
@@ -41,15 +42,16 @@ let isQuitting = false;
 let windowReady: Promise<void> | null = null;
 let applicationStart: Promise<void> | null = null;
 let canQuit = false;
+let preferences: DesktopPreferences | undefined;
 
 function desktopAssetDirectory(): string {
   if (app.isPackaged) return join(process.resourcesPath, "dashboard");
-  const workspaceRoot = findWorkspaceRoot(process.env.OSEC_DESKTOP_ROOT ?? process.cwd());
+  const workspaceRoot = findWorkspaceRoot(process.env.OSEC_DESKTOP_ROOT ?? moduleDirectory);
   return join(workspaceRoot, "packages", "dashboard", "dist");
 }
 
 function sidecarWorkingDirectory(): string {
-  if (!app.isPackaged) return findWorkspaceRoot(process.env.OSEC_DESKTOP_ROOT ?? process.cwd());
+  if (!app.isPackaged) return findWorkspaceRoot(process.env.OSEC_DESKTOP_ROOT ?? moduleDirectory);
   const userData = app.getPath("userData");
   mkdirSync(userData, { recursive: true, mode: 0o700 });
   return userData;
@@ -84,7 +86,7 @@ function createWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    backgroundColor: isMac ? "#00000000" : nativeTheme.shouldUseDarkColors ? "#191919" : "#ffffff",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#161615" : "#f5f5f3",
     title: "0sec",
     webPreferences: {
       contextIsolation: true,
@@ -120,7 +122,7 @@ async function showMainWindow(): Promise<BrowserWindow | null> {
         windowReady = null;
       }
     });
-    windowReady = window.loadURL(`${dashboard.url}/chat`);
+    windowReady = window.loadURL(`${dashboard.url}/desktop.html`);
   }
   const window = mainWindow;
   await windowReady;
@@ -140,8 +142,8 @@ function showWindowError(error: unknown): void {
 function sendCommand(command: DesktopHostCommand): void {
   void showMainWindow().then(async (window) => {
     if (!window || !dashboard) return;
-    if (new URL(window.webContents.getURL()).pathname !== "/chat") {
-      await window.loadURL(`${dashboard.url}/chat`);
+    if (new URL(window.webContents.getURL()).pathname !== "/desktop.html") {
+      await window.loadURL(`${dashboard.url}/desktop.html`);
     }
     if (!window.isDestroyed()) window.webContents.send("osec:command", command);
   }).catch(showWindowError);
@@ -177,12 +179,12 @@ function installApplicationMenu(): void {
         ]
       : []),
 
-    // File: New Thread, Open Folder, Close/Quit
+    // File: New Session, Open Folder, Close/Quit
     {
       label: "File",
       submenu: [
         {
-          label: "New Thread",
+          label: "New Session",
           accelerator: "CmdOrCtrl+N",
           click: () => sendCommand("new-thread"),
         },
@@ -283,6 +285,14 @@ function isTrustedMainRenderer(event: Electron.IpcMainInvokeEvent): boolean {
 }
 
 function installIpcPolicy(): void {
+  ipcMain.handle("osec:preferences:get", (event) => {
+    if (!isTrustedMainRenderer(event) || !preferences) throw new Error("Desktop denied an untrusted preference request.");
+    return preferences.snapshot();
+  });
+  ipcMain.handle("osec:preferences:set", (event, key: unknown, value: unknown) => {
+    if (!isTrustedMainRenderer(event) || !preferences) throw new Error("Desktop denied an untrusted preference request.");
+    return preferences.set(key, value);
+  });
   ipcMain.handle("osec:open-external", async (event, candidate: unknown) => {
     if (
       !isTrustedMainRenderer(event) ||
@@ -311,6 +321,7 @@ async function startApplication(): Promise<void> {
   if (!app.isPackaged && process.platform === "darwin") {
     app.dock?.setIcon(join(moduleDirectory, "../../build/icon.png"));
   }
+  preferences = new DesktopPreferences(join(app.getPath("userData"), "workspace.json"));
   installApplicationMenu();
   installPermissionPolicy();
   installIpcPolicy();
@@ -323,7 +334,7 @@ async function startApplication(): Promise<void> {
     resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
     projectRoot: app.isPackaged
       ? undefined
-      : findWorkspaceRoot(process.env.OSEC_DESKTOP_ROOT ?? process.cwd()),
+      : findWorkspaceRoot(process.env.OSEC_DESKTOP_ROOT ?? moduleDirectory),
   });
   dashboard = await startDashboardSidecar(invocation);
 
@@ -336,6 +347,7 @@ async function stopApplication(): Promise<void> {
   const runningDashboard = dashboard;
   dashboard = null;
   await runningDashboard?.stop();
+  await preferences?.flush();
 }
 
 if (!app.requestSingleInstanceLock()) {

@@ -6,6 +6,6 @@
     "lib": ["ES2024"],
     "types": ["node"]
   },
-  "include": ["src"],
+  "include": ["src/main"],
   "exclude": ["src/**/*.test.ts", "src/preload"]
 }

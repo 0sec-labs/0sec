@@ -14,6 +14,12 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Rebuilt the unreleased desktop as a dedicated project-and-session workspace,
+  separate from the operations dashboard. Adds session tabs, a command palette,
+  progressive conversation and approval views, system/light/dark appearance,
+  and native UI-preference persistence across changing sidecar ports. Desktop
+  remains a development build, not a published product release.
+
 - YOLO console sessions can acquire public HTTPS Git repositories for local
   review without authorizing their hosting services as testing targets.
   Standalone clones run without a shell through a public-address-pinned tunnel,

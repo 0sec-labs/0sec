@@ -11,10 +11,10 @@ released app. Packaging support does not imply downloadable or signed releases.
 
 The 0sec desktop is an [Electron](https://www.electronjs.org/) application
 (v42, Chromium-based) that provides a native windowed control plane for the
-0sec harness. It runs a conversation-first React workspace inside a sandboxed
-renderer and manages a **sidecar** — a
-compiled 0sec CLI process that handles all engine communication behind a
-security boundary.
+0sec harness. Its dedicated React renderer lives in
+`packages/desktop/src/renderer/`, with its own `desktop.html` build entry.
+The application manages a **sidecar** — a compiled 0sec CLI process that
+handles all engine communication behind a security boundary.
 
 The renderer is still web technology, not SwiftUI. On macOS it uses real window
 controls, native menus, a directory picker, and sidebar material, with system
@@ -113,13 +113,16 @@ In development, the sidecar runs through the local `bun` CLI entrypoint
 binary from `resources/sidecars/<platform-arch>`.
 
 On macOS, closing the last window leaves the application and sidecar running.
-Dock activation or **New Thread** recreates the window without starting another
+Dock activation or **New Session** recreates the window without starting another
 sidecar. Explicit **Quit** stops it, including when startup is still in progress.
 On Linux and Windows, closing the last window quits the application.
 
-Thread history is held by the running sidecar; it is not a durable conversation
-archive. Drafts and thread labels are retained in the renderer's local storage,
-but quitting ends the sidecar's session history.
+The desktop's live sessions belong to the running sidecar; quitting ends them.
+Tabs, project shortcuts, drafts, titles, and appearance are UI preferences:
+Electron persists them in its user-data directory, independently of the
+sidecar's changing loopback port. Browser previews use local storage instead.
+On a fresh sidecar, stale session tabs are removed; they are not a promise
+that the desktop can reopen an ended conversation.
 
 ### Navigation policy
 
@@ -148,6 +151,8 @@ interface DesktopHostBridge {
   readonly platform: string;
   openExternal(url: string): Promise<void>;
   chooseDirectory(): Promise<string | null>;
+  getPreferences(): Promise<Record<string, unknown>>;
+  setPreference(key: string, value: unknown): Promise<void>;
   onCommand(listener: (command: DesktopHostCommand) => void): () => void;
 }
 
@@ -162,6 +167,8 @@ The main process accepts renderer requests only from the current window's main
 frame at the trusted dashboard origin. External URLs must be credential-free
 HTTPS URLs. The directory picker accepts directories only and returns `null`
 on cancellation. Picking a directory sets context; it does not grant access.
+Preference writes accept only namespaced `0sec:` UI values. They do not expose
+arbitrary filesystem paths, provider credentials, or engine configuration.
 
 Menu subscriptions return an unsubscribe function. Commands that arrive while
 the conversation route is loading are retained until the renderer subscribes.
@@ -195,30 +202,38 @@ ESM. Shared contracts are type-only imports and add no renderer runtime access.
 
 Context isolation and sandboxing remain enabled. Native accelerators and browser
 fallback shortcuts are mutually exclusive, so a keypress does not create two
-threads or toggle the sidebar twice.
+sessions or toggle the sidebar twice.
 
 | Desktop shortcut | Action |
 |------------------|--------|
-| Cmd/Ctrl+N | New thread |
-| Cmd/Ctrl+O | Native folder picker, then a scoped-thread form |
+| Cmd/Ctrl+N | New session form |
+| Cmd/Ctrl+O | Native folder picker, then a prefilled session form |
 | Cmd/Ctrl+B | Toggle sidebar |
 | Cmd/Ctrl+, | Settings and provider connection |
+| Cmd/Ctrl+K | Search actions and all live sessions |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous workspace tab |
+| Cmd/Ctrl+Shift+H | Home |
 | Enter / Shift+Enter | Send / insert newline |
 | Escape | Dismiss a dialog when no operation is pending |
 
 ## User workflow
 
 1. Launch the desktop application from your OS (or `pnpm --filter @0sec/desktop start` in development).
-2. The Electron window opens to the local thread workspace. Use the sidebar to
-   create, filter, and switch threads. Unsent drafts stay with their thread.
-3. Use **Choose target** for an explicit URL or path, or **Open Folder** in the
-   native File menu. Select a role and autonomy mode before creating the thread.
-   Scope requests and tool approvals still come from the local engine.
-4. Responses stream into the conversation, with Markdown, copyable code blocks,
-   and expandable tool activity. **Stop response** cancels the active turn.
-   Scrolling back preserves your position; **Latest response** resumes following.
-5. The inspector exposes context, approvals, activity, and evidence.
-   **Settings** exposes provider sign-in; **Operations** opens findings and runs.
+2. The window opens a project-and-session workspace. Home lists recent sessions;
+   the sidebar filters by project or session title. Closing a tab does not
+   delete its live session; reopen it from Home or the command palette.
+3. Use **New session** for a URL or path, or **Open Folder** in the native File
+   menu. Select the role and autonomy mode before creating the session.
+   Selecting a target is not an authorization grant. YOLO requires an explicit
+   acknowledgement; an unscoped chat uses standard autonomy.
+4. Responses stream progressively into the conversation, with Markdown,
+   copyable code blocks, collapsible reasoning, and expandable tool activity.
+   **Stop** cancels the active turn. Scrolling back preserves your position;
+   **Latest** resumes following. Drafts and renamed titles stay with their session.
+5. The inspector exposes context, activity, and evidence; approval cards remain
+   in the conversation. **Settings** provides system/light/dark appearance and
+   OpenAI Codex device sign-in. Codex authentication is not 0cloud access.
+   **Operations** opens the separate findings-and-runs dashboard.
 6. The renderer has no general Node.js or Electron API. Engine work goes through
    the loopback sidecar. External documentation links open in the system browser.
 

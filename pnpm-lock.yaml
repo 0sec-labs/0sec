@@ -343,15 +343,45 @@ importers:
       '@0sec/shared':
         specifier: workspace:*
         version: link:../shared
+      '@fontsource/ibm-plex-mono':
+        specifier: ^5.2.7
+        version: 5.2.7
+      '@radix-ui/react-dialog':
+        specifier: ^1.1.15
+        version: 1.1.15(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@types/node':
         specifier: ^25.5.0
         version: 25.9.1
+      '@types/react':
+        specifier: ^19.2.2
+        version: 19.2.15
+      '@types/react-dom':
+        specifier: ^19.2.2
+        version: 19.2.3(@types/react@19.2.15)
+      cmdk:
+        specifier: ^1.1.1
+        version: 1.1.1(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       electron:
         specifier: 42.11.2
         version: 42.11.2
       electron-builder:
         specifier: 26.15.2
         version: 26.15.2(electron-builder-squirrel-windows@26.15.2)
+      lucide-react:
+        specifier: ^1.7.0
+        version: 1.16.0(react@19.2.6)
+      react:
+        specifier: ^19.2.0
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.6(react@19.2.6)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.2.15)(react@19.2.6)
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

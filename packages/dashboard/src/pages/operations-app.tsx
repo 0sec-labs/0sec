@@ -29,7 +29,7 @@ function OperationsRoutes({
   return (
     <Suspense fallback={<LoadingState label="Loading workspace" />}>
       <Routes>
-        <Route path="/" element={<Navigate to="/chat" replace />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<OverviewPage data={dashboard} />} />
         <Route path="/threads" element={<FindingsPage dashboard={dashboard} />} />
         <Route path="/threads/:fingerprint" element={<FindingsPage dashboard={dashboard} />} />

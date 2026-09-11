@@ -77,7 +77,7 @@ export function CommandPalette({
         meta: "Scoped operator conversation and approvals",
         icon: MessageSquare,
         keywords: ["chat operator workspace session scope approvals"],
-        run: () => navigate("/chat"),
+        run: () => window.location.assign("/desktop.html"),
       },
       {
         id: "page-findings",

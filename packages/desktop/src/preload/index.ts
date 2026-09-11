@@ -8,7 +8,7 @@ let pendingCommand: DesktopHostCommand | undefined;
 
 function dispatchCommand(command: DesktopHostCommand): void {
   if (commandListeners.size === 0) {
-    // The lazy conversation route may mount after did-finish-load.
+    // Native commands can arrive before the renderer finishes bootstrapping.
     pendingCommand = command;
     return;
   }
@@ -30,6 +30,12 @@ contextBridge.exposeInMainWorld(
     },
     chooseDirectory(): Promise<string | null> {
       return ipcRenderer.invoke("osec:choose-directory") as Promise<string | null>;
+    },
+    getPreferences(): Promise<Record<string, unknown>> {
+      return ipcRenderer.invoke("osec:preferences:get") as Promise<Record<string, unknown>>;
+    },
+    setPreference(key: string, value: unknown): Promise<void> {
+      return ipcRenderer.invoke("osec:preferences:set", key, value) as Promise<void>;
     },
     onCommand(listener: (command: DesktopHostCommand) => void): () => void {
       commandListeners.add(listener);

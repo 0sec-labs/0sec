@@ -16,5 +16,11 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rolldownOptions: {
+      input: {
+        operations: resolve(rootDir, "index.html"),
+        desktop: resolve(rootDir, "desktop.html"),
+      },
+    },
   },
 });
