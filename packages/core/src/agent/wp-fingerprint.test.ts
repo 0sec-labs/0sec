@@ -268,6 +268,42 @@ describe("runWpFingerprint (integration, mocked fetch)", () => {
     expect(hintBlob).toContain("CVE-2023-3452");
   });
 
+  it("retains advisory findings with target-only probe transport and no target auth on lookups", async () => {
+    const probes = buildMockFetch({
+      [`${BASE}/wp-login.php`]: {
+        ok: true, status: 200,
+        body: '<form id="loginform"><input id="user_login"/></form>',
+      },
+      [`${BASE}/`]: {
+        ok: true, status: 200,
+        body: `<script src="${BASE}/wp-content/plugins/fixture-plugin/app.js"></script>`,
+      },
+    });
+    const advisoryHeaders: Array<Record<string, string> | undefined> = [];
+    const options = {
+      target: BASE,
+      maxPluginProbes: 1,
+      maxVulnerablePluginProbes: 0,
+      headers: { "X-Target-Secret": "fixture-only" },
+      fetchImpl: async (url: string, init?: Parameters<FetchLike>[1]) => {
+        if (new URL(url).origin !== BASE) throw new Error("target transport cannot access advisory services");
+        return probes(url, init);
+      },
+      advisoryFetchImpl: async (url: string, init?: Parameters<FetchLike>[1]) => {
+        advisoryHeaders.push(init?.headers);
+        return {
+          ok: true, status: 200, text: async () => "",
+          json: async () => url.startsWith("https://api.osv.dev/")
+            ? { vulns: [{ id: "GHSA-fixture-advisory", summary: "Fixture external advisory" }] }
+            : {},
+        };
+      },
+    };
+    const result = await runWpFingerprint(options);
+    expect(result.findings.flatMap(finding => finding.cves).map(cve => cve.id)).toContain("GHSA-fixture-advisory");
+    expect(advisoryHeaders.some(headers => headers?.["X-Target-Secret"] !== undefined)).toBe(false);
+  });
+
   it("proactively probes high-value vulnerable plugin slugs and emits local catalog CVEs offline", async () => {
     const backupReadme = [
       "=== Backup Migration ===",

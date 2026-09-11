@@ -26,6 +26,13 @@ on the published npm package and the GitHub Release tag.
   glyph appearance depends on the terminal font. Cancellation keeps partial
   output without adding a persistent interruption notice.
 - Removed the persistent problem-reporting invitation from the chat footer.
+- Target HTTP tools check scope and resolved addresses before connecting and
+  following redirects. Requests pin destination addresses, retain TLS hostname
+  verification, and bound decoded bodies and elapsed time. WordPress advisory
+  requests use a separate service-bound transport.
+- The standalone CLI runtime includes the existing PDF report dependency.
+- Console guidance asks for useful parallel delegation on independent work and
+  evidence-backed finding summaries while retaining scope and budget limits.
 - Contextual model, session, finding, usage, worker, and marketplace views use
   compact controls. Usage reports scroll without losing unknown-cost markers;
   worker steering accepts pasted text, and marketplace actions retain confirmation.

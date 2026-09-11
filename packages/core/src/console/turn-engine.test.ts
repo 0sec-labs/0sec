@@ -20,6 +20,7 @@ import type {
 import { ScopePolicy } from "../scope/scope.js";
 import type { ToolDefinition } from "../agent/types.js";
 import * as repositoryAcquisition from "../agent/repository-acquisition.js";
+import * as http from "../http.js";
 
 import { setWorkspaceHarnessTrust } from "../plugins/harness-trust.js";
 
@@ -701,7 +702,7 @@ describe("Console autonomy — yolo still enforces scope", () => {
       ] },
       endTurn("Crawled"), crawl, endTurn("Continued"),
     ]);
-    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("<html>fixture</html>", { status: 200 }));
+    const fetch = vi.spyOn(http, "fetchScoped").mockImplementation(async () => new Response("<html>fixture</html>", { status: 200 }));
     const requests: ConsoleScopeRequest[] = [];
     const session = createConsoleSession({
       runtime, target, autonomyMode: "yolo", allowModelSelfExtension: false, refineObjective: false,

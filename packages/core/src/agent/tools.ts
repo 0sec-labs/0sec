@@ -3,7 +3,6 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { isAbsolute, resolve, join } from "node:path";
-import { BlockList, isIP } from "node:net";
 import type {
   Finding,
   AttackResult,
@@ -46,7 +45,7 @@ import { detectScannerBinary } from "../scope/scanner-binaries.js";
 import { describeScopeGuards, scopeRequiredRefusal } from "../scope/scope-guard.js";
 import { isWafEvasionLadderEnabled } from "../scope/engagement-profile.js";
 import { applyAttribution, formatUserAgent } from "../scope/attribution.js";
-import { sendPrompt, extractResponseText } from "../http.js";
+import { sendPrompt, extractResponseText, fetchScoped, isPrivateAddress } from "../http.js";
 import { buildAuthHeaders } from "./prompts.js";
 import {
   authSecretValues,
@@ -1345,22 +1344,6 @@ function validateScopedCommand(tokens: string[], scopePath?: string): string[] {
   });
 }
 
-const privateNetworks = new BlockList();
-for (const [address, prefix] of [
-  ["10.0.0.0", 8], ["127.0.0.0", 8], ["169.254.0.0", 16],
-  ["172.16.0.0", 12], ["192.168.0.0", 16],
-] as const) privateNetworks.addSubnet(address, prefix, "ipv4");
-privateNetworks.addAddress("::", "ipv6");
-privateNetworks.addAddress("::1", "ipv6");
-privateNetworks.addSubnet("fc00::", 7, "ipv6");
-privateNetworks.addSubnet("fe80::", 10, "ipv6");
-
-function isPrivateAddress(hostname: string): boolean {
-  const address = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  const family = isIP(address);
-  // BlockList also matches IPv4-mapped IPv6 against the IPv4 subnets.
-  return family !== 0 && privateNetworks.check(address, family === 4 ? "ipv4" : "ipv6");
-}
 
 function isLocalHostname(hostname: string): boolean {
   const normalized = normalizeScopeHostname(hostname);
@@ -3422,6 +3405,31 @@ export class ToolExecutor {
     return manager.execute(call.name, call.arguments ?? {}, this._executableContext(call.name));
   }
 
+  private fetchTarget(
+    url: string,
+    init: RequestInit,
+    beforeRequest?: (url: string) => void | Promise<void>,
+  ): Promise<Response> {
+    const execution = this._executionContext.getStore();
+    const signal = execution?.signal && init.signal
+      ? AbortSignal.any([execution.signal, init.signal])
+      : execution?.signal ?? init.signal;
+    return fetchScoped(url, { ...init, signal }, {
+      baseUrl: this.ctx.target,
+      scope: this.ctx.scope,
+      beforeRequest,
+      validateUrl: candidate => {
+        execution?.assertAuthority?.();
+        validateTargetUrl(this.ctx.target, candidate, this.ctx.scope);
+        const path = this.ctx.enforcement?.pathPolicy.match(candidate);
+        if (path && !path.allowed) {
+          this.ctx.enforcement?.noteOutOfScopeBlocked();
+          throw new Error(`Scope violation blocked: ${path.reason}`);
+        }
+      },
+    });
+  }
+
   private async httpRequest(args: Record<string, unknown>): Promise<ToolResult> {
     const url = validateTargetUrl(this.ctx.target, args.url as string, this.ctx.scope, this.ctx.enforcement);
     const method = (args.method as string) ?? "POST";
@@ -3473,7 +3481,7 @@ export class ToolExecutor {
         // variant before egress. Fetching the in-scope authorized target is
         // intended 0sec behaviour.
         // foxguard:ignore
-        const res = await fetch(safeUrl, fetchInit);
+        const res = await this.fetchTarget(safeUrl, fetchInit);
         if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(safeUrl, res);
         // Persist session state (0sec#564): capture Set-Cookie for the active
         // identity. No-op when no SessionEngine is wired. Runs for the baseline
@@ -3606,7 +3614,12 @@ export class ToolExecutor {
     const prompt = args.prompt as string;
 
     try {
-      const res = await sendPrompt(this.ctx.target, prompt, { timeout: 30_000 });
+      const res = await sendPrompt(this.ctx.target, prompt, {
+        timeout: 30_000,
+        baseUrl: this.ctx.target,
+        scope: this.ctx.scope,
+        signal: this._executionContext.getStore()?.signal,
+      });
       const text = extractResponseText(res.body);
 
       // Persist as run artifact
@@ -3898,7 +3911,7 @@ export class ToolExecutor {
           // cross-origin / out-of-scope / private-IP hops are refused. Crawling
           // the in-scope target is intended 0sec behaviour.
           // foxguard:ignore
-          res = await fetch(currentUrl, buildCrawlInit(currentUrl));
+          res = await this.fetchTarget(currentUrl, buildCrawlInit(currentUrl));
           if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(currentUrl, res);
           // Capture cookies on every hop so authenticated crawls persist
           // session state across pages (0sec#564).
@@ -4089,7 +4102,7 @@ export class ToolExecutor {
       // (same-origin + scope + private-IP/localhost block). Submitting forms to
       // the in-scope target is intended 0sec behaviour.
       // foxguard:ignore
-      const res = await fetch(fetchUrl, submitInit);
+      const res = await this.fetchTarget(fetchUrl, submitInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(fetchUrl, res);
       // Capture the session cookie a login form sets, so the very next
       // request is authenticated without manual `curl -c/-b` jars (0sec#564).
@@ -4180,7 +4193,7 @@ export class ToolExecutor {
       // block + path allowlist). The access-control probe replays requests to
       // the in-scope target as different identities — intended behaviour.
       // foxguard:ignore
-      const res = await fetch(url, fetchInit);
+      const res = await this.fetchTarget(url, fetchInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
       principal.capture(res);
       const text = await res.text();
@@ -4467,7 +4480,7 @@ export class ToolExecutor {
       if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
       // foxguard:ignore — `url` validated by validateTargetUrl above
       // (same-origin + scope + private-IP/localhost block + path allowlist).
-      const res = await fetch(url, fetchInit);
+      const res = await this.fetchTarget(url, fetchInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
       const text = await res.text();
       return { status: res.status, text };
@@ -4641,7 +4654,7 @@ export class ToolExecutor {
         )!;
         if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
         // foxguard:ignore — `url` validated by validateTargetUrl above.
-        const res = await fetch(url, fetchInit);
+        const res = await this.fetchTarget(url, fetchInit);
         if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
         const bodyText = await res.text();
         return {
@@ -4730,7 +4743,7 @@ export class ToolExecutor {
       )!;
       if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
       // foxguard:ignore — `url` validated by validateTargetUrl above.
-      const res = await fetch(url, fetchInit);
+      const res = await this.fetchTarget(url, fetchInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
       return res;
     }) as typeof fetch;
@@ -4800,7 +4813,7 @@ export class ToolExecutor {
       )!;
       if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
       // foxguard:ignore — `url` validated by validateTargetUrl above.
-      const res = await fetch(url, fetchInit);
+      const res = await this.fetchTarget(url, fetchInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
       return res;
     }) as typeof fetch;
@@ -4861,7 +4874,7 @@ export class ToolExecutor {
         )!;
         if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
         // foxguard:ignore — `url` validated by validateTargetUrl above.
-        const res = await fetch(url, fetchInit);
+        const res = await this.fetchTarget(url, fetchInit);
         if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
         const bodyText = await res.text();
         return { ok: res.ok, status: res.status, headers: res.headers, text: async () => bodyText };
@@ -4979,7 +4992,7 @@ export class ToolExecutor {
         )!;
         if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
         // foxguard:ignore — `url` validated by validateTargetUrl above.
-        const res = await fetch(url, fetchInit);
+        const res = await this.fetchTarget(url, fetchInit);
         if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
         const body = await res.text();
         return { status: res.status, body };
@@ -5047,7 +5060,7 @@ export class ToolExecutor {
           )!;
           if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
           // foxguard:ignore — `url` validated by validateTargetUrl above.
-          const res = await fetch(url, fetchInit);
+          const res = await this.fetchTarget(url, fetchInit);
           if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
           const bodyText = await res.text();
           return { ok: res.ok, status: res.status, headers: res.headers, text: async () => bodyText };
@@ -8038,26 +8051,13 @@ export class ToolExecutor {
         attribution,
         scope,
       )!;
-      // #214: each plugin/version probe goes through the per-host bucket.
-      // wp_fingerprint can fan out to dozens of probes against a single
-      // host — exactly the workload the limiter exists to pace.
-      if (rateLimiter) await rateLimiter.acquire(url);
-      const res = await fetch(url, fetchInit);
-      // Post-redirect scope check (0sec#218 review). `fetch` follows
-      // redirects by default, so an in-scope WordPress endpoint that
-      // 302s to a foreign host would otherwise complete against the
-      // foreign target and the body would be returned to the caller.
-      // Re-validate the final `res.url` against scope and refuse if it
-      // drifted off-host.
-      if (scope && res.url && res.url !== url) {
-        const verdict = scope.match(res.url);
-        if (!verdict.allowed) {
-          throw new Error(
-            `wp_fingerprint refused: redirect to out-of-scope URL '${res.url}' (${verdict.reason})`,
-          );
-        }
-      }
-      if (rateLimiter) rateLimiter.noteResponse(url, res);
+      // Every hop is authorized and DNS-pinned before acquiring its socket.
+      const res = await this.fetchTarget(
+        url,
+        { ...fetchInit, redirect: "follow" },
+        rateLimiter ? hop => rateLimiter.acquire(hop) : undefined,
+      );
+      if (rateLimiter) rateLimiter.noteResponse(res.url, res);
       return {
         ok: res.ok,
         status: res.status,
@@ -8065,11 +8065,32 @@ export class ToolExecutor {
         json: () => res.json(),
       };
     };
+    const advisoryFetch: FetchLike = async (url, init) => {
+      const origin = new URL(url).origin;
+      if (origin !== "https://api.osv.dev" && origin !== "https://wpscan.com" &&
+          origin !== "https://www.wpvulnerability.net") {
+        throw new Error("Unknown WordPress advisory service");
+      }
+      const execution = this._executionContext.getStore();
+      // Advisory credentials belong only to their fixed service. Target auth,
+      // attribution and target allow rules never flow into this transport.
+      const response = await fetchScoped(url, {
+        ...init, signal: execution?.signal, redirect: "follow",
+      }, {
+        baseUrl: origin,
+        timeoutMs: 10_000,
+        validateUrl: () => execution?.assertAuthority?.(),
+        beforeRequest: rateLimiter ? hop => rateLimiter.acquire(hop) : undefined,
+      });
+      rateLimiter?.noteResponse(response.url, response);
+      return response;
+    };
 
     try {
       const result = await runWpFingerprint({
         target: base,
         fetchImpl: wrappedFetch,
+        advisoryFetchImpl: advisoryFetch,
         maxPluginProbes: (args.max_plugin_probes as number) ?? 40,
         maxVulnerablePluginProbes: (args.max_vulnerable_plugin_probes as number) ?? 40,
         skipOsv: (args.skip_osv as boolean) ?? false,

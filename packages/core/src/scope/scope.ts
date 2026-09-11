@@ -181,25 +181,15 @@ export function matchUrl(url: string, policy: ScopePolicy): ScopeMatch {
 }
 
 /**
- * Normalize a hostname for scope identity matching: lowercase and strip
- * terminal DNS root dot(s). Retains URL IPv6 brackets untouched.
- *
- * A URL such as `https://example.com./path` produces hostname
- * `"example.com."` from the URL parser — the trailing dot is a valid
- * DNS convention ("fully qualified domain name") that identifies the
- * same host as `"example.com"`. Without normalization, rules written
- * without the trailing dot silently fail to match such URLs.
- *
- * Reuses the same idiom as the existing hostname normalization in
- * `active-subdomains.ts:normalizeApex`:
- *
- *   hostname.toLowerCase().replace(/\.+$/, "")
- *
- * Only the terminal dot(s) are removed — interior dots that form DNS
- * labels are untouched, and IPv6 brackets are never matched by `\.`.
+ * Canonical host identity for exact scope rules and URL hosts. DNS root dots
+ * are insignificant; bare, expanded and bracketed IPv6 denote the same address.
  */
 export function normalizeScopeHostname(hostname: string): string {
-  return hostname.toLowerCase().replace(/\.+$/, "");
+  const normalized = hostname.toLowerCase().replace(/\.+$/, "");
+  const address = normalized.startsWith("[") && normalized.endsWith("]")
+    ? normalized.slice(1, -1)
+    : normalized;
+  return isIP(address) === 6 ? new URL(`http://[${address}]/`).hostname : normalized;
 }
 
 // ── internals ──

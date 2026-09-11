@@ -25,11 +25,19 @@ import { HuntMemoryStore } from "../memory/index.js";
 import { buildSubagentMessage, getToolsForRole } from "./tools.js";
 import { setWorkspaceHarnessTrust } from "../plugins/harness-trust.js";
 
+const scopedTransport = vi.hoisted(() => vi.fn<typeof import("../http.js").fetchScoped>());
+vi.mock("../http.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../http.js")>(),
+  fetchScoped: scopedTransport,
+}));
+
 // Hunt memory defaults ON in the engine; keep the suite from writing to the
 // real ~/.0sec store. The dedicated hunt-memory describe below re-enables it and
 // injects a throwaway store. This file-level hook runs outer-most, before any
 // describe-scoped beforeEach, so a nested `delete` of the same var wins.
 beforeEach(() => {
+  scopedTransport.mockReset();
+  scopedTransport.mockRejectedValue(new Error("Unexpected scoped HTTP fixture request"));
   process.env["0SEC_DISABLE_HUNT_MEMORY"] = "1";
 });
 afterEach(() => {
@@ -2149,15 +2157,10 @@ describe("runNativeAgentLoop — action-level tool_calls log", () => {
 
     // Slow the transport enough that two sequential calls cannot share a
     // millisecond — the timeline is the product here.
-    vi.stubGlobal("fetch", vi.fn(async () => {
+    scopedTransport.mockImplementation(async () => {
       await new Promise((r) => setTimeout(r, 6));
-      return {
-        ok: true,
-        status: 200,
-        text: async () => "ok",
-        headers: new Headers({ "content-type": "text/plain" }),
-      } as unknown as Response;
-    }));
+      return new Response("ok", { headers: { "content-type": "text/plain" } });
+    });
 
     const { events, db } = collectingDb();
     const before = Date.now();
@@ -2228,12 +2231,7 @@ describe("runNativeAgentLoop — action-level tool_calls log", () => {
       async isAvailable() { return true; },
     };
 
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => "ok",
-      headers: new Headers({ "content-type": "text/plain" }),
-    } as unknown as Response)));
+    scopedTransport.mockResolvedValue(new Response("ok", { headers: { "content-type": "text/plain" } }));
 
     const { events, db } = collectingDb();
     await runNativeAgentLoop({
@@ -2298,12 +2296,7 @@ describe("runNativeAgentLoop — action-level tool_calls log", () => {
       async isAvailable() { return true; },
     };
 
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => "ok",
-      headers: new Headers({ "content-type": "text/plain" }),
-    } as unknown as Response)));
+    scopedTransport.mockResolvedValue(new Response("ok", { headers: { "content-type": "text/plain" } }));
 
     const { events, db } = collectingDb();
     await runNativeAgentLoop({

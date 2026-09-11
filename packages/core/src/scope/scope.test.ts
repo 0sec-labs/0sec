@@ -32,6 +32,22 @@ describe("ScopePolicy — exact host", () => {
   });
 });
 
+describe("ScopePolicy — IPv6 identity", () => {
+  it("matches one address across bare, expanded and bracketed spellings without widening", () => {
+    const policy = ScopePolicy.fromJson({ in_scope: ["2606:4700:4700:0:0:0:0:1111"] });
+    expect(policy.match("https://[2606:4700:4700::1111]/").allowed).toBe(true);
+    expect(policy.match("https://[2606:4700:4700::1112]/").allowed).toBe(false);
+  });
+
+  it("keeps an equivalent exclusion authoritative over an exact allow", () => {
+    const policy = ScopePolicy.fromJson({
+      in_scope: ["[2606:4700:4700::1111]"],
+      out_of_scope: ["[2606:4700:4700:0:0:0:0:1111]"],
+    });
+    expect(policy.match("https://[2606:4700:4700::1111]/").allowed).toBe(false);
+  });
+});
+
 describe("ScopePolicy — wildcard subdomain", () => {
   const policy = ScopePolicy.fromJson({
     in_scope: ["*.example.com"],

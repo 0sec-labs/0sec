@@ -9,9 +9,15 @@ import {
 import { SessionEngine } from "./session.js";
 import type { ToolContext } from "./types.js";
 import type { NamedIdentity } from "@0sec/shared";
+import { fetchScoped } from "../http.js";
+
+vi.mock("../http.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  fetchScoped: vi.fn(),
+}));
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  vi.mocked(fetchScoped).mockReset();
 });
 
 // ── unit: similarity + diff verdicts (0sec#564) ──
@@ -136,12 +142,10 @@ describe("accessControlProbe integration (0sec#564)", () => {
   it("confirms a BOLA finding when identity B retrieves identity A's object", async () => {
     const aliceObject = '{"id":1,"owner":"alice","email":"alice@example.com"}';
     // Vulnerable server: returns alice's object to ANYONE with a valid token.
-    const fetchStub = vi.fn(async () => ({
+    vi.mocked(fetchScoped).mockImplementation(async () => new Response(aliceObject, {
       status: 200,
-      headers: new Headers({ "content-type": "application/json" }),
-      text: async () => aliceObject,
+      headers: { "content-type": "application/json" },
     }));
-    vi.stubGlobal("fetch", fetchStub);
 
     const ex = new ToolExecutor(ctxWithIdentities(TWO_IDENTITIES), null);
     const result = await ex.execute({
@@ -165,22 +169,20 @@ describe("accessControlProbe integration (0sec#564)", () => {
     expect(out.baseline.evidence.response.bodyPreview).toContain("alice");
     expect(out.comparisons[0].evidence.response.bodyPreview).toContain("alice");
     // Two requests: one as alice (baseline), one as bob.
-    expect(fetchStub).toHaveBeenCalledTimes(2);
+    expect(fetchScoped).toHaveBeenCalledTimes(2);
   });
 
   it("reports no break when the server correctly denies identity B", async () => {
-    const fetchStub = vi.fn(async (_url: string, init: any) => {
-      const auth = (init.headers?.Authorization as string) ?? "";
+    vi.mocked(fetchScoped).mockImplementation(async (url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string> | undefined)?.Authorization ?? "";
       if (auth.includes("alice-tok")) {
-        return {
+        return new Response('{"id":1,"owner":"alice"}', {
           status: 200,
-          headers: new Headers({ "content-type": "application/json" }),
-          text: async () => '{"id":1,"owner":"alice"}',
-        };
+          headers: { "content-type": "application/json" },
+        });
       }
-      return { status: 403, headers: new Headers(), text: async () => "Forbidden" };
+      return new Response("Forbidden", { status: 403 });
     });
-    vi.stubGlobal("fetch", fetchStub);
 
     const ex = new ToolExecutor(ctxWithIdentities(TWO_IDENTITIES), null);
     const result = await ex.execute({
@@ -211,17 +213,14 @@ describe("accessControlProbe integration (0sec#564)", () => {
   it("persists a Set-Cookie across http_request calls (stateful session, no manual jar)", async () => {
     const sent: Array<Record<string, string>> = [];
     let call = 0;
-    const fetchStub = vi.fn(async (_url: string, init: any) => {
+    vi.mocked(fetchScoped).mockImplementation(async (_url: string, init: RequestInit) => {
       sent.push({ ...(init.headers as Record<string, string>) });
       call += 1;
-      // First response sets a session cookie; later responses set none.
-      const headers =
-        call === 1
-          ? new Headers({ "content-type": "text/html", "set-cookie": "sid=server-issued; Path=/" })
-          : new Headers({ "content-type": "text/html" });
-      return { status: 200, headers, text: async () => "ok" };
+      const respHeaders: Record<string, string> = call === 1
+        ? { "content-type": "text/html", "set-cookie": "sid=server-issued; Path=/" }
+        : { "content-type": "text/html" };
+      return new Response("ok", { status: 200, headers: respHeaders });
     });
-    vi.stubGlobal("fetch", fetchStub);
 
     const ex = new ToolExecutor(
       ctxWithIdentities([{ label: "alice", auth: { type: "bearer", token: "alice-tok" } }, { label: "bob" }]),
@@ -241,15 +240,13 @@ describe("accessControlProbe integration (0sec#564)", () => {
 
   it("sends each identity its OWN credential when replaying", async () => {
     const seenAuth: string[] = [];
-    const fetchStub = vi.fn(async (_url: string, init: any) => {
-      seenAuth.push((init.headers?.Authorization as string) ?? "");
-      return {
+    vi.mocked(fetchScoped).mockImplementation(async (_url: string, init: RequestInit) => {
+      seenAuth.push(((init.headers as Record<string, string>)?.Authorization as string) ?? "");
+      return new Response('{"id":1}', {
         status: 200,
-        headers: new Headers({ "content-type": "application/json" }),
-        text: async () => '{"id":1}',
-      };
+        headers: { "content-type": "application/json" },
+      });
     });
-    vi.stubGlobal("fetch", fetchStub);
 
     const ex = new ToolExecutor(ctxWithIdentities(TWO_IDENTITIES), null);
     await ex.execute({

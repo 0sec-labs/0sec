@@ -16,6 +16,12 @@ import {
   type KeyPayload,
   type ProbeObservation,
 } from "../structural-sqli.js";
+import { fetchScoped } from "../../http.js";
+
+vi.mock("../../http.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  fetchScoped: vi.fn(),
+}));
 
 // An oracle for a genuinely injectable JSON-key surface: a broken (unbalanced)
 // key triggers a MySQL parse error; a balanced key parses cleanly.
@@ -92,13 +98,9 @@ describe("auth_boundary_probe tool (#770)", () => {
 
   it("flags an unauthenticated-reachable endpoint through the executor", async () => {
     // No scan auth configured → unauth-only run; a 200 means reachable.
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      headers: { get: () => "application/json" },
-      text: async () => '{"users":[{"id":1}]}',
+    vi.mocked(fetchScoped).mockImplementation(async () => new Response('{"users":[{"id":1}]}', {
+      headers: { "content-type": "application/json" },
     }));
-    vi.stubGlobal("fetch", fetchMock);
     try {
       const exec = new ToolExecutor(ctx(), null);
       const res = await exec.execute({
@@ -114,18 +116,14 @@ describe("auth_boundary_probe tool (#770)", () => {
       expect(out.results[0]!.unauthReachable).toBe(true);
       expect(out.results[0]!.verdict).toBe("unauth-reachable");
     } finally {
-      vi.unstubAllGlobals();
+      vi.mocked(fetchScoped).mockReset();
     }
   });
 
   it("reports a 401 endpoint as auth-required (boundary holds)", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: false,
-      status: 401,
-      headers: { get: () => "application/json" },
-      text: async () => '{"error":"unauthorized"}',
+    vi.mocked(fetchScoped).mockImplementation(async () => new Response('{"error":"unauthorized"}', {
+      status: 401, headers: { "content-type": "application/json" },
     }));
-    vi.stubGlobal("fetch", fetchMock);
     try {
       const exec = new ToolExecutor(ctx(), null);
       const res = await exec.execute({
@@ -139,7 +137,7 @@ describe("auth_boundary_probe tool (#770)", () => {
       expect(out.unauth_reachable_count).toBe(0);
       expect(out.results[0]!.verdict).toBe("auth-required");
     } finally {
-      vi.unstubAllGlobals();
+      vi.mocked(fetchScoped).mockReset();
     }
   });
 
@@ -171,26 +169,12 @@ describe("discover_api_surface tool (#769)", () => {
       info: { title: "Test API" },
       paths: { "/users": { get: {} }, "/orders": { post: {} } },
     });
-    const fetchMock = vi.fn(async (input: unknown) => {
-      const url = String(input);
+    vi.mocked(fetchScoped).mockImplementation(async (url) => {
       if (url.endsWith("/openapi.json")) {
-        return {
-          ok: true,
-          status: 200,
-          headers: { get: (n: string) => (n.toLowerCase() === "content-type" ? "application/json" : null) },
-          text: async () => spec,
-          json: async () => JSON.parse(spec),
-        };
+        return new Response(spec, { headers: { "content-type": "application/json" } });
       }
-      return {
-        ok: false,
-        status: 404,
-        headers: { get: () => null },
-        text: async () => "not found",
-        json: async () => ({}),
-      };
+      return new Response("not found", { status: 404 });
     });
-    vi.stubGlobal("fetch", fetchMock);
     try {
       const exec = new ToolExecutor(ctx(), null);
       const res = await exec.execute({
@@ -208,7 +192,7 @@ describe("discover_api_surface tool (#769)", () => {
       expect(endpointValues.join(" ")).toContain("/users");
       expect(endpointValues.join(" ")).toContain("/orders");
     } finally {
-      vi.unstubAllGlobals();
+      vi.mocked(fetchScoped).mockReset();
     }
   });
 });
@@ -241,10 +225,9 @@ describe("suggested_finding evidence drafts", () => {
   });
 
   it("auth_boundary_probe drafts a finding per unauth-reachable endpoint", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => '{"x":1}' })),
-    );
+    vi.mocked(fetchScoped).mockImplementation(async () => new Response('{"x":1}', {
+      headers: { "content-type": "application/json" },
+    }));
     try {
       const exec = new ToolExecutor(ctx(), null);
       const res = await exec.execute({ name: "auth_boundary_probe", arguments: { endpoints: ["https://example.com/api/users"] } });
@@ -252,7 +235,7 @@ describe("suggested_finding evidence drafts", () => {
       expect(out.suggested_findings).toHaveLength(1);
       expect(out.suggested_findings[0]!.category).toBe("broken_access_control");
     } finally {
-      vi.unstubAllGlobals();
+      vi.mocked(fetchScoped).mockReset();
     }
   });
 });
@@ -272,18 +255,16 @@ describe("surface_sweep tool (#761)", () => {
       info: { title: "Test API" },
       paths: { "/users": { get: {} }, "/orders": { post: {} } },
     });
-    const fetchMock = vi.fn(async (input: unknown) => {
-      const url = String(input);
+    vi.mocked(fetchScoped).mockImplementation(async (url) => {
       if (url.endsWith("/openapi.json")) {
-        return { ok: true, status: 200, headers: { get: (n: string) => (n.toLowerCase() === "content-type" ? "application/json" : null) }, text: async () => spec, json: async () => JSON.parse(spec) };
+        return new Response(spec, { headers: { "content-type": "application/json" } });
       }
       // Discovered endpoints answer 200 unauthenticated → reachable.
       if (url.includes("/users") || url.includes("/orders")) {
-        return { ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => '{"data":[]}', json: async () => ({}) };
+        return new Response('{"data":[]}', { headers: { "content-type": "application/json" } });
       }
-      return { ok: false, status: 404, headers: { get: () => null }, text: async () => "nf", json: async () => ({}) };
+      return new Response("nf", { status: 404 });
     });
-    vi.stubGlobal("fetch", fetchMock);
     try {
       const exec = new ToolExecutor(ctx(), null);
       const res = await exec.execute({ name: "surface_sweep", arguments: { domain: "https://example.com" } });
@@ -298,7 +279,7 @@ describe("surface_sweep tool (#761)", () => {
       expect(out.suggested_findings.length).toBeGreaterThanOrEqual(2);
       expect(out.suggested_findings[0]!.category).toBe("broken_access_control");
     } finally {
-      vi.unstubAllGlobals();
+      vi.mocked(fetchScoped).mockReset();
     }
   });
 });
