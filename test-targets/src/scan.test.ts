@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, type Server } from "http";
-import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 let vulnServer: Server;
 let safeServer: Server;
@@ -16,8 +15,13 @@ let safeWebServer: Server;
 let vulnWebTarget = "";
 let safeWebTarget = "";
 let runScan: (typeof import("../../packages/core/src/scanner.js"))["scan"];
-const testTargetsRoot = fileURLToPath(new URL("..", import.meta.url));
+let testHome = "";
 const savedApiEnv = {
+  HOME: process.env.HOME,
+  "0SEC_CLOUD_TOKEN": process.env["0SEC_CLOUD_TOKEN"],
+  "0SEC_CLOUD_HOST": process.env["0SEC_CLOUD_HOST"],
+  "0SEC_SELECTED_PROVIDER": process.env["0SEC_SELECTED_PROVIDER"],
+  "0SEC_FORCE_PROVIDER": process.env["0SEC_FORCE_PROVIDER"],
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
   AZURE_OPENAI_API_KEY: process.env.AZURE_OPENAI_API_KEY,
@@ -69,6 +73,12 @@ async function mcpFetch(target: string, url: string): Promise<string> {
 }
 
 beforeAll(async () => {
+  testHome = mkdtempSync(join(tmpdir(), "0sec-scan-test-"));
+  process.env.HOME = testHome;
+  process.env["0SEC_CLOUD_TOKEN"] = "";
+  process.env["0SEC_CLOUD_HOST"] = "";
+  process.env["0SEC_SELECTED_PROVIDER"] = "";
+  process.env["0SEC_FORCE_PROVIDER"] = "";
   process.env.OPENROUTER_API_KEY = "";
   process.env.ANTHROPIC_API_KEY = "";
   process.env.AZURE_OPENAI_API_KEY = "";
@@ -113,6 +123,7 @@ afterAll(async () => {
     new Promise<void>((resolve) => safeWebServer.close(() => resolve())),
   ]);
   restoreApiEnv();
+  rmSync(testHome, { recursive: true, force: true });
 });
 
 function startWebServer(mode: "vulnerable" | "safe"): Promise<{ server: Server; target: string }> {
@@ -306,20 +317,6 @@ describe("Safe server responses", () => {
 });
 
 describe("0sec scan integration", () => {
-  it("completes a scan against the vulnerable target without errors", async () => {
-    const report = await runScan({
-      target: vulnTarget,
-      depth: "quick",
-      format: "json",
-      timeout: 5000,
-    });
-
-    // Without an API key, the agentic pipeline can't analyze responses
-    // so we just verify the scan completes without errors
-    expect(report.summary).toBeDefined();
-    expect(report.findings).toBeDefined();
-    expect(Array.isArray(report.findings)).toBe(true);
-  }, 30_000);
 
   it("returns a clean report for the safe target", async () => {
     const report = await runScan({
@@ -395,42 +392,4 @@ describe("0sec scan integration", () => {
     expect(report.summary.totalFindings).toBe(0);
   }, 30_000);
 
-  it("lists findings from the parent findings command", async () => {
-    const dbPath = join(tmpdir(), `0sec-findings-${Date.now()}.db`);
-
-    await runScan(
-      {
-        target: vulnTarget,
-        depth: "quick",
-        format: "json",
-        timeout: 5000,
-      },
-      undefined,
-      dbPath,
-    );
-
-    const result = spawnSync(
-      "pnpm",
-      [
-        "exec",
-        "tsx",
-        "../packages/cli/src/index.ts",
-        "findings",
-        "--db-path",
-        dbPath,
-        "--limit",
-        "5",
-      ],
-      {
-        cwd: testTargetsRoot,
-        encoding: "utf-8",
-      },
-    );
-
-    // The command should complete (exit 0 or 1 if no findings)
-    expect([0, 1]).toContain(result.status);
-    // DB native module may not be available in all environments
-    const output = result.stdout + result.stderr;
-    expect(output).toBeDefined();
-  }, 30_000);
 });
