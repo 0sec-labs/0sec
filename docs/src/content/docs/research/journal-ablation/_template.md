@@ -10,9 +10,9 @@ description: "Measured A/B results for the journal-driven orchestrator loop vs. 
 
 - Both arms run on the same git ref, same model, same prompts. The only
   difference is `0SEC_FEATURE_JOURNAL_LOOP` (0 for native, 1 for journal).
-- Three slices: XBOW black-box, XBOW white-box, npm-bench. Each slice runs
-  three repeats per arm so the table's CIs are real (Wilson 95% for the
-  found-rate proportion; normal-approx 95% for the continuous metrics).
+- Three slices: XBOW black-box, XBOW white-box, npm-bench. Each uses three repeats
+  per arm, with Wilson 95% intervals for found-rate proportions and
+  normal-approximation 95% intervals for continuous metrics.
 - Results aggregate raw per-run JSONs uploaded as workflow artifacts. The
   aggregator lives at `.github/workflows/scripts/journal-ab-aggregate.mjs`.
 

@@ -5,11 +5,11 @@ draft: true
 pagefind: false
 ---
 
-**0cloud is not released.** This is draft planning material, not a description
-of an available delivery workflow. Verify it before publishing.
+**0cloud is not released.** This is draft planning material. It will be verified
+against the released workflow before publishing.
 
 Start with the tested scope and its limits, then inspect each finding. A report
-is evidence about the tests performed, not a guarantee that no other
+is evidence about the tests performed. It does not guarantee that no other
 vulnerabilities exist.
 
 ## Check coverage first
@@ -29,7 +29,7 @@ For each finding, check:
 1. **Affected surface** — endpoint, component, or source location and tested version.
 2. **Preconditions** — required identity, role, tenant, configuration, or existing access.
 3. **Reproduction** — steps and input that exercised the suspected issue.
-4. **Observed evidence** — what actually happened, not only what a model predicted.
+4. **Observed evidence** — actual execution output, distinct from model predictions.
 5. **Impact and limits** — what the evidence proves and what remains untested.
 6. **Remediation** — proposed fix and how to test the relevant boundary again.
 
@@ -41,8 +41,8 @@ recipients and redact before moving into a public issue.
 
 A candidate is a lead to investigate. Verification checks whether the suspected
 behavior can be reproduced. Human triage decides how to handle the finding.
-These are different decisions; severity and a lifecycle label are not a
-substitute for reproduction evidence.
+These are different decisions. Severity and a lifecycle label do not replace
+reproduction evidence.
 
 The [Blind Verification](/blind-verification/) guide explains the independent
 verification approach. When a delivery includes a deterministic

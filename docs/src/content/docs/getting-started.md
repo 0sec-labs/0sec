@@ -3,13 +3,8 @@ title: CLI Getting Started
 description: Install 0sec, configure a provider, define scope, and run your first authorized CLI scan.
 ---
 
-0sec is a **Research Preview**. Install it, configure a model provider, define
-an authorized target, and run your first scan. Bring-your-own-key (BYOK) use
-doesn't require a cloud account.
-
-Hosted models are a separate, unreleased onboarding path. Installing the CLI
-or signing in doesn't establish a funded inference balance. See the
-[draft hosted setup](#hosted-models-draft) before trying that path.
+Install the 0sec Research Preview, connect a model, and scan an authorized target.
+Choose [0sec Cloud](#hosted-models-draft) or [use your own API key](#use-my-own-api-key).
 
 ## Install
 
@@ -64,45 +59,23 @@ For a real scan, mount scope and persist any output you need before using
 
 ## Configure a provider
 
-Choose **one** provider to start with. For example:
+<a id="hosted-models-draft"></a>
 
-```bash
-export ANTHROPIC_API_KEY="your-api-key"
-```
+### Hosted models
 
-Or configure another supported provider in [API Keys](/api-keys/), including
-ChatGPT Codex subscription authentication and Azure. Model credentials are
-different from target credentials passed with `--auth`, and from `0sec auth`
-managed-service authentication.
+> Cloud inference isn't available in production yet. This setup requires the
+> hosted-enabled CLI and an approved test service.
 
-When multiple credentials are present, select a matching model explicitly with
-`--model` or `0SEC_MODEL`. See [Configuration](/configuration/) for runtime and
-provider resolution. Never commit credentials or paste real keys into an issue.
+0sec Cloud will bring open cybersecurity models and 0sec-curated options to one
+connection and inference-credit balance, without supplier-account setup.
+Tools run locally; managed testing and 0review have separate access and billing.
 
-### Hosted models (draft)
-
-> Status: 2026-09-11. Candidate implementation, not a production launch.
-> These commands require the hosted-inference CLI candidate and an explicitly
-> approved test service. They aren't a promise that the installed release or
-> default cloud host supports hosted inference.
-
-The intended experience is one 0sec account, organization-funded model usage,
-and no upstream provider key on your machine. Local tools still run locally.
-Inference credit doesn't include cloud compute, managed testing, or review
-credits. Retail prices, included allowances and subscription terms aren't
-established by this preview.
-
-For an approved test deployment:
-
-1. Set `HOSTED_TEST_HOST` to the service URL supplied by its operator.
-   Run the login command below, sign in or create an account in the browser,
-   select the organization, and explicitly authorize the CLI.
-2. Inspect the catalog and balance. Login grants a scoped credential, not
-   credit. An owner or admin manages hosted-model purchases in the dashboard's
-   **Billing** section. Sandbox checkout creation has been exercised;
-   completed payment and the resulting funded first request remain unqualified.
-3. Select an exact alias from `0sec models`. Pin `hosted` so an existing
-   provider key or Codex login doesn't select BYOK instead.
+1. Set `HOSTED_TEST_HOST` to the operator-provided URL. Log in below, choose
+   your organization, and authorize the CLI.
+2. Check models and balance. Login adds no credit. An owner or admin manages
+   funding in **Billing**; credit requires confirmed payment.
+3. Choose an alias from `0sec models`. Pin `hosted` to use it instead of any
+   existing provider key or Codex login.
 
 ```bash
 0sec login --host "$HOSTED_TEST_HOST"
@@ -113,14 +86,28 @@ env 0SEC_SELECTED_PROVIDER=hosted 0SEC_MODEL="<alias-from-0sec-models>" \
   0sec review ./authorized-repo --runtime api
 ```
 
-Replace the alias and repository path before running. The last command uses
-model credit on a funded service; the preceding catalog and balance commands
-don't submit inference. An unfunded account returns HTTP 402 before an upstream
-model call. A positive balance can still be below the required request reserve.
+Replace the alias and repository path. The review consumes model credit;
+catalog and balance reads don't. Insufficient credit for the request reserve
+returns HTTP 402 before a provider call.
 
-See [Hosted inference](/api-keys/#hosted-inference-draft) for streaming,
-accounting and errors, and [Hosted configuration](/configuration/#hosted-configuration-draft)
-for credential precedence. BYOK remains available independently.
+See [billing and errors](/api-keys/#hosted-inference-draft) and
+[hosted settings](/configuration/#hosted-configuration-draft).
+
+### Use my own API key
+
+Your provider handles authentication and billing. Local, BYOK and supported
+provider-subscription workflows need no 0sec Cloud account.
+
+Set one provider key:
+
+```bash
+export ANTHROPIC_API_KEY="your-api-key"
+```
+
+See [API Keys](/api-keys/) for other providers, Azure and ChatGPT Codex sign-in.
+With multiple credentials, select a matching `--model` or `0SEC_MODEL`.
+Keep model keys separate from target credentials (`--auth`).
+Never commit keys or paste them into issues.
 
 ## Run your first scan
 
@@ -137,13 +124,11 @@ printf '%s\n' '{"in_scope":["app.example.com"]}' > scope.json
   --scope ./scope.json --runtime api --depth quick --cost-ceiling 2
 ```
 
-Replace `app.example.com` in **both** places with a target you own or have explicit
-permission to test. Scope is not permission by itself. This run requests a quick
-web assessment with a USD 2 ceiling; that is a limit, not an estimated price.
-Model/tool availability and target access determine how far it can get.
+Replace `app.example.com` with a target you own or have explicit permission to
+test. USD 2 is the spending ceiling; actual cost varies.
+Model/tool availability and target access determine coverage.
 
-The CLI reports progress and findings. Review any failures or incomplete
-coverage before interpreting an empty result. [Scan Workflows](/scan-workflows/)
+Review failures and incomplete coverage before interpreting empty results. [Scan Workflows](/scan-workflows/)
 covers saved runs, outputs, resuming, and verification.
 
 With Docker, mount the scope file and pass its container path:
@@ -193,8 +178,8 @@ Treat downloaded code as untrusted and use a disposable environment.
 | `default` | The normal investigation budget. |
 | `deep` | More investigation budget for a deliberate deeper run. |
 
-Depth is not a fixed test count or wall-clock duration. Template limits and agent
-turn budgets differ by execution path; see [Budget Management](/budget-management/).
+Depth sets template limits and agent turn budgets. Test coverage and duration vary
+by target. See [Budget Management](/budget-management/).
 
 ```bash
 0sec scan --target https://app.example.com --mode web --scope ./scope.json --depth deep

@@ -3,13 +3,7 @@ title: Verification Results
 description: Stable JSON contract emitted by deterministic replay verifiers.
 ---
 
-Deterministic verification emits a `verification_result` JSON object. This
-object is evidence: the open-source engine runs a replay harness, checks
-concrete assertions, and records the outcome here. It is separate from human
-triage and a finding's lifecycle state.
-
-The schema is meant to be stored by local CI, reproduced by maintainers, and
-ingested by cloud systems without reimplementing the exploit logic.
+Deterministic verification emits a `verification_result` JSON object. The open-source engine runs a replay harness, checks concrete assertions, and records the outcome here. It is separate from human triage and a finding's lifecycle state.
 
 ## Result schema
 
@@ -48,8 +42,7 @@ interface VerificationResult {
 }
 ```
 
-Fields may be added over time. Treat the fields above as the minimum stable
-contract and ignore unknown fields.
+Fields may be added over time. Treat the fields above as the minimum stable contract and ignore unknown fields.
 
 ## Status semantics
 
@@ -60,9 +53,7 @@ contract and ignore unknown fields.
 | `inconclusive` | The verifier reached the target but lacked assertion evidence to prove or disprove the finding. |
 | `error` | The verifier failed before a reliable assertion result — malformed input, setup failure, an unlaunchable command, or a timeout. |
 
-**`status` is not the finding's human triage state.** It's an automated proof
-signal; a maintainer can still accept, suppress, or reopen after reviewing the
-evidence.
+**`status` is not the finding's human triage state.** It's an automated proof signal; a maintainer can still accept, suppress, or reopen after reviewing the evidence.
 
 ## Commands
 
@@ -85,14 +76,11 @@ Each record captures the real command the verifier ran:
 }
 ```
 
-`argv` must point at the implementation under test. A fixture may provide
-servers, files, directories, and placeholders, but it must not synthesize the
-vulnerable behavior the finding is supposed to verify.
+`argv` must point at the implementation under test. A fixture may provide servers, files, directories, and placeholders, but it must not synthesize the vulnerable behavior the finding is supposed to verify.
 
 ## Assertions
 
-Assertions are the machine-checkable facts that turn a replay into a verdict. The
-CLI path-traversal fixture uses filesystem assertions:
+Assertions are the machine-checkable facts that turn a replay into a verdict. The CLI path-traversal fixture uses filesystem assertions:
 
 | Kind | Purpose |
 |------|---------|
@@ -102,12 +90,11 @@ CLI path-traversal fixture uses filesystem assertions:
 | `path_inside_sandbox` | The escaped marker stayed inside the verifier sandbox. |
 | `no_home_profile_touch` | The replay didn't write to the home directory or shell profile files. |
 
-The final assertion phase is deterministic code, not an LLM judgement.
+Deterministic code evaluates the final assertions.
 
 ## Artifacts
 
-`artifacts` holds references a maintainer can use to inspect or reproduce the
-run — paths for local runs, storage keys or other references for cloud runs:
+`artifacts` holds references a maintainer can use to inspect or reproduce the run — paths for local runs, storage keys or other references for cloud runs:
 
 | Key | Meaning |
 |-----|---------|
@@ -117,13 +104,11 @@ run — paths for local runs, storage keys or other references for cloud runs:
 | `stderr_ref` | Full stderr log. |
 | `export_ref` | Fixture-specific export directory or output root. |
 
-The CLI cleans temporary sandboxes by default. Use `--retain-artifacts` or
-`--artifact-dir` when logs and harness files need to survive the run.
+The CLI cleans temporary sandboxes by default. Use `--retain-artifacts` or `--artifact-dir` when logs and harness files need to survive the run.
 
 ## CLI path traversal example
 
-The `cli-path-traversal` fixture starts a malicious local API, creates a
-sandboxed export directory, and runs the real CLI argv from `--fixture-command`.
+The `cli-path-traversal` fixture starts a malicious local API, creates a sandboxed export directory, and runs the real CLI argv from `--fixture-command`.
 
 ```bash
 0sec verify --fixture cli-path-traversal \
@@ -188,7 +173,4 @@ Example result:
 
 ## Cloud ingestion
 
-Cloud systems should schedule runs, persist `verification_result` payloads, show
-the commands, assertions, and artifacts, and gate downstream workflows on
-explicit proof signals. Treat this OSS schema as the source of truth for verifier
-semantics — don't reimplement replay logic.
+Cloud consumers can schedule runs, store `verification_result` payloads, display evidence, and gate workflows on explicit results. Use the engine's replay implementation and schema.

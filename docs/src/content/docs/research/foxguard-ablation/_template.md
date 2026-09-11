@@ -11,9 +11,10 @@ draft: true
 > The first dated artifact in this folder is the empty baseline
 > [`2026-05-22-baseline.md`](./2026-05-22-baseline.md), filled with
 > `<pending>` markers and committed alongside the harness so the validation
-> gate has an honest starting point.
+> gate has a starting point.
 
-## Why
+<span id="why"></span>
+## Experiment rationale
 
 Foxguard is now the default source-code static lead generator, with
 Semgrep preserved as `0SEC_STATIC=semgrep` for compatibility and
@@ -21,10 +22,10 @@ comparison. Foxguard claims 5–22× speed-up on framework-sized repos
 and ships 170+ built-in rules across 11 languages. Before removing any
 additional Semgrep runtime path, we measure.
 
-This page describes the methodology. It is **not** the result. Results
-live in the dated sibling files in this folder.
+This page describes the methodology. Results live in the dated sibling files.
 
-## What is *not* on the table
+<span id="what-is-not-on-the-table"></span>
+## Excluded changes
 
 - Removing semgrep from any other call site (`audit.ts`, `review.ts`,
   agent shell allowlist, `/disclose` canary verify). Out of scope.
@@ -47,9 +48,8 @@ Three slices, all reproducible locally via
 | `xbow-bb-wave` | PHP-heavy black-box wave. PHP/Java sink coverage in Foxguard's built-ins is the open question from 0sec#254. | `0ca/xbow-validation-benchmarks-patched` BB wave. |
 | `npm-bench-wave` | JS taint focus on a known-truth corpus. | First 9 packages of npm-bench (3 malicious, 3 vulnerable, 3 safe). |
 
-The sample sizes are small on purpose — this is a *validation gate*, not a
-benchmark publication. If the gate passes, we run the full ablation
-matrix and publish numbers like the
+The sample sizes are small. This is a validation gate. If the gate
+passes, we run the full ablation matrix and publish numbers like the
 [2026-04-11 triage ablation](/research/2026-04-11-ablation/) page.
 
 ## Metrics
@@ -61,7 +61,7 @@ Per slice, per static-analyzer (`semgrep` and `foxguard`):
 | Total findings | `report.semgrepFindings` (count) | Crude noise indicator. |
 | Confirmed findings | `report.findings.filter(status='confirmed').length` | The actual triage value — what survives the agent verify wave. |
 | Wall time | Harness `Date.now()` deltas | Promotion gate input. |
-| FP rate (sampled) | Hand-labelled `perFindingForLabel[].label` | Honest precision number. Operator reviews each row and sets `label` to `true-positive`, `false-positive`, or `needs-context`. |
+| FP rate (sampled) | Hand-labelled `perFindingForLabel[].label` | Labelled precision rate. Operator reviews each row and sets `label` to `true-positive`, `false-positive`, or `needs-context`. |
 
 The hand-labelling step is the load-bearing one. The harness emits
 JSON with `label: "<pending>"` per finding so missing labels grep

@@ -4,19 +4,17 @@ description: "One harness, two evidence engines, and one rule: reproduce before 
 ---
 
 0sec is an open cybersecurity harness built on one rule: **reproduce before
-trusting.** Models propose findings; only reproducible evidence decides what is
-real.
+trusting.**
 
 For practical setup, start with [Scan Workflows](/scan-workflows/),
 [Console](/console/), or [Research Workflows](/research-workflows/).
-This page describes the engine's structure, not a managed-service availability
-commitment. The public CLI powers this documentation site.
+This page describes the engine's structure.
 
-Two engines produce that evidence:
+Two engines produce evidence:
 
 - **0sec** runs the agentic hunt against source and live targets — repos,
-  packages, web apps, AI endpoints, MCP servers. A team of agents explores in
-  parallel and chains exploits together.
+  packages, web apps, AI endpoints, MCP servers. Agents explore in parallel
+  and chain exploits together.
 - **0verse** produces evidence for compiled programs when no source is
   available.
 
@@ -45,7 +43,7 @@ flowchart LR
 
 Only **discover** and **verify** are mandatory. Unsupported optional stages are
 marked `skipped`; failed or unavailable proof stays `inconclusive`. Discovery
-output can never promote itself.
+output cannot promote itself.
 
 Research evidence envelopes track independent dimensions:
 
@@ -243,9 +241,8 @@ token is spent. Full detail: [Finding Triage](/triage/).
 > **EGATS caveat.** The 2026-04-11 ablation found `egatsTreeSearch` regresses
 > solve rate on hard challenges at ~10× the cost of the next-worst layer. It's
 > removed from the default moat aliases and opt-in only ([0sec#116](https://github.com/0sec-labs/0sec/issues/116)).
-> The moat's effect is mode-dependent — a win on XBOW black-box, a Pareto
-> tradeoff on white-box, a no-op on npm-bench — which is why routing is being
-> learned rather than fixed ([0sec#113](https://github.com/0sec-labs/0sec/issues/113)).
+> Results varied by slice. npm-bench attribution needs repeated runs;
+> [routing research](https://github.com/0sec-labs/0sec/issues/113) remains separate.
 
 ### 3. Verify agent (blind validation)
 
@@ -264,37 +261,32 @@ automatically published or assigned a public share URL.
 
 ## Plugin-first self-evolution
 
-The goal is a harness that works out of the box **and can change its own
-implementation**: learn from failures, write executable skills, and replace
-agent behavior and presentation while keeping a task alive. Updating a prompt,
-installing another tool, and replacing the live agent driver are distinct
-capabilities.
+Executable plugins provide versioned guest execution, composition, next-call
+activation, source evolution, and rollback. The live-harness candidate adds
+`agent.driver` and `ui.view` replacement during a task. Its
+[local measurements](/improvement-plane/#local-candidate-measurements) cover
+specific lifecycle paths; release and hosted end-to-end qualification remain pending.
 
-Today, executable plugins provide versioned guest execution, composition,
-next-call activation, source evolution, and rollback. The live-harness
-integration adds `agent.driver` and `ui.view` providers through the shared
-`packages/shared/src/live-harness.ts` contract. The wire types exist; runtime
-and frontend qualification are in progress, not a released-product claim.
+A generation graph declares providers and dependencies. The runtime owns
+preparation, migration, activation, and resource disposal. Browser, TUI, and
+desktop consume its shared catalog.
 
-One complete generation graph declares providers and their dependencies.
-Preparation, state migration, boundary activation, and owned-resource disposal
-belong to the runtime. The browser, TUI, and desktop consume the same generation
-snapshot, views, commands, settings, and events. Desktop-specific loading or
-an app updater must not become a second plugin infrastructure.
+- **Sandboxed:** each activate, driver, view, or dispose phase invokes the
+  pinned executable source in a fresh guest through the authorized broker.
+  `LiveHarnessHost` holds JSON state between phases.
+- **Workspace-trusted:** a separate canonical-workspace grant permits in-process
+  ESM with Cordis-owned providers and effects. This grants host privileges;
+  self-extension alone grants no host trust.
 
-The chosen design supports two execution tiers:
-
-- **Sandboxed components:** retained executable versions use the existing
-  authorized tool/model broker. Structured UI output remains data.
-- **Workspace-trusted components:** an explicit, separate operator grant allows
-  host ESM engine/UI code. This grants host authority, not sandbox safety;
-  model self-extension alone does not imply that grant.
+After an engine restart, source/spec artifacts and trust files remain.
+Active providers, JSON state, resources, and in-flight work require explicit
+reconstruction. Guests are fresh per phase.
 
 The lifecycle is inspired by
 [Cordis's reversible effects and dependency management](https://arxiv.org/abs/2608.25512)
 and [DSH's service composition](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md).
-Its guarantees depend on tracking component-owned effects; replacing code does
-not undo requests already sent or make an unmeasured candidate better.
+Component-owned effects define the cleanup boundary. External requests already
+sent remain effective; quality improvements require separate measurement.
 
 See [Improvement Plane](/improvement-plane/#live-harness-component-contract)
 for the exact current/planned distinction, Python support, autonomy settings,
@@ -309,18 +301,14 @@ candidate generation uses the same broker and configured `costModel`.
 When the parent uses hosted inference, those calls consume the organization's
 inference wallet. Self-evolution does not carry a free inference allowance.
 
-This is not a guarantee that every descendant or plugin uses the parent route.
 `runOneSubagent` and `runPersistentLoopOnce` create fresh `LlmApiRuntime`
-instances without an explicit model, so parent-route inheritance must not be
-assumed. Workspace-trusted ESM can use non-SDK clients; the SDK broker does not
-account for every request arbitrary host code can make.
+instances without an explicit model. Their route must be checked independently.
+Workspace-trusted ESM can use external clients outside SDK accounting.
 
-Customer pricing uses an immutable catalog token-rate snapshot. An Orca receipt
-verifies usage and provider cost; it does not determine the customer price.
-Inference credit is separate from review, compute, and engagement accounting.
-The new live-harness lifecycle has not yet passed hosted end-to-end
-qualification. These integration boundaries are not a production-launch or
-security-performance claim.
+Customer pricing uses an immutable catalog token-rate snapshot. Orca receipts
+verify usage and supplier cost. Inference credit is separate from review,
+compute, and engagement accounting. Hosted lifecycle end-to-end qualification
+and security-performance measurements remain pending.
 
 ## Presentation contract
 
@@ -514,12 +502,9 @@ ownership live in the managed store.
 
 ## Shell-first web mode
 
-For web pentesting, 0sec gives the agent a minimal tool set — `bash`,
-`save_finding`, `done` — instead of routing it through structured tools. This
-works because the model already knows curl, bash pipelines, and standard tools
-from training. One `curl -c cookies.txt … | jq` replaces several structured
-tool calls, and avoids the state-tracking confusion that makes agents loop.
-Structured tools stay available as options; benchmarking just favored the shell.
+The shell-first web workflow uses `bash`, `save_finding`, and `done`.
+The agent can compose commands such as `curl -c cookies.txt … | jq`.
+Structured tools remain available.
 
 See [Research](/research/) for the rationale and [Benchmark](/benchmark/) for
 results.

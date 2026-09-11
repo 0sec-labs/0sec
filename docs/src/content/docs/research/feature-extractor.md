@@ -18,9 +18,10 @@ The extractor is intentionally cheap:
 
 It is the handcrafted half of 0sec's VulnBERT-inspired hybrid direction.
 
-## Why it exists
+<span id="why-it-exists"></span>
+## Feature selection
 
-VulnBERT's reported ablations are the key reference point:
+VulnBERT ablations on kernel commits:
 
 | Model family | Recall | False positive rate |
 |--------------|--------|---------------------|
@@ -173,9 +174,8 @@ of them look for:
 - SQL errors
 - request / response evidence density
 
-On npm supply-chain findings, many of those fields are sparse or zero. That
-is not a bug in the extractor; it is a real domain-transfer limitation and
-exactly the kind of thing a paper should report honestly.
+Many fields are sparse or zero for npm supply-chain findings. Measure transfer
+on that domain separately.
 
 ## Reproducibility
 

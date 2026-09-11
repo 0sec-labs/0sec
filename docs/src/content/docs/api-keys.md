@@ -3,36 +3,34 @@ title: API Keys
 description: Supported LLM providers, environment variables, credential priority, model routing, and provider failover.
 ---
 
-The `api` runtime makes direct HTTP calls to a provider. Set credentials
-as environment variables, or use the console credential store for API-key
-providers.
+0sec Cloud will offer open cybersecurity models and 0sec-curated options through
+one connection and inference-credit balance, without supplier-account setup.
+Alternatively, use your own API key or supported subscription without a Cloud account.
 
-## Hosted inference (draft)
+<a id="hosted-inference-draft"></a>
+<a id="0sec-hosted-inference-draft"></a>
 
-> Status: 2026-09-11. Unreleased candidate behavior. Production hosted billing
-> isn't enabled. Local qualification does not establish paid access or provider
-> availability. The direct-provider instructions below remain the current setup.
+## Hosted inference
 
-The candidate adds a `hosted` provider to the `api` runtime. A scoped 0sec
-organization credential replaces an upstream API key on the client. The gateway
-holds provider credentials and forwards model requests, including the context
-and tool results supplied by the agent. Shell commands and tools still execute
-on your configured local executor. Login doesn't sandbox them.
+For access to the hosted test service, follow [Cloud setup](/getting-started/#hosted-models-draft).
+The `api` runtime's `hosted` provider uses a scoped organization credential.
+The gateway holds supplier keys and forwards model context, including tool
+results. Tools execute on your configured local executor.
 
 ### Account, models and usage
 
-Follow the [draft onboarding steps](/getting-started/#hosted-models-draft).
-`0sec models --json` reads the service catalog, including each alias, provider,
-wire protocol, context/output limits and versioned customer rates. Use that
-catalog for hosted selection, not the console's bundled BYOK model list.
-An explicit alias is validated before inference. Without an alias, the candidate
-selects the first service catalog entry.
+`0sec models --json` lists hosted aliases, providers, wire protocols, limits and
+customer rates. Select an exact alias; otherwise the first catalog entry is used.
 
-`0sec balance --json` reads the selected organization's inference wallet.
-It isn't a review-credit balance or a local scan cost estimate. The dashboard
-shows recent requests with model/provider identity, token usage, billed amount,
-cancellation and settlement status. There is no `0sec usage` command in this
-candidate; the authenticated usage endpoint is listed below.
+`0sec balance --json` reads organization inference credit, separately from
+0review or local cost estimates. The dashboard and usage endpoint show model,
+provider, tokens, billed amount, cancellation and settlement status.
+There is no `0sec usage` command.
+
+Autumn reserves credit before dispatch and settles measured usage afterward.
+Login adds no credit. Funding requires confirmed payment through configured
+top-ups or allowances. Requests exceeding available reserve credit are rejected;
+postpaid overage is unavailable.
 
 | Endpoint on the selected cloud host | Required token scope | Purpose |
 | --- | --- | --- |
@@ -42,61 +40,40 @@ candidate; the authenticated usage endpoint is listed below.
 | `POST /api/inference/v1/chat/completions` | `inference:invoke` | Catalog-selected Chat Completions route |
 | `POST /api/inference/v1/responses` | `inference:invoke` | Catalog-selected Responses route |
 
-These routes use bearer authentication. The catalog selects the protocol;
-clients don't supply an upstream endpoint or arbitrary provider. Older login
-tokens may lack the new scopes and require reauthorization.
+All routes require bearer authentication. Reauthorize older tokens that lack
+these scopes. The catalog controls the provider endpoint and wire protocol.
 
 ### Charging and interrupted requests
 
-The gateway reserves a bounded maximum before contacting a provider. The
-candidate reserve covers the catalog context window and bounded output at its
-reserve multiplier, rather than an estimate of your prompt alone. Final retail
-charges use the request's snapshotted customer rates and measured usage.
-An upstream provider receipt establishes provider cost and usage; it is not
-a customer pass-through price.
+The reserve covers the catalog context window and bounded output at the configured
+multiplier. Charges use measured usage and snapshotted customer rates; supplier
+receipts establish usage and supplier cost, not retail pricing.
 
-Responses and Chat Completions support server-sent events on configured routes.
-Receiving output does not mean settlement has finished. Stopping delivery
-doesn't guarantee zero cost: the gateway can finish reading the bounded upstream
-request to collect usage. Missing usage or an uncertain billing acknowledgement
-remains unresolved rather than being treated as free. Check request status and
-balance before resubmitting.
+Both wire APIs support server-sent events. Cancellation can still incur charges:
+the gateway may drain the bounded provider stream to collect usage. Missing usage
+or uncertain settlement stays unresolved and blocks further spending.
+Check request status and balance before resubmitting.
 
-| Failure | Candidate behavior and next step |
+| Failure | Action |
 | --- | --- |
 | HTTP 401 | Missing, invalid or revoked credential. Sign in again. |
 | HTTP 403 | Required scope missing. Reauthorize the CLI for the intended organization. |
-| HTTP 402 | Insufficient credit for the reserve. No upstream request is made for this rejection. Check the inference wallet and purchase access. |
-| HTTP 429 | Concurrency limit, unresolved prior charge, or provider throttling. Inspect the error code and request history before retrying. |
-| HTTP 503 | Hosted inference disabled, provider unavailable, or billing unavailable. Login or a stored key doesn't bypass this gate. |
+| HTTP 402 | Insufficient reserve credit; no provider call. Check balance and funding. |
+| HTTP 429 | Concurrency, unresolved charge or provider throttling. Inspect the error and request history. |
+| HTTP 503 | Hosted service, provider or billing unavailable. |
 | Transport failure or hosted HTTP 5xx | The CLI doesn't automatically replay a potentially consumed request. Inspect usage before trying again. |
 
-The gateway rejects detected model substitution. There is no automatic
-server-side model switch promised here. BYOK is a separate choice: configure
-its credential and select that provider explicitly. The candidate can use an
-operator-configured `0SEC_LLM_FALLBACK` chain for eligible retry/quota failures,
-but it doesn't turn an exhausted hosted wallet into free BYOK or another model.
-Changing providers changes who receives the request and which account pays.
+The gateway rejects detected model substitution. `0SEC_LLM_FALLBACK` configures
+explicit backup routes; switching providers changes who receives the request
+and which account pays.
 
-For hosted HTTP 429, the candidate retries or enters that configured fallback
-chain only when the gateway supplies `x-0sec-retry-safe: 1`. The gateway emits
-this marker only for a pre-dispatch concurrency rejection. Provider throttling
-can occur after dispatch with a pending charge; it and unresolved-charge
-responses carry no marker. An unmarked 429, including one from an older gateway,
-stops without automatic retry or fallback.
+Hosted HTTP 429 permits retry or configured fallback only with
+`x-0sec-retry-safe: 1`, issued for pre-dispatch concurrency rejection.
+Provider throttling and unresolved charges are unmarked and aren't replayed.
 
-A fallback or model migration changes the evaluated system. Before/after
-self-evolution comparisons must hold model and route fixed, or evaluate the
-changed route separately; don't attribute a different model's result to a
-harness improvement.
-
-The executable-plugin SDK's model broker uses its parent runtime, including
-model calls made during plugin evolution. If that parent routes through
-`hosted`, those calls use the same organization's inference accounting.
-This isn't a free self-evolution allowance or universal billing guarantee:
-subagents construct new runtimes, and trusted host code can use clients outside
-the SDK. The new live evolution lifecycle hasn't had end-to-end hosted billing
-qualification.
+Plugin evolution's SDK model calls use the parent runtime's accounting when
+routed through `hosted`. Subagents resolve new runtimes; trusted host code can
+use external clients. Keep model and route fixed when comparing evolution results.
 
 ## Supported providers
 
@@ -143,7 +120,8 @@ env 0SEC_SELECTED_PROVIDER=openai 0SEC_MODEL=gpt-6-astra \
 Gemini still requires a gateway: use `opencode/gemini-3.8-flash` with OpenCode
 Zen, or the gateway's documented model id with OpenRouter.
 
-Prices are estimates, not invoices. [Astra's published base rates](https://developers.openai.com/api/docs/models/gpt-6-astra)
+Displayed prices are estimates; reconcile charges against provider invoices.
+[Astra's published base rates](https://developers.openai.com/api/docs/models/gpt-6-astra)
 apply through 272K input tokens; longer requests and cache writes cost more.
 [DeepSeek Flash](https://api-docs.deepseek.com/quick_start/pricing) is estimated
 at peak rates ($0.30 input / $1.20 output per million tokens); off-peak is half
@@ -166,8 +144,7 @@ environment variables in this order. The **first variable found** wins:
 10. **OpenCode Zen** — `OPENCODE_API_KEY`
 11. **Anthropic** — `ANTHROPIC_API_KEY`
 
-With no key at all, the runtime defaults to Anthropic (consistently emitting a
-helpful failure message — it never silently produces zero findings).
+Without a key, the runtime selects Anthropic and reports a missing-credential failure.
 
 **Two things override this fallback chain:**
 - A `--model` (or `0SEC_MODEL`) value that maps to a specific provider — see
@@ -195,9 +172,8 @@ when more than one credential is present.
 | `deepseek-flash`, `deepseek-v4-flash` | DeepSeek | Responses wire; V4.1 uses `deepseek-flash` |
 | Azure Foundry deployment ids | Azure | Chat completions or Responses |
 
-Without an explicit model, 0sec picks an available fallback via the [credential
-priority](#credential-priority) chain. Pin a model rather than relying on ambient
-credential order.
+Without an explicit model, 0sec follows the [credential priority](#credential-priority)
+chain. Pin a model for predictable selection.
 
 ### Free OpenRouter model
 
@@ -279,11 +255,10 @@ Path precedence for the auth file:
 2. `0SEC_CODEX_AUTH_JSON_PATH` (deprecated — honoured as a fallback).
 3. `~/.codex/auth.json` (the default when neither override is set).
 
-The CLI bootstrap additionally runs `maybeLoadCodexAuth` at startup, which
-loads the auth file into `0SEC_CHATGPT_*` env vars if no such token is already
-present. This is a local-dev convenience: a logged-in `codex` session wins over
-stale `AZURE_OPENAI_API_KEY` / `OPENAI_API_KEY` left in a dev shell, so
-`0sec review` "just works" on the subscription backend.
+The CLI bootstrap runs `maybeLoadCodexAuth` at startup, loading the auth file
+into `0SEC_CHATGPT_*` env vars if no token is present. A logged-in `codex`
+session takes priority over stale `AZURE_OPENAI_API_KEY` / `OPENAI_API_KEY`
+left in a dev shell.
 
 In OpenTUI chat, run `/providers` (or `/connect`) and choose **ChatGPT
 Codex**. 0sec runs the official `codex login --device-auth` lifecycle, streams
@@ -294,44 +269,38 @@ Choose **OpenAI** separately when you want `OPENAI_API_KEY` direct API access.
 Every `0sec` run loads that file into the environment before any subcommand
 runs, so a codex-login file is picked up everywhere — the console `/providers`
 view, `0sec doctor`, and scans/reviews/audits. An explicit environment value always wins,
-and a missing or malformed file is ignored quietly. One caveat: the `/providers` table
-never checks the filesystem, so anything that reads it *without* the CLI's startup
-load (for example, if you embed it in your own tool) shows "not configured" — a
-display quirk, not a broken setup.
+and a missing or malformed file is ignored quietly. The `/providers` table
+never checks the filesystem: anything reading it without the CLI's startup
+load (for example, embedded in a custom tool) shows "not configured".
 
 ## Console credential store
 
-The console credential store is for API-key providers only. Run `/providers`
-to open the chat-owned OpenTUI connection pane, then select a provider to paste
-its API key. ChatGPT Codex never uses this generic key path: it uses device
-OAuth and the Codex auth file instead. Each API-key row shows `configured via
-<VAR>` or `not configured`, reflecting the real environment.
+Run `/providers` to select an API-key provider and enter its key. ChatGPT Codex
+uses device OAuth and its auth file. Each API-key row reports `configured via
+<VAR>` or `not configured` from the environment.
 
 Keys are written to `credentials.json` in the [state
 directory](/configuration/#state-directory) (`~/.0sec/` by default), re-tightened
 to owner-only (`0600` file, `0700` dir) on every save.
 
-**An explicit environment value always wins over the stored value** — the store only
-fills a variable the environment doesn't already carry. This keeps "which key did
-that run use?" answerable when a request 401s or a metered key overspends.
+**An explicit environment value always wins over the stored value.** The store
+only fills a variable the environment doesn't already carry.
 
 **Stored credentials are not encrypted.** They're plaintext, protected only by
 file permissions. Treat `credentials.json` like an exported secret in a shell
 profile.
 
 The `/model` picker starts with curated models; **Tab** opens the full catalog.
-A listing is not proof of credentials or account access. The detail pane shows
-credential sources and setup hints; an unknown price is shown as `—`, not zero.
-Use `/connect` to add credentials and `/providers` to inspect the configured
-provider before making a request.
+Check credentials and account access before use. The detail pane shows setup
+hints and credential sources; unknown prices appear as `—`.
+Use `/connect` to add credentials and `/providers` to inspect them.
 
 ## When to use OpenRouter
 
-Use OpenRouter to reach a model family with no direct provider credential. It's
-not required for Z.ai GLM, Alibaba Qwen, Moonshot Kimi, Anthropic, OpenAI, Azure,
-OpenCode Zen, or DeepSeek. OpenRouter is also the fallback when a `claude-*` model
-is requested but no `ANTHROPIC_API_KEY` is set — the runtime checks for
-`OPENROUTER_API_KEY` before giving up on that model family.
+Use OpenRouter for model families with no direct provider credential. It also
+serves as fallback when a `claude-*` model is requested without
+`ANTHROPIC_API_KEY`: the runtime checks for `OPENROUTER_API_KEY` before giving
+up.
 
 ## Provider failover
 
@@ -350,9 +319,9 @@ Supported provider ids: `openrouter`, `anthropic`, `openai`, `azure`, `deepseek`
 
 ## Azure OpenAI configuration
 
-Azure is stricter — the API key alone isn't enough. 0sec needs an Azure base URL
-and a deployment/model name, either from env vars or reused from
-`~/.codex/config.toml` when Codex is already configured against Azure.
+0sec needs an Azure base URL and deployment/model name in addition to the API
+key, either from env vars or from `~/.codex/config.toml` when Codex is
+configured against Azure.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -370,10 +339,10 @@ export AZURE_OPENAI_WIRE_API="responses"
 
 If you rely on Codex config, make sure `~/.codex/config.toml` points at Azure with
 a usable base URL and model/deployment. Incomplete Azure config stops with a
-configuration error rather than a broken scan.
+configuration error before any scan starts.
 
 The runtime probes the Azure endpoint once per process to resolve the deployment
-region, used for diagnostics (not routing).
+region for diagnostics.
 
 ## Alternative: CLI runtimes
 
@@ -396,12 +365,13 @@ scans use the direct ChatGPT Codex provider, so they need
 
 ## `0sec doctor` — credential readiness
 
-Run `0sec doctor` to inspect runtime and credential readiness. It is not a
-successful authenticated model-call test:
+Inspect runtime and credential configuration:
 
 ```bash
 0sec doctor
 ```
+
+Authenticated model access requires a separate request; `doctor` checks configuration.
 
 It reports:
 - Node.js version compatibility (20+ required).

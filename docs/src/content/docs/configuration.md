@@ -3,14 +3,12 @@ title: Configuration
 description: Runtime modes, scan modes, depth settings, state paths, env vars, feature flags, and diagnostics.
 ---
 
-Configuration has separate layers: command options, runtime/provider environment,
-console settings, and run storage. There is no single settings file or universal
-precedence rule that overrides every subsystem.
+Configure command options, provider credentials, console settings and run storage
+separately. Each section below gives its precedence rules.
 
 ## Runtime modes
 
-Models propose and explore; scoped tools, evidence, and verification decide what
-counts. `--runtime` selects the LLM backend.
+`--runtime` selects the LLM backend.
 
 | Runtime | Flag | Description |
 |---------|------|-------------|
@@ -46,8 +44,7 @@ credential priority.
 
 For Azure, also set `AZURE_OPENAI_BASE_URL` and `AZURE_OPENAI_MODEL` unless 0sec
 can read them from an Azure-backed `~/.codex/config.toml`. For the Responses API,
-the base URL must include `/openai/v1`. 0sec fails fast on incomplete Azure config
-rather than guessing defaults.
+the base URL must include `/openai/v1`. Incomplete Azure configuration fails before execution.
 
 For ChatGPT Codex, run `codex login`, then either rely on
 `~/.codex/auth.json` or use
@@ -87,9 +84,8 @@ env 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..." \
 
 ### Codex runtime parity matrix
 
-Codex routing depends on the entry point and its available credentials. Source
-review can use the installed CLI; live-target subscription calls use the direct
-provider. Do not infer that installing a binary alone authorizes every surface.
+Codex routing depends on the entry point and credentials. Source review can use
+the authenticated CLI; live-target subscription calls use the direct provider.
 
 | Surface                                | Command                                                      | Supported via direct provider |
 |----------------------------------------|--------------------------------------------------------------|--------------------------------|
@@ -102,8 +98,7 @@ provider. Do not infer that installing a binary alone authorizes every surface.
 | Linux kernel review                    | `0sec review ./linux --profile linux-kernel --runtime codex` | yes                          |
 | C/C++ library review                   | `0sec review ./lib --profile c-library --runtime codex`    | yes                            |
 
-Managed-cloud runtime availability is a separate deployment policy; see
-[0cloud](/roadmap/#0cloud) rather than assuming local capabilities are all hosted.
+Managed runtime availability follows the separate [0cloud deployment policy](/roadmap/#0cloud).
 
 ## Scan modes
 
@@ -279,9 +274,8 @@ Settings are resolved per-key, highest-priority first:
 2. **Global** — `~/.0sec/tui-settings.json` is the per-user base.
 3. **Default** — built-in defaults shown below.
 
-A missing, corrupt, or hand-broken file can't break the console: on load it's
-normalised against the schema (unknown keys dropped, bad values reset to
-defaults), and saving rewrites it from the normalised object.
+On load, settings are normalized against the schema: unknown keys are dropped
+and invalid values reset to defaults. Saving writes the normalized object.
 
 ### Security-gated import
 
@@ -326,49 +320,29 @@ changes are printed so you know what was rejected.
 
 ### Self-extension and workspace trust
 
-New sessions use the shared `DEFAULT_ALLOW_MODEL_SELF_EXTENSION=true`.
-An explicitly selected or persisted `false` overrides the default. The desktop
-checkbox initializes from that shared default; existing disabled sessions aren't
-reconstructed or silently enabled.
+Self-extension defaults on for new sessions, including the desktop checkbox.
+Explicit or saved `false` stays off. Workspace-trusted ESM requires a separate,
+acknowledged grant scoped to the canonical workspace.
 
-Sandboxed self-extension isn't a separate opt-in. Workspace-trusted ESM
-execution requires its own explicit acknowledgement and a trust grant scoped
-to the canonical workspace. Enabling self-extension never grants host trust.
-
-Autonomy mode, self-extension and trusted ESM are separate controls. The desktop
-keeps its unscoped-standard and scoped-YOLO authorization flow; the shared defaults
-don't make every desktop launch globally YOLO. See
-[Improvement Plane](/improvement-plane/) for lifecycle and qualification boundaries.
+Autonomy, self-extension and host trust are separate controls. Desktop retains
+unscoped-standard and scoped-YOLO authorization.
+See [self-evolution](/improvement-plane/) for details.
 
 ## Console credential store
 
-The console credential store is for API-key providers only. Run `/providers`
-to open the chat-owned OpenTUI connection pane, then select a provider to paste
-its API key. ChatGPT Codex never uses this generic key path: it uses device
-OAuth and the Codex auth file instead. Each API-key row shows `configured via
-<VAR>` or `not configured`, reflecting the real environment.
+Use `/connect` or `/providers` to save an API key. ChatGPT Codex uses device
+sign-in and its own auth file instead.
 
-Keys are written to `credentials.json` in the [state directory](#state-directory)
-(`~/.0sec/` by default), re-tightened to owner-only (`0600` file, `0700` dir) on
-every save.
+Keys are stored in plaintext at `~/.0sec/credentials.json` by default, with
+`0600` file and `0700` directory permissions. Explicit environment values win.
+See [credential storage](/api-keys/#console-credential-store).
 
-**An explicit environment value always wins over the stored value** — the store only
-fills a variable the environment doesn't already carry. This keeps "which key did
-that run use?" answerable when a request 401s or a metered key overspends.
-
-**Stored credentials are not encrypted.** They're plaintext, protected only by
-file permissions. Treat `credentials.json` like an exported secret in a shell
-profile.
-
-The `/model` picker starts with curated models; **Tab** opens the full catalog.
-A listing is not proof of credentials or account access. The detail pane shows
-credential sources and setup hints; an unknown price is shown as `—`, not zero.
-Use `/connect` to add credentials and `/providers` to inspect the configured
-provider before making a request.
+In `/model`, **Tab** opens the full catalog. Check credentials and account access.
+Treat missing price data as unknown.
 
 ## Cloud authentication
 
-0sec-cloud authentication is managed with the `0sec auth` command:
+`0sec auth` manages organization credentials:
 
 | Subcommand | Description |
 |------------|-------------|
@@ -390,24 +364,23 @@ The token is never printed. `0sec auth status` echoes the host on success; on
 auth failure it surfaces the status code + path, never the token or Authorization
 header.
 
-### Hosted configuration (draft)
+<a id="hosted-configuration-draft"></a>
 
-> Status: 2026-09-11. Hosted-inference candidate configuration, not production
-> availability. See [draft setup](/getting-started/#hosted-models-draft).
+### Hosted configuration
 
-The candidate adds `0sec login` as an alias for `0sec auth login`, plus
-`0sec models [--json]` and `0sec balance [--json]`. It changes the default host
-to `https://cloud.0.security`; the existing-release table above describes
-`https://cloud.0sec.ai`. Use an explicit approved host during qualification,
-and check `0sec login --help` on the binary you're running.
+See [Cloud setup and availability](/getting-started/#hosted-models-draft).
+Planned Cloud access combines open cybersecurity models and 0sec-curated options
+under one connection and inference-credit balance, without supplier-account setup.
+The hosted-enabled CLI adds `0sec login` (alias of `0sec auth login`),
+`0sec models [--json]` and `0sec balance [--json]`, and defaults to
+`https://cloud.0.security`. Older releases use `https://cloud.0sec.ai`.
+Check `0sec login --help` and use the operator-provided host for testing.
 
-Hosted credentials use the same `0SEC_CLOUD_TOKEN`, `0SEC_CLOUD_HOST` and
-`cloud.env` resolution as cloud auth. An environment token takes precedence
-over the file; without an environment token, the host comes from the file or
-default, not a standalone `0SEC_CLOUD_HOST` override. Authenticate against the
-intended host rather than mixing a saved token with a different service.
+An environment `0SEC_CLOUD_TOKEN` takes precedence over `cloud.env`.
+Without it, host and token come from the file or default; setting
+`0SEC_CLOUD_HOST` alone won't redirect a saved token.
 
-| Setting or action | Hosted candidate behavior |
+| Setting or action | Behavior |
 | --- | --- |
 | `--runtime api` | Uses the HTTP runtime; `hosted` is a provider, not a new runtime name. |
 | `0SEC_SELECTED_PROVIDER=hosted` | Pins hosted inference instead of ambient BYOK credentials. |
@@ -418,14 +391,12 @@ intended host rather than mixing a saved token with a different service.
 | `0sec auth status` | Checks credentials and service health, not model entitlement, credit sufficiency or paid-flow readiness. |
 | `0sec auth logout` | Removes local credential files; it doesn't revoke an issued token or clear a token exported in the environment. |
 
-Use the dashboard's hosted session controls to revoke an issued CLI credential.
-Membership and token scopes are checked by the gateway. The CLI credential
-can read balance and invoke models, but doesn't authorize purchases.
+Revoke issued credentials through the dashboard's session controls.
+The gateway checks membership and scopes; a CLI credential doesn't authorize
+purchases.
 
-Local cost ceilings and token estimates aren't the hosted wallet ledger.
-The gateway reserves and settles each hosted request separately; a local
-cancellation isn't a refund instruction. See the
-[accounting and failure contract](/api-keys/#charging-and-interrupted-requests).
+Local cost ceilings are separate from the hosted ledger. Cancellation can still
+incur charges. See [billing and errors](/api-keys/#charging-and-interrupted-requests).
 
 ## Provider selection and model routing
 
@@ -507,11 +478,9 @@ and tool call with its result. That means **target hostnames, approved scope,
 untriaged findings, and raw request/response bodies**, which can include cookies,
 bearer tokens, and anything a tool echoed.
 
-**Secrets are deliberately not scrubbed.** A scrubber over free-form tool output
-can't be complete, and a partial scrub is worse than none — it advertises a
-guarantee it can't keep, and would corrupt the evidence a resume needs.
-Transcripts are **not encrypted**; protection is filesystem permissions plus your
-ability to delete them. Nothing is transmitted anywhere — local disk only.
+Secrets are not scrubbed. A partial scrub over free-form output would corrupt
+resume evidence. Transcripts are not encrypted. Protection is filesystem
+permissions. Stored on local disk only.
 
 ## Static analyzer selection
 
@@ -645,11 +614,11 @@ sides is `inconclusive` (exit 1); failure to reproduce the vulnerable side is
 and express the exploit condition through assertions. Results include both sides;
 `vulnerable.json`, `patched.json`, and `result.json` are retained with artifacts.
 
-Local execution runs trusted PoC code **on the host**, not in a sandbox. It checks
-the exact Node/engine version and host platform/architecture, but does not capture
-external tools or services. Digests detect corruption, not malicious authorship.
-Review bundles before execution and before sharing: allowlisted sources, finding
-metadata, and process output can contain secrets.
+Local replay executes trusted PoC code **on the host**. It checks the Node/engine
+version and platform/architecture; external tools and services remain outside the
+snapshot. Digests establish file integrity, while authorship requires separate
+review. Check bundles for secrets before execution or sharing, including source,
+finding metadata, and process output.
 
 For Docker, set `"runner": "docker"` in the plan and provide
 `docker_shell_image` / `docker_http_image` for the action types used, each as a full
@@ -662,7 +631,7 @@ HTTP actions. Notes are not executable bundle steps.
 Shell `cwd` is relative to the mounted workspace; absolute paths and traversal
 outside it are rejected before a container is launched.
 
-The `0sec: Docker replay` CI workflow runs real containers, not a Docker CLI mock.
+The `0sec: Docker replay` CI workflow runs real containers.
 It covers isolation, writable workspaces, relative cwd and escape rejection,
 pinned-image execution, timeout cleanup, scoped HTTP, and vulnerable/patched
 negative controls. To run the same checks against the default local Docker daemon:
@@ -699,10 +668,10 @@ The runtime layers that keep a provider failure from silently corrupting a scan:
 | `0SEC_LLM_429_MAX_RETRY_WAIT_MS` | `300000` | Cumulative 429 backoff cap (ms). Falls back to `0SEC_LLM_MAX_RETRY_WAIT_MS` when unset. Bound server-guided `Retry-After` waits. |
 | `0SEC_SUPPRESS_PROVIDER_STARTUP_LOG` | unset | Set to `1` to suppress the "Provider: …" startup banner line. |
 
-Auth errors (**401/403**) are never retried: the agent loop exits immediately, and
-the pipeline surfaces an **honest failure** — `warnings[]` carries the provider
-error and the run is marked failed, never a clean "0 findings". Package audits add
-a per-file circuit breaker (3 identical-signature failures abort the rest).
+Auth errors (**401/403**) are never retried: the agent loop exits immediately,
+`warnings[]` carries the provider error, and the run is marked failed, never
+clean "0 findings". Package audits add a per-file circuit breaker (3
+identical-signature failures abort the rest).
 
 ### Provider failover chain
 
@@ -712,7 +681,7 @@ advances to the next entry whose credentials are present in the environment.
 
 ## Execution backends
 
-Backend selection is command-specific, not a global console isolation switch:
+Backend selection is command-specific. It does not provide global console isolation:
 
 - Source evolution defaults to Docker. Set `backend: "smolvm"` and a local
   `imageArchive` in its config to use qualified Linux microVM workers. See
@@ -770,8 +739,7 @@ cost/token usage. Useful for wrappers, CI parsers, and the cloud path.
 
 ## Example: opt-in verification gates
 
-Enable additional gates, then inspect which actually ran and what evidence they
-produced. More flags are not a guarantee of accuracy or disclosure readiness.
+After enabling gates, inspect their execution records and evidence before accepting a finding.
 
 ```bash
 env \

@@ -3,11 +3,11 @@ title: White-box Mode
 description: Give the agent read access to source code alongside the running target for deeper vulnerability discovery.
 ---
 
-White-box mode gives the attack agent the application source alongside the
-running target. Instead of probing purely over HTTP, the agent reads source,
-traces data flows, and finds vulnerabilities invisible from the outside:
-hardcoded credentials, server-side logic flaws, unsafe deserialization, and
-auth bypasses hidden behind middleware.
+White-box mode provides the attack agent the application source alongside the
+running target. The agent reads source, traces data flows, and finds
+vulnerabilities invisible from HTTP-only probing: hardcoded credentials,
+server-side logic flaws, unsafe deserialization, and auth bypasses hidden
+behind middleware.
 
 ## How to use it
 
@@ -50,21 +50,21 @@ which sinks and which validation is missing.
 
 ## Benchmark results
 
-White-box helps most on challenges whose exploit path is clearer in source than
-over HTTP (e.g. XBEN-042 "Too much trust" — hardcoded SSH creds with no web vuln
-— flags in white-box, fails black-box). Some challenges still fail even with
-source (XBEN-092). The [Benchmark](/benchmark/) page has the current
+White-box helps most on challenges where the exploit path is clearer in source
+than over HTTP (e.g. XBEN-042 "Too much trust" — hardcoded SSH creds with no
+web vuln — flags in white-box, fails black-box). Some challenges still fail
+even with source (XBEN-092). See [Benchmark](/benchmark/) for current
 per-challenge scores.
 
 ## When to use it
 
 - **Pre-release audits** — you have source and a staging deploy.
 - **Internal pentests** — legitimate repo access, maximum coverage.
-- **When black-box stalls** — re-run with `--repo` to see what HTTP-only missed.
+- **When black-box stalls** — re-run with `--repo`.
 - **CTFs / benchmarks** — source-available challenges.
 
-Skip it when testing a third party without source, on most bug bounty targets,
-or when you deliberately want the external-attacker threat model.
+Skip for third-party targets without source, most bug bounty programs, or when
+the external-attacker threat model is required.
 
 ## Tool set
 

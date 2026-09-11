@@ -5,7 +5,7 @@ description: Build and configure the QEMU guest used by 0sec ingest --verify.
 
 `0sec ingest --verify` runs C reproducers inside a local QEMU guest and compares
 the guest `dmesg` against the imported kernel crash report. Without the VM,
-kernel verification stays static-only — 0sec won't claim a crash was reproduced.
+kernel verification is static-only.
 
 For choosing between `ingest --verify`, `research linux`,
 `research linux-matrix`, dynamic-witness hunting, and weaponization, see
@@ -180,14 +180,7 @@ SSH is not part of the contract; the keypair is only for manual debugging.
 
 ## Troubleshooting
 
-If the VM exits early, inspect `serial.log` in `0SEC_KERNEL_QEMU_ARTIFACT_DIR`.
-Common causes:
-
-- The guest didn't mount the 9p share (keep `0SEC_KERNEL_QEMU_SHARE_TAG` and
-  `/sbin/0sec-init` in sync).
-- Missing `gcc` or libc headers in a custom guest.
-- `dmesg` unreadable, or boot timeout too low without KVM.
-- Custom append line no longer points at the correct root disk or init.
+If the VM exits early, inspect `serial.log` in `0SEC_KERNEL_QEMU_ARTIFACT_DIR`:
 
 `.github/workflows/kernel-validator-e2e.yml` is the smoke-tested CI reference: it
 builds the artifacts, boots QEMU, runs a real `ingest --verify`, and uploads the

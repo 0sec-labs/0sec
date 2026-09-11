@@ -3,17 +3,15 @@ title: Authorized Engagements
 description: Running 0sec inside a client engagement — conservative posture, forensic timelines, and ATT&CK/ATLAS-mapped evidence.
 ---
 
-0sec is built for **authorized, announced testing**. Its rails make traffic
-identifiable, not hidden: attribution headers, per-engagement tokens,
-declared-scope enforcement, request counters. This page covers running inside a
-client engagement — controlling how loud the engine is, and producing evidence a
-client's security team can act on.
+0sec runs under authorized, announced testing only. Attribution headers,
+per-engagement tokens, declared-scope enforcement, and request counters
+identify traffic. This page covers posture controls and engagement evidence.
 
 ## Engagement profile
 
-By default 0sec runs at 5 rps/host, no jitter, and escalates on WAF blocks —
-fine for your own infrastructure, wrong for a monitored production estate.
-`--engagement-profile conservative` applies one auditable posture:
+By default 0sec runs at 5 rps/host, no jitter, and escalates on WAF blocks.
+For monitored production estates, `--engagement-profile conservative` applies
+one auditable posture:
 
 ```bash
 0sec scan --target https://app.example.com --mode web \
@@ -29,8 +27,7 @@ fine for your own infrastructure, wrong for a monitored production estate.
 | Web-recon pre-pass | unthrottled | routed through the rate limiter |
 | WAF-evasion ladder | auto-fires on block | disabled |
 
-Jitter is paced on the non-blocking path too: a perfectly periodic 1 rps train
-is a stronger automation signal to a behavioural SOC than bursty traffic.
+Jitter is paced on the non-blocking path too.
 
 **Profile-field precedence:** scope file > environment > CLI flag. The
 conservative profile lowers the scan's fallback request rate; it is **not a
@@ -39,9 +36,8 @@ profile and rate specification before executing an engagement. The MCP server
 uses a stricter clamp over its rate specification; do not assume those two
 entry points resolve rates identically.
 
-The WAF-evasion ladder can be disabled independently — this stops the automatic
-escalation into encoding-mutated payloads, not detection or reporting of the
-block:
+Disable the WAF-evasion ladder independently to stop automatic escalation into
+encoding-mutated payloads (detection and block reporting are unaffected):
 
 ```bash
 0sec scan --target https://app.example.com --scope ./engagement-scope.json --no-waf-evasion
@@ -60,12 +56,9 @@ fact. Runs without a profile are unchanged.
 
 ## Forensic timeline
 
-`0sec timeline` builds a chronological record from the immutable pipeline-event
-audit trail:
-
-`timeline` uses the selected SQLite database rather than searching all
-run-local databases. Pass `--db-path` for the run you are inspecting; the
-examples below use the default state root.
+`0sec timeline` builds a chronological record from the pipeline-event audit
+trail. It uses the selected SQLite database (not all run-local databases).
+Pass `--db-path` for the inspected run:
 
 ```bash
 0sec timeline <scanId> --db-path ~/.0sec/runs/<scanId>/state.db
@@ -87,18 +80,15 @@ so the timeline can state the actual URL, method, and status.
 
 ## Technique mapping — two matrices
 
-Findings and actions map against **two** separate MITRE matrices, kept as
-distinct fields:
+Findings and actions map against **two** MITRE matrices:
 
 - **ATT&CK (Enterprise)** — SQLi, SSRF, command injection, memory-safety,
   credential access.
 - **ATLAS (AI systems)** — prompt injection, jailbreak, system-prompt
   extraction, multi-turn manipulation.
 
-They are not merged. A row may carry either, both, or neither —
-`data-exfiltration` legitimately carries ATT&CK `T1567`/`T1041` *and* ATLAS
-`AML.T0057`/`AML.T0024`. Where a behaviour has no honest match, the mapping is
-left empty rather than approximated.
+A row may carry either, both, or neither. A behaviour with no match is left
+empty.
 
 :::note
 The current ATT&CK Enterprise matrix renamed tactic **TA0005** "Defense Evasion"
@@ -129,8 +119,8 @@ redacted preview.
 
 :::caution
 Identity findings name the affected principal, including user principal names.
-In a jurisdiction with data-protection obligations, treat finding output as
-personal data and handle custody accordingly.
+Treat finding output as personal data under applicable data-protection
+obligations.
 :::
 
 ## Attack paths — on-prem and cloud
@@ -162,7 +152,8 @@ result as a clean tenant. AzureHound exports also carry no conditional-access,
 federation, or PIM data — run `0sec identity` against a live tenant for those.
 :::
 
-## What 0sec does not do
+<span id="what-0sec-does-not-do"></span>
+## Limitations
 
 - No network sweep, host discovery, or CIDR enumeration
 - No non-HTTP service exploitation (no SMB, RDP, SSH, LDAP, SNMP)
@@ -177,9 +168,8 @@ for human operators.
 
 ## Data residency
 
-For engagements that need target-derived data to stay inside a defined
-perimeter, 0sec routes all model traffic through one configurable endpoint.
-Azure OpenAI works with no code change:
+To keep target-derived data inside a defined perimeter, route all model traffic
+through one configurable endpoint. Azure OpenAI works with no code change:
 
 ```bash
 export AZURE_OPENAI_API_KEY=...
@@ -188,8 +178,7 @@ export AZURE_OPENAI_MODEL=<deployment-name>
 ```
 
 At startup the engine probes the `x-ms-region` header and reports the physical
-region, which doubles as an audit artifact. Two caveats worth putting in a
-contract:
+region (audit artifact). Two caveats:
 
 1. The defensible claim is *"no target data leaves to third-party **model**
    providers."* Other enrichment paths still egress — GitHub API, OSV, package

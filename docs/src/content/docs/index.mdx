@@ -1,73 +1,37 @@
 ---
 title: 0sec documentation
-description: Install and use the open-source 0sec CLI. Configure providers, define authorized scope, investigate targets, and review evidence.
+description: Your self-improving cybersecurity team. The cyber reasoning system harness and CLI. Research Preview.
 template: splash
+prev: false
+next: false
 hero:
   title: 0sec documentation
-  tagline: Install the CLI, define your scope, and investigate with evidence. Start with a guided scan or work interactively in the console.
-  actions:
-    - text: CLI quickstart
-      link: /getting-started/
-      icon: right-arrow
-      variant: primary
-    - text: Command reference
-      link: /commands/
-      icon: right-arrow
-      variant: secondary
-    - text: GitHub
-      link: https://github.com/0sec-labs/0sec
-      icon: external
-      variant: minimal
 ---
 
 import { LinkCard, CardGrid } from "@astrojs/starlight/components";
 
+<span id="run-the-cli" />
+<span id="workflows" />
+
 ## Choose your workflow
 
+<div className="docs-journeys">
 <CardGrid>
-  <LinkCard
-    title="Run the CLI"
-    description="Install 0sec, configure a model provider, define an authorized target, and run your first scan."
-    href="/getting-started/"
-  />
-  <LinkCard
-    title="Work in the console"
-    description="Investigate interactively with explicit scope, approvals, and saved conversations."
-    href="/console/"
-  />
+  <LinkCard title="Install 0sec" description="Install the CLI and run your first scan." href="/getting-started/" />
+  <LinkCard title="Work in chat" description="Investigate targets, manage settings, and resume conversations." href="/console/" />
+  <LinkCard title="Self-evolving agents" description="Create executable skills and evaluate changes." href="/improvement-plane/" />
+  <LinkCard title="Commands" description="Find commands, flags, and examples." href="/commands/" />
+  <LinkCard title="Configuration" description="Choose models, credentials, and permissions." href="/configuration/" />
+  <LinkCard title="Troubleshooting" description="Resolve installation and runtime issues." href="/troubleshooting/" />
 </CardGrid>
+</div>
 
+<div className="docs-resources">
 
-## Run the CLI
+<span id="understand-the-system" />
+<span id="find-the-exact-contract" />
+<span id="research-and-development" />
 
-<CardGrid>
-  <LinkCard title="Commands" description="Full CLI reference: flags, modes, and subcommands." href="/commands/" />
-  <LinkCard title="Configuration &amp; API Keys" description="Models, credentials, runtimes, feature flags, and provider resolution." href="/configuration/" />
-  <LinkCard title="Scope &amp; Authorization" description="Define allowed hosts, wildcards, CIDR, and exclusions." href="/scope/" />
-  <LinkCard title="Recipes" description="Copy-paste scans for common scenarios." href="/recipes/" />
-</CardGrid>
+[Architecture](/architecture/) · [Research](/research/) · [Benchmarks](/benchmark/) · [Scope & authorization](/scope/)
 
-## Workflows
-
-<CardGrid>
-  <LinkCard title="Console" description="Interactive chat, approvals, sessions, and keyboard controls." href="/console/" />
-  <LinkCard title="Scan Workflows" description="Investigation, saved runs, evidence review, and retesting." href="/scan-workflows/" />
-  <LinkCard title="Integrations" description="CI, MCP, plugins, and data exports." href="/integrations/" />
-  <LinkCard title="Research Workflows" description="Variant hunting, deep review, fuzzing, and binary analysis." href="/research-workflows/" />
-  <LinkCard title="Troubleshooting" description="Diagnose setup, scope, runtime, and execution failures." href="/troubleshooting/" />
-</CardGrid>
-
-## Understand the system
-
-- [Architecture](/architecture/) — execution pipeline and runtime boundaries
-- [Agent Loop](/agent-loop/) — how agents plan, use tools, and stop
-- [Finding Triage](/triage/) — how candidate findings are reviewed
-- [Budget Management](/budget-management/) — CLI turn and cost limits
-- [Blind Verification](/blind-verification/) — independent verification approach
-- [Verification Results](/verification-result/) — deterministic replay contract
-
-## Research and development
-
-- [Benchmarks](/benchmark/) and [Methodology](/methodology/) — measured results and their limits
-- [Research](/research/) — experiments and technical rationale
-- [Roadmap](/roadmap/) — planned engine work and unreleased product status
+</div>

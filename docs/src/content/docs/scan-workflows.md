@@ -3,7 +3,8 @@ title: Scan Workflows
 description: Choose a scan or source review, authorize it, inspect saved findings, verify evidence, and validate a source fix.
 ---
 
-Use this guide for the operator workflow. [Commands](/commands/) is the exhaustive flag reference; [Configuration](/configuration/) explains runtime and configuration resolution.
+[Commands](/commands/) is the exhaustive flag reference;
+[Configuration](/configuration/) covers runtime and configuration resolution.
 
 ## Choosing a target path
 
@@ -45,7 +46,7 @@ The conservative posture changes request behavior, rate defaults, and WAF-evasio
 
 ## Authentication and runtime
 
-Provider credentials pay for model calls. Target credentials authenticate to the assessed application. Cloud login is a third, separate credential flow.
+Provider credentials pay for model calls. Target credentials authenticate to the assessed application. Cloud login is a separate credential flow.
 
 ```bash
 0sec scan --target https://staging.example.com --scope ./scope.json \
@@ -85,7 +86,8 @@ Keep credential files out of version control and prefer a file over secrets in s
 
 ### Optional capabilities
 
-`scan --features` enables supported feature tokens. `fp-moat` is a preset, not a claim that every layer ran or that all remaining findings are reproduced.
+`scan --features` enables supported feature tokens. `fp-moat` is a preset;
+it does not claim every layer ran or that all remaining findings are reproduced.
 
 ```bash
 0sec scan --target https://staging.example.com --scope ./scope.json \
@@ -154,7 +156,7 @@ Review request/response evidence, source locations, lifecycle state, verifier ou
 0sec resume SCAN_ID --db-path ./engagement.db --branch-from 12
 ```
 
-Resume requires compatible persisted scan state. Journal-based branching also requires the relevant journal entries. Keep the run's artifacts; a JSON report alone is not a resumable checkpoint. The standalone resume command supports specific persisted target routes, not every research or console workflow.
+Resume requires compatible persisted scan state. Journal-based branching also requires the relevant journal entries. A JSON report alone is not a resumable checkpoint. The standalone resume command supports specific persisted target routes, not every research or console workflow.
 
 For a live scan that needs its explicit scope supplied again, use the scan entry point:
 
@@ -177,7 +179,10 @@ Replay renders saved findings; it does not launch a fresh assessment or independ
 
 ## Verification and evidence
 
-[Blind Verification](/blind-verification/) explains independent agent verification. Deterministic replay instead executes a particular finding, fixture, or reproduction bundle and records concrete assertions. Verification availability and outcomes depend on the selected path; do not assume every stored finding passed the same pipeline.
+[Blind Verification](/blind-verification/) explains independent agent
+verification. Deterministic replay executes a finding, fixture, or reproduction
+bundle and records concrete assertions. Verification availability depends on the
+selected path.
 
 ### Explicit verification with `0sec verify`
 

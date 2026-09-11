@@ -3,12 +3,9 @@ title: Scope & Authorization
 description: Define CLI scope JSON, understand hostname and CIDR matching, and distinguish target authorization from execution isolation.
 ---
 
-A scope policy limits target destinations. It does not create permission to test
-a system and it is not an OS sandbox. Obtain authorization first, then encode
-the allowed hosts and exclusions as narrowly as possible.
-
-Managed engagement preparation is separate from CLI configuration and is
-in development; see [Roadmap](/roadmap/#0cloud) for status.
+A scope policy limits target destinations. It does not authorize testing a
+system and is not an OS sandbox. Obtain authorization first, then encode
+allowed hosts and exclusions as narrowly as possible.
 
 ## Minimal scope file
 
@@ -39,8 +36,8 @@ authorization; see [Configuration](/configuration/).
 
 ## Rule matching
 
-Rules match the URL's **hostname**, not an entire URL, port, path, or a DNS-resolved
-address. Hosts and rules are compared case-insensitively.
+Rules match the URL's **hostname** (case-insensitive), not port, path, or
+DNS-resolved address.
 
 | Rule | Matches | Does not match |
 | --- | --- | --- |
@@ -60,8 +57,8 @@ agree on a workflow that enforces them rather than encoding them as host rules.
 
 ## Exclusions win
 
-A matching `out_of_scope` rule always wins, even if the host also matches
-`in_scope`. An empty allowlist denies all destinations.
+A matching `out_of_scope` rule always wins over `in_scope`. An empty allowlist
+denies all destinations.
 
 ```json
 {
@@ -83,7 +80,7 @@ third-party hostname is not made in-scope because the starting page was allowed.
 
 ## Scope, credentials, and engagement controls
 
-These are separate inputs:
+Scope, credentials, and engagement controls are separate inputs:
 
 | Control | Purpose |
 | --- | --- |
@@ -101,9 +98,9 @@ permission for the additional traffic. It does not expand the host allowlist.
 
 ## Local workflows and strict scope mode
 
-Local source and package workflows are not identical to live-target scans.
-Where they run without a policy, scope-dependent shell egress guards are not
-active. The `scope_guards_inert` diagnostic identifies that condition; other tool
+Local source and package workflows do not activate scope-dependent shell
+egress guards when run without a policy. The `scope_guards_inert` diagnostic
+identifies that condition; other tool
 restrictions may still apply. Local code acquisition, model requests, and tools
 can require network access.
 
@@ -124,12 +121,12 @@ live-target scope requirement.
 
 The default shell executor runs on your host. URL checks and scanner
 suppression are not a firewall, namespace, container, or VM boundary. Use a
-disposable environment for untrusted code and targets. Optional Docker and
-specialized verifier paths have their own prerequisites and limitations in
-[Configuration](/configuration/) and [Scan Workflows](/scan-workflows/).
+disposable environment for untrusted code and targets. Docker and verifier
+paths have separate prerequisites in [Configuration](/configuration/) and
+[Scan Workflows](/scan-workflows/).
 
-Before resuming, confirm the target, scope, credentials, and allowed side effects
-are still valid. Persisted state is not continuing authorization.
+Confirm the target, scope, credentials, and allowed side effects are still
+valid before resuming. Persisted state is not continuing authorization.
 
 ## Diagnose a scope refusal
 
@@ -145,3 +142,5 @@ are still valid. Persisted state is not continuing authorization.
 Source: `packages/core/src/scope/scope.ts`,
 `packages/core/src/scope/scope-guard.ts`, and
 `packages/cli/src/commands/scan.ts`.
+
+Managed access follows the separate [0cloud deployment policy](/roadmap/#0cloud).

@@ -5,9 +5,8 @@ draft: true
 pagefind: false
 ---
 
-**0cloud is not released.** These are proposed preparation notes, not an
-available onboarding flow or invitation to use a service. Verify and rewrite
-them against the released product before publishing.
+**0cloud is not released.** These are draft preparation notes. They will be
+verified and rewritten against the released product before publishing.
 
 ## 1. Prepare a short brief
 
@@ -26,8 +25,8 @@ Constraints: agree on request rate, testing window, and a stop contact
 Deliverable needed: reproduction evidence and a retest after remediation
 ```
 
-This is an engagement brief, not a CLI scope file. It does not authorize testing
-until the scope and rules of engagement are agreed.
+This is an engagement brief. Testing is not authorized until the scope and
+rules of engagement are agreed.
 
 ## 2. Request access
 
@@ -70,6 +69,6 @@ that could not reach the target as proof that a fix worked.
 | No managed access yet | Use the contact route above; use the CLI independently if appropriate. |
 | Target is private or behind SSO | Describe the access constraint without sending credentials in the form. Agree on a reachable test path. |
 | Testing authorization is unclear | Resolve permission and exclusions with the system owner before execution. |
-| Need a specific integration or delivery format | Confirm it during scoping rather than assuming it is generally available. |
+| Need a specific integration or delivery format | Confirm it during scoping. Do not assume it is generally available. |
 
 Continue with [Scope & Access](/cloud/scope-and-access/).

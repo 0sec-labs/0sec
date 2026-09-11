@@ -3,13 +3,9 @@ title: Improvement Plane
 description: Source evolution, executable plugins, and the live self-evolving harness contract.
 ---
 
-0sec's goal is **self-evolution, not only self-improvement**. An agent should
-learn a codebase and its failures, write reusable executable skills, and create
-or replace its own reasoning and presentation components while continuing a
-long-running task. The built-in harness remains useful without requiring the
-agent to build its own environment first.
-
-These mechanisms have different activation boundaries:
+0sec retains codebase notes, evaluates source changes, and runs versioned
+executable plugins. The live-harness candidate extends these mechanisms to
+reasoning and presentation components during a session.
 
 - **Learning** retains revision-aware notes and execution feedback.
 - **Source evolution** proposes edits to copies of source snapshots, evaluates
@@ -23,10 +19,9 @@ These mechanisms have different activation boundaries:
   and are not yet an end-to-end qualification claim. See
   [Live harness component contract](#live-harness-component-contract).
 
-Writing code, loading a plugin, and proving an improvement are separate events.
 Source candidates execute in fresh Docker containers or local smolvm guests
-with bounded resources. An accepted generation changes subsequent work at a
-defined boundary; it does not overwrite the provenance of work already done.
+with bounded resources. Activation changes subsequent work at a defined boundary
+while preserving prior version identities and receipts.
 
 ```text
 task observations and development feedback
@@ -40,17 +35,12 @@ task observations and development feedback
 
 ## Engagement boundary
 
-An ordinary source-evolution promotion does not by itself replace a running
-0sec process. Existing worker pins retain their snapshot and configuration.
-Executable-plugin activation is a separate, already implemented next-call
-boundary; live driver and UI replacement use the generation contract below.
-Neither should be described as an app updater or a mandatory process restart.
+Existing source workers retain their snapshot and configuration after promotion.
+Executable plugins activate on subsequent calls. Live driver and UI replacement
+use the generation contract below.
 
-The boundary is between **mutable agent behavior** and **authority over the
-environment and evidence**, not between "rules may change" and "code may not."
-Sandboxed components use host-mediated services. Workspace-trusted ESM
-components are a separately authorized, more powerful execution tier; their
-host permissions are not sandbox guarantees.
+Sandboxed components use host-mediated services. Workspace-trusted ESM requires
+separate authorization and executes with host permissions.
 
 - Retain version identities, observations, and receipts across changes.
 - Keep evaluation answers and credentials out of candidate source snapshots.
@@ -59,35 +49,27 @@ host permissions are not sandbox guarantees.
 - An automatic-promotion policy or self-extension setting is not a grant of
   trusted host execution.
 
-Version pinning is not an attestation of immutable model weights: upstream
-aliases, serving changes, or runtime fallbacks can change behavior. Record
-observed outcomes and re-evaluate rather than treating a requested model name
-as sufficient provenance.
+Upstream aliases, serving changes, and runtime fallbacks can change model
+behavior. Retain observed outcomes and re-evaluate version-pinned candidates.
 
-### Model output is not verification
+<span id="model-output-is-not-verification"></span>
+### Verification evidence
 
-Reasoning text is a diagnostic signal, not an authorization or evidence receipt.
-[CoT faithfulness varies by model and task](https://arxiv.org/abs/2307.13702);
-enforce scope and promotion rules outside the model.
-
-A source claim surviving an adversarial model pass is not a reproduction.
-An empty model refutation is not proof that the claim is false, either. Both
-outcomes remain **unresolved** in the shared hunt ledger; model-only rejection
-must not become a known negative that anchors later research. Existing ledger
-files are not rewritten: re-evaluate any older model-only disprovals before
-reusing them as settled evidence.
+[CoT faithfulness varies by model and task](https://arxiv.org/abs/2307.13702).
+Enforce scope and promotion rules outside the model. Model-supported claims
+and model-only rejections remain **unresolved** in the shared hunt ledger.
+Existing ledger files remain unchanged; re-evaluate older model-only disprovals
+before using them as settled evidence.
 
 ### Revision-aware codebase learning
 
-Scoped native-API research runs can call `remember_codebase` to retain architecture
-and dataflow notes. The host selects the repository root and hashes the cited
-files; the model cannot supply its own root or evidence digests. Notes use the
-existing private, redacted hunt-memory store, not source edits or model training.
+Scoped native-API research runs use `remember_codebase` for architecture and
+dataflow notes in the private, redacted hunt-memory store. The host selects the
+repository root and hashes cited files.
 
-A fresh eligible run receives up to six still-current notes as **untrusted
-hints**. Changed, missing, out-of-scope, symlinked, or multiply linked evidence
-invalidates the note. File hashes establish which source the note refers to,
-not whether the model's interpretation is correct.
+A fresh eligible run receives up to six current notes as **untrusted hints**.
+Changed, missing, out-of-scope, symlinked, or multiply linked evidence invalidates
+the note. Hashes identify source versions; interpretations still need verification.
 
 Verification runs neither receive these notes nor get the learning capability.
 `0SEC_DISABLE_HUNT_MEMORY=1` disables recall and persistence. Resumed runs keep
@@ -135,10 +117,9 @@ must remain compatible. Changing the proposal model or remaining spending
 budgets does not erase otherwise compatible observations. Held-out and
 negative-control attempts, scores, and expected answers are not recovery feedback.
 
-This is durable learning context, **not durable campaign accounting**.
-`evolve run --watch` accumulates spend within one process; restarting it does not
-resume a campaign-wide budget ledger. It also stops after a no-change pass.
-Do not supervise restarts as an unlimited, unattended improvement service.
+`evolve run --watch` accumulates spend within one process and stops after a
+no-change pass. Restarting loses that campaign budget state. Unattended restarts
+require a separate budget control.
 
 ### Trust boundary
 
@@ -150,24 +131,18 @@ boundary, a candidate process is not granted access to:
 - writes to the evolution store (the controller publishes snapshots and receipts);
 - persistence outside the disposable worker.
 
-This trust boundary does **not** protect against a compromised host or operator
-account. An attacker with root access to the host or write access to the
-evolution store can tamper with snapshots, receipts, or the registry. The
-hash-chained ledger detects inconsistent edits, not an attacker rewriting the
-entire history. It is not an external signature or a trusted transparency log.
+Host root access or write access to the evolution store permits tampering with
+snapshots, receipts, and registry history. Hash chaining detects inconsistent
+edits; it provides no external signature or protection against a complete rewrite.
 
-This describes offline evaluation, not every plugin execution tier. Operational
-executable plugins can request authorized tool/model services through the host
-broker. Separately granted workspace-trusted ESM plugins run with host
-permissions; do not apply the offline worker's confinement claims to them.
+Operational plugins can request authorized tool/model services through the host
+broker. Workspace-trusted ESM executes with host permissions. The offline
+worker's restrictions apply only to that evaluation path.
 
 ### Automatic promotion
 
-The config flag **`autoPromote: true`** lets source candidates advance without
-per-candidate approval when every promotion gate passes. This is the configured
-autonomy model — the old absolute "no automatic source-code promotion" is
-replaced by explicit operator choice through the config. Default remains
-`false`; a canary trial still runs before any version becomes active.
+**`autoPromote: true`** permits promotion after all gates and canary trials pass.
+The default is `false`.
 
 ### Future-worker version pinning
 
@@ -421,7 +396,6 @@ implements the model with a component loader and hot module replacement;
 [DSH's architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)
 uses services for the agent loop, tools, model adapters, and session log.
 
-The qualifications matter:
 
 - The paper's sections 6.1 and 6.3 distinguish reversible, context-owned effects
   from external emissions and from sandboxing. Removing a listener can be
@@ -436,78 +410,56 @@ The qualifications matter:
 - This is a composability paper, not a benchmark demonstrating autonomous
   security-quality improvement or crash-safe, multi-day agent operation.
 
-The live runtime integration pins `@deepseek-ai/cordis@4.0.2`: this is an actual
-framework dependency, not only an analogy. 0sec adds its generation, guest
-bridge, accounting, and frontend contracts around explicit dependencies and
-owned cleanup. Integration is still being qualified; using Cordis does not
-prove that every component supplies correct inverses or that external effects
-can be rolled back.
+The candidate integration pins `@deepseek-ai/cordis@4.0.2`, with 0sec generation,
+guest-bridge, accounting, and frontend contracts. Component cleanup and external
+effects require separate qualification.
 
-Self-rewriting is a search mechanism, not evidence that the resulting scanner
-is better. The relevant research supports evaluator-driven iteration:
+Research informing evaluator-driven iteration:
 
 - [Self-Harness (Zhang et al., 2026, v3)](https://arxiv.org/abs/2606.09498v3)
-  connects three stages: verifier-grounded weakness mining, diverse minimal
-  harness-code proposals by the same fixed model, and regression validation.
-  A candidate must not reduce held-in or held-out aggregate pass counts and
-  must improve at least one split. The authors report improvements for all nine
-  tested model/benchmark pairs; their largest relative gain, 132%, is not a
-  percentage-point gain or a cybersecurity result. The study uses bounded edits
-  to a minimal harness definition, fixed benchmark subsets, and fresh task
-  environments. It explicitly does not establish open-ended self-improvement.
-  For 0sec, it motivates a failure-driven optimizer around the live component
-  runtime, not replacing the evaluator with the candidate's self-assessment.
+  combines verifier-grounded weakness mining, fixed-model code proposals, and
+  regression checks. Accepted edits preserve aggregate pass counts on both
+  held-in and held-out splits and improve at least one. All nine tested
+  model/benchmark pairs improved; the largest relative gain was 132%.
+  The bounded, fresh-environment experiments establish neither cybersecurity
+  gains nor open-ended improvement.
 - [Darwin Gödel Machine (Zhang et al., 2025)](https://arxiv.org/abs/2505.22954)
-  empirically improves coding agents through code changes and an archive of
-  alternative agents. Its authors also report
-  [objective hacking and fabricated tool-use logs](https://sakana.ai/dgm/).
-  0sec therefore retains controller-produced execution receipts rather than
-  trusting a candidate's claim that its tests passed. Retaining versions alone
-  is not DGM's open-ended search over an archive.
+  searches an archive of modified coding agents. Reported
+  [objective hacking and fabricated logs](https://sakana.ai/dgm/) motivate
+  controller-produced receipts. 0sec has no equivalent open-ended archive search.
 - [AlphaEvolve (Google DeepMind, 2025)](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/)
-  combines generated programs with automated evaluators. This supports a
-  propose → execute → measure → select loop, not transferring its reported
-  mathematical or compute gains to cybersecurity without separate evidence.
-- [GEPA (Agrawal et al., 2025)](https://arxiv.org/abs/2507.19457) uses natural
-  language reflection on execution trajectories and combines complementary
-  candidates. Development-only execution feedback and readable source history
-  support reflection in 0sec; they do not implement GEPA's Pareto search or
-  establish equivalent performance.
+  pairs generated programs with automated evaluators. Cybersecurity gains require
+  separate measurement.
+- [GEPA (Agrawal et al., 2025)](https://arxiv.org/abs/2507.19457) reflects on
+  execution trajectories and combines candidates. 0sec retains development
+  feedback and source history; GEPA's Pareto search is unimplemented.
 - [The reusable holdout (Dwork et al., 2015)](https://doi.org/10.1126/science.aaa9375)
-  addresses invalid inference from adaptive reuse of evaluation data. 0sec's
-  repeated trials and canaries reuse the configured corpus: they measure
-  repeatability, not independent generalization. 0sec does not implement that
-  paper's privacy-based reusable-holdout mechanism.
+  addresses adaptive evaluation-data reuse. 0sec's canaries measure repeatability
+  on the configured corpus. Independent generalization and the paper's
+  privacy-based mechanism remain outside this implementation.
 - [Hierarchical Self-Improvement (Zhou, 2026)](https://arxiv.org/abs/2608.08466)
-  evolves task harnesses and evolver strategies under a frozen outer anchor,
-  with a DeepSeek model as the backbone. It reports limits from feedback
-  quality and model capability. This is distinct from the
-  [DeepSeek Harness runtime](https://github.com/deepseek-ai/deepseek-harness):
-  a plugin architecture or MCP connection alone is not an improvement loop.
+  evolves harnesses and evolver strategies with a frozen outer anchor and a
+  DeepSeek backbone. Results depend on feedback and model capability.
+  [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) is a
+  separate runtime project.
 - [EVOHARNESSBENCH (Ke et al., 2026)](https://arxiv.org/abs/2609.04280)
-  reports harness-induced forgetting and inconsistent adaptation gains.
-  Expanding tools, skills, or agents therefore requires retention evaluation;
-  a larger harness is not inherently a better one.
+  reports forgetting and inconsistent gains. Evaluate retention when changing
+  tools, skills, or agents.
 - [Post-Hoc Reasoning in Chain of Thought (Cox et al., 2026)](https://arxiv.org/html/2603.01437v2)
-  finds pre-committed answers and misleading rationalization in the tested
-  instruction-tuned models and tasks. A candidate's explanation is useful
-  context, not evidence that its change is correct or authorized.
+  finds pre-committed answers and misleading rationalizations in the tested
+  models and tasks. Candidate explanations require independent evidence.
 - [OpenAI's Astra system card](https://deploymentsafety.openai.com/gpt-6-astra)
-  reports reduced monitorability alongside improved measured alignment.
-  Reasoning monitoring is therefore supplementary: filesystem, credential,
-  execution, and promotion boundaries must be enforced outside model output.
-  Those results do not establish that recurrent depth caused the change.
+  reports reduced monitorability with improved measured alignment; it establishes
+  no causal role for recurrent depth. Enforce filesystem, credential, execution,
+  and promotion boundaries outside model output.
 - [A Little Depth Goes a Long Way (Merrill and Sabharwal, 2025)](https://arxiv.org/abs/2503.03961)
-  studies transformer depth and computational expressivity. Repeating an API
-  agent loop is not the same mechanism. Choose model and reasoning settings
-  using measured task outcomes, latency, and cost, not assumed architecture.
+  studies transformer depth and expressivity. It supplies no equivalent result
+  for repeated API calls. Measure task outcomes, latency, and cost.
 
-The implemented boundary is fixed acceptance criteria, independently labelled
-controls, restricted candidate execution, and versioned rollout. There is no
-automatic oracle for curating fresh security ground truth, no automatic held-out
-rotation, and no demonstrated general security-quality gain from this local
-implementation. Supply fresh independently curated evaluation cases before
-treating successive benchmark wins as evidence of general improvement.
+0sec uses fixed acceptance criteria, independently labelled controls, restricted
+execution, and versioned rollout. Operators supply fresh evaluation cases.
+Automatic ground-truth curation, held-out rotation, and general security-quality
+gains remain unestablished.
 
 Tracked implementation work:
 
@@ -537,17 +489,14 @@ positive, held-out, and clean-control fixtures still gate automatic synthesis.
 Promotion of a finder lens changes a prompt-backed detector, not FoxGuard's
 compiled Rust engine or rules.
 
-Offline lifecycle checks demonstrate orchestration, not better security
-coverage. Live provider runs, actual sandbox execution, and independently
-verified detection outcomes are separate validation requirements.
+Lifecycle checks measure orchestration. Provider behavior, sandbox execution,
+and detection quality require their own checks.
 
 ## Live harness component contract
 
-**Integration status:** `packages/shared/src/live-harness.ts` defines the shared
-wire types. This section describes the agreed runtime contract, not a claim
-that every CLI, browser, and desktop path has passed live integration checks.
-Desktop remains unreleased. An HTTP/event adapter and the TUI must consume the
-same runtime catalog rather than maintain separate plugin registries.
+The shared live-harness contract is unreleased. Runtime and frontend consumers
+use one catalog. The local candidate measurements below cover specific paths;
+desktop installation and hosted end-to-end qualification remain pending.
 
 ### Composition and language support
 
@@ -560,10 +509,8 @@ services, and one execution source:
 | `sandboxed` | Retained executable `pluginId`, `versionId`, and `toolName` | Guest execution; operational effects use the existing authorized SDK broker |
 | `trusted` | Self-contained ESM `entry` and `files`, with optional `ui.tui` / `ui.web` entries | Explicit workspace grant; code executes with host permissions |
 
-The current service names are `agent.driver` and `ui.view`. They are actual
-implementation replacement points, not only prompt templates or static rule
-lists. A shared catalog may evolve to expose more services; unimplemented
-service names must not be advertised as available.
+The current replacement services are `agent.driver` and `ui.view`.
+Additional services require implementation before they enter the catalog.
 
 Python already works through MCP and the language-neutral source-worker
 command protocol when the selected image contains Python. The current
@@ -602,11 +549,8 @@ separate workspace grant and must not remove the host-owned recovery controls.
 
 ### Autonomy without a second permission system
 
-The intended operator experience is a capable built-in agent plus unattended
-iteration within the chosen authority and spending envelope. Agents can author
-code, compose executable skills, compare alternatives, and replace admitted
-components; the operator need not approve every ordinary iteration when an
-automatic policy already authorizes it.
+Within an authorized policy and spending budget, agents can author code,
+compose skills, compare alternatives, and replace admitted components.
 
 New sessions default to model self-extension enabled through
 `DEFAULT_ALLOW_MODEL_SELF_EXTENSION = true` in
@@ -664,11 +608,43 @@ holdout and needs separate exposure management. These are optimizer
 requirements, not features supplied automatically by Cordis or by the current
 generation wire types.
 
-These are acceptance requirements, not claims of completed multi-day operation.
-The existing source watcher is not a crash-safe campaign service; see
-[feedback across passes](#feedback-across-evolution-passes) and the tracked
-[campaign work](https://github.com/0sec-labs/0sec/issues/41). Live generation
-types alone do not establish persistent state recovery or Python plugin parity.
+Multi-day operation and crash-safe campaign recovery remain development goals.
+See [feedback across passes](#feedback-across-evolution-passes) and the
+[campaign work](https://github.com/0sec-labs/0sec/issues/41). Persistent recovery
+and first-class Python components require further implementation.
+
+### Local candidate measurements
+
+On 11 September 2026, an **uncommitted candidate** at observed base
+`be299cbe` passed 12 compiled Node host/console scenarios with real per-phase
+Docker execution and deterministic model fixtures. Two compiled native scenarios
+used trusted ESM, deterministic models, and authorized bash.
+
+The 12 replacement/rollback cycles produced these observations:
+
+| Measurement | Result |
+| --- | --- |
+| Owned resources | 1 while active; 0 after close plus 50 ms |
+| Runtime handles after close | No Timeout or ProcessWrap; 2 stdio PipeWrap remain |
+| Heap, cycles 1 → 12 | 17,572,032 → 18,050,864 bytes |
+| Heap, whole probe | 16,609,464 → 18,912,840 bytes |
+| Distinct trusted module URLs imported | 21 |
+
+Heap growth has no established cause. Module eviction, multi-day stability,
+real-provider behavior, hosted billing, and security-quality gains remain unmeasured.
+A fresh engine process is required for trusted ESM reclamation.
+
+Configured limits are **32 retained generations**, **256 KiB** state/view/output
+JSON, and **256 KiB / 128 messages** per executable SDK model request. At the
+generation cap, further submissions reject while the active generation stays usable.
+
+A separate sandbox-only fixture on the same compiled candidate created and
+activated driver versions with host trust off. It retained session/history,
+pinned the first version until explicit activation, and migrated JSON state.
+Every sandboxed phase used a fresh guest; restart does not reconstruct active state.
+
+Later shutdown repairs have source-unit coverage only. These compiled measurements
+apply to the earlier candidate, independently of frontend and installation checks.
 
 ## CLI reference
 
@@ -813,7 +789,7 @@ larger independently curated positive, held-out, and clean-control corpora.
 | `command` | Executable + arguments run in the sandbox. At least 1 argument, max 128. |
 | `objective` | Free-text goal for the model (up to 16000 chars). |
 | `cases` | At most 1000 total, with at least `promotionPolicy.minimumCases` distinct cases in **each** lane (10 per lane by default). No duplicate IDs or inputs. `input` and `expected` must be finite JSON. |
-| `computeUsdPerSecond` | Honest compute cost estimate; used for budget tracking. |
+| `computeUsdPerSecond` | Compute cost estimate used for budget tracking. |
 
 ### Optional fields with defaults
 

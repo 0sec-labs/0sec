@@ -11,15 +11,12 @@ On the XBOW IDOR benchmark challenge, our structured-tools agent ran 20+ turns a
 
 Then we gave the agent a single tool: `bash`. Run any bash command. The agent wrote `curl` commands with cookie jars, decoded JWTs with Python one-liners, looped through IDOR endpoints with bash, and **extracted the flag in 10 turns. First try.**
 
-## Why shell wins for pentesting
+<span id="why-shell-wins-for-pentesting"></span>
+## Shell interface
 
-**The model already knows curl.** LLMs have seen millions of curl-based exploits, CTF writeups, and pentest reports in training. Structured tools require learning a new API. curl is already in the model's muscle memory.
+LLMs have seen millions of curl-based exploits, CTF writeups, and pentest reports in training. Structured tools require learning a new API. With shell, the agent writes the command directly.
 
-**One tool, zero cognitive overhead.** With 10 structured tools, the agent spends tokens deciding which to use. With shell, it just writes the command.
-
-**Composability.** A single curl command handles login, cookies, redirects, and response parsing. With structured tools, that's 4 separate calls with state management.
-
-**Full toolkit.** The agent can run sqlmap, write Python exploit scripts, use jq, chain pipes -- anything a real pentester would do.
+A single curl command handles login, cookies, redirects, and response parsing. With structured tools, that is 4 separate calls with state management. The agent can also run sqlmap, write Python exploit scripts, use jq, chain pipes.
 
 ## The 0sec tool set
 

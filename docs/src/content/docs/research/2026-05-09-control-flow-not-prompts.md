@@ -1,7 +1,7 @@
 ---
-title: "We took the control-flow audit seriously — here are the 5 fixes"
+title: "2026-05-09: Control-flow audit"
 date: "2026-05-09"
-description: "A bear-blog post argued that agents need deterministic code at chokepoints, not 'MUST' prompts. We audited 0sec's agent loop, found 5 places we were doing it wrong, and shipped fixes in 24 hours. Here's the diff."
+description: "A bear-blog post argued that agents need deterministic code at chokepoints, not 'MUST' prompts. We audited 0sec's agent loop, found 5 places we were doing it wrong, and shipped fixes in 24 hours."
 ---
 
 > **Historical research log (2026-05-09).** A dated lab note kept for transparency. It reflects 0sec's state at the time and is not current product guidance.
@@ -10,9 +10,7 @@ description: "A bear-blog post argued that agents need deterministic code at cho
 
 ## The post that started it
 
-On 2026-05-07, [bsuh's "Agents need control flow, not more prompts"](https://bsuh.bearblog.dev/agents-need-control-flow-not-more-prompts/) hit the HN front page. The thesis is one sentence: agent reliability comes from deterministic code at chokepoints, not from prompts that escalate to "MUST" or "MANDATORY" when the model misbehaves. If the model has to re-derive a constraint on every turn, the constraint will fail on some non-trivial fraction of turns. Encode it once, in code, at the spot where a single bad output corrupts the rest of the run.
-
-We took it seriously. This post is what we changed and what we deliberately didn't.
+On 2026-05-07, [bsuh's "Agents need control flow, not more prompts"](https://bsuh.bearblog.dev/agents-need-control-flow-not-more-prompts/) argued that agent reliability comes from deterministic code at chokepoints, not from prompts that escalate to "MUST" or "MANDATORY" when the model misbehaves. If the model has to re-derive a constraint on every turn, the constraint will fail on some non-trivial fraction of turns. Encode it once, in code, at the spot where a single bad output corrupts the rest of the run.
 
 ## What we audited
 
@@ -45,13 +43,13 @@ if (requestEmpty && responseEmpty && pocStepsEmpty) {
 }
 ```
 
-The retry-friendly shape mirrors `flag-validator.ts` at `markDone`: rejected once with a specific hint, accepted on retry. The model sees its own bad output rejected with concrete guidance instead of inferring from a downstream artifact it never reads.
+The retry-friendly shape mirrors `flag-validator.ts` at `markDone`: rejected once with a specific hint, accepted on retry.
 
 ### #288 — fuzzy-title dedup at save time
 
 **What the prompt enforced.** `prompts.ts:134` told the agent to "query existing findings to avoid duplicate work." The agent was supposed to call `query_findings` before each `save_finding`.
 
-**Why prompts failed at it.** Same SQLi got saved 2–4 times across attack and verify stages. The disclose bundle then rendered N advisories from one bug. We were already running post-hoc dedup logic in `consolidate-xbow.ts` to clean up benchmark output, which is a tell — if you need post-hoc dedup, the ingest didn't dedup.
+**Why prompts failed at it.** Same SQLi got saved 2–4 times across attack and verify stages. The disclose bundle then rendered N advisories from one bug. Post-hoc dedup in `consolidate-xbow.ts` was cleaning up benchmark output, which already indicated the ingest didn't dedup.
 
 **Where the gate now lives.** `packages/core/src/agent/tools.ts:2467`. Before pushing a new finding, `saveFinding` builds a similarity key from `(category, normalizedTitle, evidenceRequestPrefix)` and walks `this.ctx.findings` for an existing match. Exact match on normalized title merges. Fuzzy match — Levenshtein ≤ 5 on normalized title plus identical evidence-request prefix — also merges:
 
@@ -68,11 +66,11 @@ const existing = this.ctx.findings.find((f) => {
 });
 ```
 
-The `FUZZY_TITLE_DISTANCE_THRESHOLD = 5` (in `tools-helpers.ts:77`) tolerates `"SQL injection in /users"` vs `"SQL Injection in /users.php"` after normalization, but the same-prefix evidence guard prevents `/admin/users` vs `/admin/orders` from collapsing. First-write-wins: re-running with stronger evidence requires the explicit `update_finding` path.
+`FUZZY_TITLE_DISTANCE_THRESHOLD = 5` (in `tools-helpers.ts:77`) tolerates `"SQL injection in /users"` vs `"SQL Injection in /users.php"` after normalization, but the same-prefix evidence guard prevents `/admin/users` vs `/admin/orders` from collapsing. First-write-wins: re-running with stronger evidence requires the explicit `update_finding` path.
 
 ### #289 — path-existence validation at parse time
 
-**What the prompt enforced.** `prompts.ts:514` told the agent to "Read the file… verify independently" before citing a `file:line` reference. The H1 disclosure CoC explicitly punishes hallucinated function/file/endpoint references in reports — it's tripwire #1.
+**What the prompt enforced.** `prompts.ts:514` told the agent to "Read the file… verify independently" before citing a `file:line` reference. The H1 disclosure CoC explicitly punishes hallucinated function/file/endpoint references in reports.
 
 **Why prompts failed at it.** `findings-parser.ts parseStructuredBlocks` accepted whatever `file:` line the agent emitted. There was a real path-existence check in `disclose/canary.ts:93 verifyAgainstRef`, but it only ran when `--repo` was passed at disclose time, and most pipelines didn't reach it. Hallucinated `file:line` references would slip through to advisories.
 
@@ -93,7 +91,7 @@ export function validateFileRef(fileRef, scopePath) {
 }
 ```
 
-Called from both parse strategies (`parseJsonOutput` at `findings-parser.ts:108`, `parseStructuredBlocks` at `:182`). Path traversal that escapes scope is treated as fabricated; absolute paths are rejected on the same grounds. Failure mode is "drop a finding," not "raise on a real one" — false-negative-safe by design.
+Called from both parse strategies (`parseJsonOutput` at `findings-parser.ts:108`, `parseStructuredBlocks` at `:182`). Path traversal that escapes scope is treated as fabricated; absolute paths are rejected on the same grounds. Failure mode is "drop a finding" — false-negative-safe by design.
 
 ### #290 — auth injection at bash time
 
@@ -115,13 +113,13 @@ if (this.ctx.authConfig && this.ctx.scope) {
 }
 ```
 
-The rewriter splits on top-level pipes and `&&`/`||`/`;`, then for each curl/wget segment whose URL is in scope and which doesn't already carry explicit auth, splices `$AUTH_CURL_FLAG` in front of the URL. Python `requests` invocations without explicit auth are refused with a hint pointing at `http_request`. Auth-aware in code, not prompt.
+The rewriter splits on top-level pipes and `&&`/`||`/`;`, then for each curl/wget segment whose URL is in scope and which doesn't already carry explicit auth, splices `$AUTH_CURL_FLAG` in front of the URL. Python `requests` invocations without explicit auth are refused with a hint pointing at `http_request`.
 
 ### #291 — per-item orchestration loops
 
 **What the prompt enforced.** `prompts.ts:457` told the verify agent: "For each finding: 1. Replay the original attack…" and the verify orchestrator passed every finding into a single `runNativeAgentLoop` with `maxTurns: Math.min(findings.length * 3, 15)`. Same shape on `audit.ts collectSourceFiles` and the research path: "For EACH file that handles untrusted input…" inside one shared session.
 
-**Why prompts failed at it.** With ≥6 findings the agent couldn't actually do 3 turns each in a 15-turn budget. It skipped, deduped (informally, in-context), or condensed. Skipped findings stayed `discovered` and contaminated the disclose bundle. On the audit/research path, dumping 50 source files into one prompt produced a skim, not a per-file walk.
+**Why prompts failed at it.** With ≥6 findings the agent couldn't do 3 turns each in a 15-turn budget. It skipped, deduped (informally, in-context), or condensed. Skipped findings stayed `discovered` and contaminated the disclose bundle. On the audit/research path, dumping 50 source files into one prompt produced a skim, not a per-file walk.
 
 **Where the gate now lives.** Three sites, same shape — replace one big prompt with an outer `for` loop in code.
 
@@ -141,22 +139,22 @@ for (const finding of findings) {
 }
 ```
 
-`unified-pipeline.ts:915 runPerFileResearch` and `audit.ts:668 runPerFileAudit` mirror the shape for research and npm/PyPI/cargo/OCI audits — one agent session per source file, focused per-file system prompt, deterministic outer loop. The reference implementation already lived in the repo: `triage/pov-gate.ts buildPovSystemPrompt` was doing this years ago for evidence-judge agents. We just generalized the pattern.
+`unified-pipeline.ts:915 runPerFileResearch` and `audit.ts:668 runPerFileAudit` mirror the shape for research and npm/PyPI/cargo/OCI audits — one agent session per source file, focused per-file system prompt, deterministic outer loop. The reference implementation already lived in the repo: `triage/pov-gate.ts buildPovSystemPrompt` was doing this for evidence-judge agents.
 
-Feature-flagged via `0SEC_FEATURE_PER_ITEM_ORCHESTRATION` (default on) — set to `0` if you need to revert to the shared-session shape for cost-bounded benchmarks. Default-on because per-item is the correct shape; the flag exists to let benchmark sweeps measure the delta.
+Feature-flagged via `0SEC_FEATURE_PER_ITEM_ORCHESTRATION` (default on) — set to `0` if you need to revert to the shared-session shape for cost-bounded benchmarks.
 
 ## The 11 patterns we didn't change
 
-The audit also enumerated 11 "MUST"-shaped prompts that already had deterministic gates behind them. We didn't touch these because they were already doing what bsuh's post advocates:
+The audit also enumerated 11 "MUST"-shaped prompts that already had deterministic gates behind them:
 
 - `triage/pov-gate.ts:160 CATEGORY_JUDGES` — LLM produces `execution_evidence`, regex oracle decides if it's real exploit proof. Per-category. The textbook narrow-LLM + deterministic-judge pattern.
-- `agent/flag-validator.ts validateFlagShape`, called from `tools.ts markDone` — honeypot flags rejected once with a hint, second call passes through. The retry-friendly shape #287 now mirrors.
+- `agent/flag-validator.ts validateFlagShape`, called from `tools.ts markDone` — honeypot flags rejected once with a hint, second call passes through.
 - `triage/holding-it-wrong.ts isHoldingItWrong` — sink-name blocklist invoked at `agentic-scanner.ts:922`. Findings citing `writeFile` / `compile` / `eval` are downgraded to `info` with a triage note.
 - `disclose/template.ts:118 redactSensitiveHeaders` — AWS keys, JWTs, Bearer tokens stripped unconditionally. No prompt asks the LLM to redact.
-- `agent/native-loop.ts:1234 LoopDetector` + `earlyStopNoProgress` + budget injections at 30/50/70/85% turn fractions — deterministic loop detection. The "URGENCY: switch now" prompt is fired by code, not by the model self-noticing.
+- `agent/native-loop.ts:1234 LoopDetector` + `earlyStopNoProgress` + budget injections at 30/50/70/85% turn fractions — deterministic loop detection. The "URGENCY: switch now" prompt is fired by code, not by the model.
 - `agent/tools.ts validateTargetUrl` + scope check at every fetch site + `scope/scanner-binaries.ts detectScannerBinary` — pure code scope enforcement. The "stay within that scope" prompt at `prompts.ts:77` is documentation; the gate is at every URL/shell entry.
-- `triage/verify-pipeline.ts:670 parseStepOutput`, `triage/adversarial.ts:218 parseJudgeOutput`, `triage/hybrid-router.ts:130 parseLlmResponse` — markdown-fence-stripping JSON parsers. Fences tolerated; "MUST respond with ONLY a JSON object" is belt-and-suspenders.
-- `agentic-scanner.ts:982 evidence-gate` — `evidenceCompleteness <= 0.5` rejects. A code threshold, not "agent should know when evidence is insufficient."
+- `triage/verify-pipeline.ts:670 parseStepOutput`, `triage/adversarial.ts:218 parseJudgeOutput`, `triage/hybrid-router.ts:130 parseLlmResponse` — markdown-fence-stripping JSON parsers.
+- `agentic-scanner.ts:982 evidence-gate` — `evidenceCompleteness <= 0.5` rejects. A code threshold.
 
 The triage layer in particular is more deterministic than the audit expected to find. The codebase had been growing in the right direction; these five fixes closed the upstream gaps where agent-side ingest still trusted the model.
 
@@ -164,15 +162,16 @@ The triage layer in particular is more deterministic than the audit expected to 
 
 The first-pass audit flagged a sixth pattern (H6): verify-pipeline JSON parsing was supposedly fragile because the prompt said "MUST respond with ONLY a JSON object" and we couldn't see fence-stripping in the parser. Second-pass review verified that fences are already stripped at `verify-pipeline.ts:676`, `adversarial.ts:220`, and `hybrid-router.ts:132` — three different parsers, all tolerant of markdown fences and surrounding prose. The "MUST" prompts there are belt-and-suspenders; the parsers handle whatever the model emits.
 
-We closed [issue #284](https://github.com/0sec-labs/0sec/issues/284) on second-pass review and filed [#286](https://github.com/0sec-labs/0sec/issues/286) for path-existence in its place. Honest second pass is the difference between a useful audit and a witch hunt.
+We closed [issue #284](https://github.com/0sec-labs/0sec/issues/284) on second-pass review and filed [#286](https://github.com/0sec-labs/0sec/issues/286) for path-existence in its place.
 
-## What this is and isn't
+<span id="what-this-is-and-isnt"></span>
+## Runtime checks
 
-This is not a claim that 0sec's agent loop is now deterministic-everywhere. The agent still has lots of LLM-driven steps — tactical action selection inside the attack stage, finding-content generation, exploit-payload construction, source-file comprehension. Those are search-space exploration and don't deterministically encode. 0sec's edge has always been hybrid: code-determined orchestration, LLM-determined tactics.
+The model selects actions, constructs payloads, and drafts findings. The reviewed
+changes add PoC, duplicate, path-reference, and configured-auth checks, plus
+per-item verification and audit loops.
 
-What did change is that the chokepoints — the spots where one bad model output corrupts everything downstream of it — are now code-gated, not prompt-suggested. Empty PoCs can't be saved. Duplicate findings can't be saved. Fabricated `file:line` references can't be parsed. Unauthenticated curl can't reach in-scope targets when auth is configured. Verify and audit walk per-item instead of asking the model to walk N items inside one session.
-
-Test count went from 1185 to 1204 (19 new tests). All five PRs ship behind file-level changes you can read end-to-end:
+Test count went from 1185 to 1204 (19 new tests). All five PRs ship behind file-level changes:
 
 - [#287](https://github.com/0sec-labs/0sec/pull/287) — empty-PoC gate at `tools.ts:2360`
 - [#288](https://github.com/0sec-labs/0sec/pull/288) — fuzzy-title dedup at `tools.ts:2467` + `tools-helpers.ts:33 levenshtein`
@@ -180,4 +179,4 @@ Test count went from 1185 to 1204 (19 new tests). All five PRs ship behind file-
 - [#290](https://github.com/0sec-labs/0sec/pull/290) — bash auth injection at `tools.ts:856 injectAuthIntoBashCommand`
 - [#291](https://github.com/0sec-labs/0sec/pull/291) — per-item loops in `agentic-scanner.ts:2552`, `unified-pipeline.ts:915`, `audit.ts:668`
 
-Credit to bsuh for the framing. We didn't invent it; we read a thoughtful post and ran it against our own codebase. The audit found things. The fixes were small. The interesting move was looking — and then doing the second pass on what we found, so the witch-hunt count stayed at zero and the real-fix count was five.
+The audit followed bsuh's published analysis of model-directed control flow.

@@ -3,15 +3,8 @@ title: Research Workflows
 description: Which 0sec research command solves which task, their input/output contracts, scope and verification boundaries, evidence tiers, and paths to specialized references.
 ---
 
-0sec ships a family of research commands for vulnerability discovery, each tuned
-to a different problem shape — seeded variant search, seedless depth review,
-recency-window hunting, assumption mining, spec conformance drift, protocol
-differential, memory-safety fuzzing, kernel-specific workflows, binary analysis,
-weaponization, agent-action assurance, and self-evolving detection.
-
-Discovery leads are not proof of exploitability. Some commands also execute
-targets or validate imported evidence; inspect the specific verifier result,
-execution origin, and retained artifacts before making a disclosure claim.
+Choose a command by input, execution requirements, and evidence output.
+Before disclosure, inspect its verifier result, execution origin, and retained artifacts.
 
 ## Quick reference
 
@@ -39,16 +32,13 @@ execution origin, and retained artifacts before making a disclosure claim.
 
 ## Evidence tiers
 
-Keep three questions separate: what was hypothesized, what was observed, and
-who executed the target. A skeptic vote or finder quorum is not a reproduced
-crash. A retained HTTP observation is not proof of a kernel privilege boundary.
-Imported boot logs can pass validation without 0sec having executed those boots.
+Record the hypothesis, observation, and executor. Model votes, HTTP observations,
+imported boot logs, and reproduced crashes support different conclusions.
 
-The shared research plane uses grades including `candidate`, `observed`, and
-`reproduced`; native commands also have their own result fields. These are not
-one universal three-tier schema. See [Verification Results](/verification-result/)
-for the separate deterministic replay contract and [Kernel VM Verification](/kernel-vm/)
-for privilege/provenance limits.
+The shared research plane uses `candidate`, `observed`, and `reproduced`;
+native commands define their own result fields. See
+[Verification Results](/verification-result/) for replay contracts and
+[Kernel VM Verification](/kernel-vm/) for privilege and provenance limits.
 
 ## Input and artifact contracts
 
@@ -112,10 +102,8 @@ that launches a compiler, fuzzer, agent, or external binary is not passive intak
 
 ## Seed-driven variant hunting (`hunt`)
 
-The oldest and most structured research path. Takes a proven fix diff
-(`--seed .patch`) and a source tree (`--source`), generates variant candidate
-sites from the fix, fans finders out over them, and gates each finding through
-an adversarial skeptic.
+Takes a proven fix diff (`--seed .patch`) and source tree (`--source`), searches
+for variants, and passes candidate findings through an adversarial skeptic.
 
 ```bash
 0sec hunt \
@@ -176,9 +164,8 @@ For the exhaustive flag reference, see [Commands — hunt](/commands/#hunt).
 
 ## Seedless depth review (`deep-review`)
 
-The "depth method": enumerates candidate files from a prepared source tree,
-re-hunts each through specialized finder lenses, and gates survivors through a
-multi-lens verify quorum. No seed fix required.
+Enumerates files in a prepared source tree, applies specialized finder lenses,
+and checks survivors through a multi-lens quorum. No seed fix is required.
 
 ```bash
 0sec deep-review ./target-repo --max-candidates 16 --profile default
@@ -291,10 +278,8 @@ classifier → refined invariant engine → adversarial verify → ranked report
 
 ## Assumption mining (`assumption-hunt`)
 
-The fourth seedless discovery axis. Mines implicit relied-on preconditions each
-function makes and hunts reachable callers that reach a relied-on subject without
-establishing its precondition — the DirtyCred / AF_UNIX-GC / io_uring shape
-fixed-schema checkers structurally cannot represent.
+Mines function preconditions and searches reachable callers that fail to establish
+them, including DirtyCred, AF_UNIX-GC, and io_uring patterns.
 
 Pipeline: `LLM mine` → `AssumptionModel` → 1b enforced/relied cross-check
 (no LLM) → establisher-propagation caller-scan (no LLM) → `runHuntScan` with
@@ -642,9 +627,8 @@ See [Commands — binary](/commands/#binary).
 Takes a confirmed kernel memory-safety finding, classifies the exploitation
 primitive, and runs the escalation ladder through the kernel-VM harness.
 
-Without the required kernel-VM artifacts, the default weaponization harness
-can return skipped (exit 2). This is not a promise that every mode is static
-or harmless on a provisioned host.
+Missing kernel-VM artifacts can produce exit 2 (skipped). Provisioned modes can
+execute the target; inspect their runner requirements before use.
 
 ```bash
 # Default weaponization runner (requires its kernel-VM prerequisites)

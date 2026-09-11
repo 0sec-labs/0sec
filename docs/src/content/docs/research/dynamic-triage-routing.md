@@ -1,15 +1,15 @@
 ---
 title: Dynamic Triage Routing — v0 Implementation
-description: Per-finding learned layer selection. v0 ships a rule-based router with a seam for a learned classifier; this page documents what shipped, the four decision rules, the routing-trace dataset shape, and the planned upgrade path.
+description: Rule-based layer selection, routing traces, and the planned learned classifier.
 ---
 
-> **Status:** v0 (rule-based) shipped behind `0SEC_FEATURE_DYNAMIC_TRIAGE`. The learned classifier described in the [design doc](/research/dynamic-routing-design/) lands in a follow-up PR. Tracking: [0sec#113](https://github.com/0sec-labs/0sec/issues/113).
+> **Status:** Rule-based v0 is gated by `0SEC_FEATURE_DYNAMIC_TRIAGE`. The learned classifier remains planned in the [design](/research/dynamic-routing-design/) and [0sec#113](https://github.com/0sec-labs/0sec/issues/113).
 
 ## What shipped in v0
 
-A new module at `packages/core/src/triage/router/` that, for every finding, decides which subset of the 11 triage layers should run. The decision is gated behind the feature flag `0SEC_FEATURE_DYNAMIC_TRIAGE`; default OFF preserves the existing static-layer behavior verbatim.
-
-The router is structured around a small interface that lets a learned classifier swap in later without touching the dispatch site:
+`packages/core/src/triage/router/` selects from 11 layers per finding.
+`0SEC_FEATURE_DYNAMIC_TRIAGE` defaults off. The interface below allows a future
+classifier to reuse the dispatch contract:
 
 ```ts
 interface RouterModel {
@@ -40,7 +40,7 @@ AND finding.evidence.response matches a SQL-error regex
 THEN invoke the default static layer set MINUS `debate`
 ```
 
-Motivation: the [0sec#72 ablation](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229254355) showed `adversarial_debate` removes real findings on the high-confidence error-based SQLi slice. The oracle is deterministic, free, and sufficient on this shape — debate adds cost and removes signal.
+The [0sec#72 ablation](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229254355) found that `adversarial_debate` removed real findings on this SQLi slice. The deterministic oracle required no model call.
 
 ### Rule 2 — ambiguous logic bug → invoke `structured_verify` + `pov_gate`
 
@@ -52,7 +52,7 @@ AND finding.confidence in [0.3, 0.55]
 THEN invoke FREE_LAYER_SET + {structured_verify, pov_gate}
 ```
 
-Motivation: per the ablation, the mid-confidence logic-bug band is where the structured 4-step verify and the PoV gate carry their weight. For high-confidence or rejected findings these layers are dead weight; for the ambiguous middle they're the only signal that moves the verdict.
+The ablation motivated structured verification and PoV generation for mid-confidence logic findings.
 
 ### Rule 3 — strong FP-pattern match → empty layer set (auto-reject)
 
@@ -63,13 +63,13 @@ AND finding.confidence < 0.6
 THEN invoke {}   // auto-reject; scanner marks the finding as false-positive
 ```
 
-**Risk note — this rule is intentionally conservative.** The token-overlap heuristic in `triage/memories.ts` is coarse, and a single fuzzy match dropping a real finding is the regression mode we worry about. The rule only triggers when:
+Coarse token overlap can reject a real finding. This rule requires all three conditions:
 
-- the match score is **strong** (>= 0.85, not just "above the matcher's floor"), AND
-- the category matches **exactly** (a memory about XSS cannot auto-reject an SQLi finding), AND
-- the agent's confidence is **low** (< 0.6) — a high-confidence finding overrides the memory match
+- Match score >= 0.85.
+- Exact category match.
+- Agent confidence < 0.6.
 
-These thresholds were picked conservatively. Promote them down (looser thresholds → more auto-rejects) only after measured A/B testing on npm-bench, where this rule has the most leverage.
+Measure recall and false positives before loosening these thresholds.
 
 ### Rule 4 — default → static layer set
 
@@ -146,14 +146,11 @@ No changes at the `agentic-scanner.ts` dispatch site.
 
 ## Minimum dataset size
 
-The v0 rule set encodes three rules. A learned router that **beats** the rules needs enough data to:
-
-1. Discover those three rules statistically (no extra data — they're high-base-rate patterns that show up in the first hundred findings).
-2. Discover NEW per-finding patterns the rules miss. This is where dataset size matters.
-
-The joint-paper reference: VulnBERT achieves 92% recall / 1.2% FPR with ~10k labeled findings on web vulns. We don't need to match that for the routing decision (a coarser task than TP/FP), but the per-category covariate means we need samples per `(subsystem, decision)` cell.
-
-**Rough estimate:** 2,500–5,000 labeled findings with `layerVerdicts` populated should suffice to train a router that strictly beats the v0 rules on every benchmark slice. The current corpus (~1,514 rows in `triage-dataset-v2.jsonl`) is below that floor for routing — it works for the TP/FP head because that's a single binary decision per finding, but the per-layer decision is effectively 6+ binary decisions and needs more data per cell.
+Training needs examples for each `(subsystem, decision)` cell and patterns beyond
+the existing rules. The planning estimate is **2,500–5,000 labeled findings**
+with `layerVerdicts`. The recorded corpus has about **1,514 rows**.
+These estimates establish a collection target; superiority to the rules requires
+evaluation across every benchmark slice.
 
 Plan: collect routing traces from the next ~10 benchmark dispatches (xbow-bench at 200 challenges × 5 runs = 1000 findings, npm-bench at 81 packages × 3 runs ≈ 250 findings, with v0 routing on). At that point the dataset is large enough to attempt the trained model.
 

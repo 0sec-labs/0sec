@@ -8,7 +8,18 @@ export default defineConfig({
   outDir: "./dist",
   site: "https://docs.0.security",
   // Allow previewing the dev server over Tailscale (dev-only; ignored by the static build).
-  vite: { server: { allowedHosts: [".ts.net"] } },
+  vite: {
+    server: { allowedHosts: [".ts.net"] },
+    plugins: [{
+      name: "pagefind-main-thread",
+      transform(code, id) {
+        if (id !== "\0virtual:starlight/pagefind-config") return;
+        // Pagefind 1.5.2 sends relative fetch URLs to a blob worker.
+        // Keep Starlight's UI and use Pagefind's supported main-thread engine.
+        return `${code};\npagefindUserConfig.noWorker = true;`;
+      },
+    }],
+  },
   markdown: {
     // Render ```mermaid code blocks as SVG at build time.
     syntaxHighlight: { type: "shiki", excludeLangs: ["mermaid"] },
@@ -28,7 +39,7 @@ export default defineConfig({
         { tag: "link", attrs: { rel: "preconnect", href: "https://0.security", crossorigin: "anonymous" } },
       ],
       description:
-        "Documentation for the 0sec CLI: getting started, scope, workflows, and verification.",
+        "Your self-improving cybersecurity team. The cyber reasoning system harness and CLI. Research Preview.",
       logo: {
         dark: "./src/assets/0sec-aperture-white.svg",
         light: "./src/assets/0sec-aperture-dark.svg",
@@ -37,51 +48,82 @@ export default defineConfig({
       },
       social: [
         {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/0sec-labs/0sec",
+        },
+        {
           icon: "external",
           label: "Website",
-          href: "https://0.security",
+          href: "https://0.security/",
         },
       ],
       defaultLocale: "root",
+      editLink: { baseUrl: "https://github.com/0sec-labs/0sec/edit/main/docs/" },
+      components: {
+        Header: "./src/components/DocsHeader.astro",
+        Hero: "./src/components/DocsHero.astro",
+        MobileMenuToggle: "./src/components/DocsMenuToggle.astro",
+      },
       expressiveCode: {
         themes: ["github-dark", "github-light"],
       },
       sidebar: [
         {
-          label: "Start Here",
+          label: "Overview",
           slug: "index",
         },
         {
-          label: "Use the CLI",
+          label: "Get started",
           items: [
-            { label: "Getting Started", slug: "getting-started" },
-            { label: "Scan Workflows", slug: "scan-workflows" },
-            { label: "Console", slug: "console" },
+            { label: "Install & first run", slug: "getting-started" },
+            { label: "Chat & settings", slug: "console" },
+            { label: "Scan workflows", slug: "scan-workflows" },
+            { label: "Scope & authorization", slug: "scope" },
             { label: "Recipes", slug: "recipes" },
-            { label: "Features", slug: "features" },
+            { label: "Capabilities", slug: "features" },
             { label: "Troubleshooting", slug: "troubleshooting" },
           ],
         },
         {
-          label: "Reference & setup",
+          label: "0sec Cloud",
           items: [
-            { label: "Commands", slug: "commands" },
+            { label: "Setup", link: "/getting-started/#hosted-models-draft" },
+            { label: "Access & credentials", link: "/api-keys/#hosted-inference-draft" },
+            { label: "Billing", link: "/api-keys/#charging-and-interrupted-requests" },
+            { label: "Models", link: "/configuration/#hosted-configuration-draft" },
+          ],
+        },
+        {
+          label: "Self-evolving agents",
+          items: [
+            { label: "Overview", slug: "improvement-plane" },
+            { label: "Executable plugin evolution", link: "/improvement-plane/#executable-plugin-evolution" },
+            { label: "Live driver & UI contract", link: "/improvement-plane/#live-harness-component-contract" },
+            { label: "Autonomy & workspace trust", link: "/configuration/#self-extension-and-workspace-trust" },
+            { label: "Long-horizon goals", link: "/improvement-plane/#long-horizon-self-evolution" },
+            { label: "Integrations & plugins", slug: "integrations" },
+          ],
+        },
+        {
+          label: "Reference",
+          collapsed: true,
+          items: [
+            { label: "CLI commands", slug: "commands" },
             { label: "Configuration", slug: "configuration" },
-            { label: "API Keys", slug: "api-keys" },
-            { label: "Scope & Authorization", slug: "scope" },
-            { label: "Budget Management", slug: "budget-management" },
-            { label: "Authorized Engagements", slug: "engagements" },
-            { label: "White-Box Mode", slug: "white-box-mode" },
-            { label: "Integrations", slug: "integrations" },
+            { label: "API keys & BYOK", slug: "api-keys" },
+            { label: "Budget management", slug: "budget-management" },
+            { label: "Authorized engagements", slug: "engagements" },
+            { label: "White-box mode", slug: "white-box-mode" },
             { label: "GitHub CI", slug: "ci/github-action" },
           ],
         },
         {
-          label: "Understand the engine",
+          label: "Architecture & evidence",
+          collapsed: true,
           items: [
             { label: "Architecture", slug: "architecture" },
-            { label: "Agent Loop", slug: "agent-loop" },
-            { label: "Improvement Plane", slug: "improvement-plane" },
+            { label: "Agent loop", slug: "agent-loop" },
             { label: "Finding Triage", slug: "triage" },
             { label: "Blind Verification", slug: "blind-verification" },
             { label: "Verification Results", slug: "verification-result" },
@@ -95,7 +137,7 @@ export default defineConfig({
             { label: "Results", slug: "benchmark" },
             { label: "Methodology", slug: "methodology" },
             { label: "XBOW Analysis", slug: "research/xbow-analysis" },
-            { label: "Competitive Landscape", slug: "research/competitive-landscape" },
+            { label: "Project comparison", slug: "research/competitive-landscape" },
           ],
         },
         {
@@ -112,7 +154,7 @@ export default defineConfig({
                 { label: "Shell-First Rationale", slug: "research/shell-first" },
                 { label: "Agent Techniques", slug: "research/agent-techniques" },
                 { label: "Model Comparison", slug: "research/model-comparison" },
-                { label: "FP Reduction Moat", slug: "research/fp-reduction-moat" },
+                { label: "False-positive reduction", slug: "research/fp-reduction-moat" },
                 { label: "TypeScript/Rust Boundary", slug: "research/typescript-rust-boundary" },
               ],
             },
@@ -124,16 +166,21 @@ export default defineConfig({
                 { label: "Dynamic Routing Design", slug: "research/dynamic-routing-design" },
                 { label: "Triage Dataset", slug: "research/triage-dataset" },
                 { label: "Feature Extractor", slug: "research/feature-extractor" },
+                { label: "Dynamic Triage Routing", slug: "research/dynamic-triage-routing" },
+                { label: "Journal & Orchestrator", slug: "research/journal-orchestrator-design" },
               ],
             },
             {
               label: "Experiment Logs",
               collapsed: true,
               items: [
-                { label: "2026-05-09 Control Flow, Not Prompts", slug: "research/2026-05-09-control-flow-not-prompts" },
+                { label: "2026-05-09 Control-flow audit", slug: "research/2026-05-09-control-flow-not-prompts" },
                 { label: "2026-05-08 Cost per Flag", slug: "research/2026-05-08-cost-per-flag" },
                 { label: "2026-05-06 H1 Program Audit", slug: "research/2026-05-06-h1-ai-readiness" },
                 { label: "2026-04-11 Ablation", slug: "research/2026-04-11-ablation" },
+                { label: "XBEN-099 Investigation", slug: "research/xben-099-investigation" },
+                { label: "Unsolved Eight Investigation", slug: "research/unsolved-eight-investigation" },
+                { label: "Strix Implementation Comparison", slug: "research/strix-implementation-comparison" },
               ],
             },
           ],

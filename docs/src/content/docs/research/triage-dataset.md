@@ -7,13 +7,8 @@ description: How 0sec turns benchmark runs and verified findings into labeled JS
 and local verified findings into a single JSONL dataset for training
 true-positive / false-positive classifiers.
 
-The output is designed to be useful for two families of models:
-
-- pure text classifiers over finding title / description / request / response
-- hybrid models that fuse text embeddings with 0sec's handcrafted
-  45-feature vector
-
-This is the data pipeline behind the paper-plan tracked in
+The dataset supports text classifiers and hybrid models combining text with
+the 45-feature vector. The model plan is tracked in
 [issue #67](https://github.com/0sec-labs/0sec/issues/67).
 
 ## Inputs
@@ -96,7 +91,7 @@ The current `TriageSample` type exposes these values:
 
 ## Provenance strings
 
-`source` is deliberately simple and human-readable:
+`source` records human-readable provenance:
 
 | Source family | Format | Example |
 |---------------|--------|---------|
@@ -142,13 +137,9 @@ Recommended split policy:
 
 ## Label-noise caveat
 
-`package_verdict` is intentionally coarse. If a package is labeled `safe`,
-then every finding emitted against it becomes a `false_positive` row. That
-is useful because it gives us cheap negative labels at scale, but it is not
-the same thing as hand-labeling each finding individually.
-
-That trade-off is acceptable for baseline training and ablation work, but
-any paper or benchmark should call out the noise floor explicitly.
+`package_verdict` labels every finding from a `safe` package as false positive.
+These coarse labels can contain per-finding errors. Report that label noise in
+training results and ablations.
 
 ## Related
 

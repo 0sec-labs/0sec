@@ -1,15 +1,15 @@
 ---
 title: Recipes
-description: Real-world 0sec recipes for common scanning scenarios.
+description: Commands for scoped API scans, source review, package audits, verification, and reports.
 ---
 
-Copy-paste recipes for common scenarios. Each assumes an `OPENROUTER_API_KEY` (or
-equivalent) is exported — see [Getting Started](/getting-started/) if not.
+Configure a provider using [Getting Started](/getting-started/), replace example
+targets, and prepare authorization and scope before running these commands.
 
 ## Scan a REST API (OpenAPI)
 
-Point at your OpenAPI 3.x / Swagger 2.0 doc so recon starts with every endpoint,
-parameter, and auth requirement already known — no crawl needed.
+Seed reconnaissance with endpoints, parameters, and authentication requirements
+from an OpenAPI 3.x or Swagger 2.0 document.
 
 ```bash
 0sec scan \
@@ -74,14 +74,13 @@ env 0SEC_FEATURE_DYNAMIC_PLAYBOOKS=1 \
 0sec audit left-pad --depth deep --runtime claude
 ```
 
-The package is installed into a temp dir (never executed), scanned, checked
-against dependency advisories, then reviewed by an agent that traces data flow for
-supply-chain issues.
+The pipeline acquires package material in a temporary directory for static,
+advisory, and model review. Use a disposable environment for untrusted code;
+subsequent investigation may invoke execution tools.
 
 ## Review a C/C++ library with sanitizer evidence
 
-Use the C-library workflow for userspace C/C++ when a finding needs more than
-static reasoning.
+Use the C-library workflow to collect userspace C/C++ sanitizer evidence.
 
 ```bash
 0sec review \
@@ -131,10 +130,12 @@ crash-dump path. The runner returns `status: 'reproduced' | 'no_signal' |
 `--force-kernel-build` to bypass the cache after a tree edit, or
 `--kernel-cache-dir` for an alternate location.
 
-## Run a full pentest with maximum accuracy
+<span id="run-a-full-pentest-with-maximum-accuracy"></span>
+## Compare verification gates
 
-Every false-positive reduction feature on, plus EGATS tree search. Slower, but
-produces client-ready findings.
+Enable the listed gates for a scoped evaluation. Measure detection and false
+positives on your target; results vary by benchmark slice. EGATS stays separate
+and opt-in.
 
 ```bash
 env \
@@ -154,8 +155,8 @@ See [Configuration — Feature flags](/configuration/#feature-flags) for what ea
 
 ## Best-of-N racing for hard targets
 
-When a linear attack plan keeps getting stuck, spawn 5 parallel strategies and let
-the fastest win.
+For benchmark/CTF experiments, race five strategies. Parallel attempts consume
+separate work budgets; inspect their combined cost and evidence.
 
 ```bash
 0sec scan \

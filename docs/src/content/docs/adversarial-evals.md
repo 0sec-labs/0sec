@@ -1,46 +1,27 @@
 ---
 title: Adversarial evals
-description: How 0sec extends its pentest wedge into attack-driven adversarial evaluation for AI systems.
+description: Attack-driven evaluation of AI systems, with scoped execution and replayable evidence.
 ---
 
-0sec already behaves like an adversarial evaluator: it attacks systems, attempts
-exploitation, and reports only what it can back with evidence. This page makes
-that category explicit.
+0sec evaluates AI systems by attempting scoped attacks and recording evidence.
 
 ## What's shipped
 
-This isn't hypothetical. The benchmark package ships concrete, deterministic
-adversarial-eval harnesses:
+The benchmark package ships concrete adversarial-eval harnesses:
 
-- **Tool misuse** through attacker-controlled tool parameters
-  (`packages/benchmark/src/adversarial-tool-misuse-*`).
-- **Indirect prompt injection** through untrusted tool output
-  (`packages/benchmark/src/adversarial-indirect-prompt-injection-*`).
+- **Tool misuse**: attacker-controlled tool parameters (`packages/benchmark/src/adversarial-tool-misuse-*`).
+- **Indirect prompt injection**: untrusted tool output (`packages/benchmark/src/adversarial-indirect-prompt-injection-*`).
 
-The `agent-assure` CLI command runs the shipped primitive end-to-end: it drives
-an agent endpoint, an MCP endpoint, and an oracle under a scoped policy, then
-writes a replayable evidence bundle. It's the building block behind agent-action
-assurance: a scoped action, run and observed from outside the system.
+`agent-assure` drives an agent endpoint, an MCP endpoint, and an oracle under a scoped policy, then writes a replayable evidence bundle.
 
-For endpoint prerequisites, scope, a complete invocation, and result meanings,
-see [Agent-action assurance](/research-workflows/#agent-action-assurance-agent-assure).
-All three endpoints must be authorized; an observed prohibited action and an
-inconclusive run are different outcomes.
+For endpoint prerequisites, scope, invocation, and result meanings, see [Agent-action assurance](/research-workflows/#agent-action-assurance-agent-assure). All three endpoints must be authorized; an observed prohibited action and an inconclusive run are different outcomes.
 
-The harnesses are synthetic and deterministic on purpose — a repeatable way to
-score whether the scanner catches realistic agent-control failures before they
-reach production.
+The synthetic, deterministic harnesses provide repeatable checks for agent-control failures.
 
-## Why it matters
+<span id="why-it-matters"></span>
+## Evaluation goals
 
-Most AI eval tooling asks: did the model produce the expected output? Did a judge
-score it well? Did the trace stay within policy? Useful — but not enough for
-high-stakes systems. The harder question:
-
-> Can this system be pushed into unsafe or unauthorized behavior under realistic
-> pressure?
-
-That's the question an attack-driven evaluator is built to answer.
+Measure whether attacks trigger unsafe or unauthorized behavior.
 
 ## Target classes
 
@@ -49,24 +30,22 @@ That's the question an attack-driven evaluator is built to answer.
 - tool-using agent backends
 - authenticated staging apps with AI features enabled
 
-## What makes it different from generic evals
+<span id="what-makes-it-different-from-generic-evals"></span>
+## Verification
 
-- attack-driven, not judge-driven
-- exploit- and evidence-based
-- built for repeated pressure, not one-shot scoring
-- finds real security and control-boundary failures
+- Confirm failures through demonstrable re-exploitation.
+- Repeat attacks to measure recurrence.
+- Check security and control boundaries.
 
-## Building on the wedge
+<span id="building-on-the-wedge"></span>
+## Planned extensions
 
-A dedicated adversarial-eval mode builds on the existing pentest engine. It still
-needs a few things: a target model for AI systems, a report format focused on
-evidence and recurrence, and attack classes with success criteria tuned for
-agentic systems.
+A dedicated adversarial-eval mode needs an AI-system target model, a report format covering evidence and recurrence, and attack-specific success criteria.
 
-## Report differences from a pentest
+<span id="report-differences-from-a-pentest"></span>
+## Report fields
 
-A vuln report centers on exploitability and severity. An adversarial-eval report
-should also capture:
+A vuln report covers exploitability and severity. An adversarial-eval report should also capture:
 
 - target class and environment
 - attack objective
@@ -74,8 +53,7 @@ should also capture:
 - whether the failure is specific to agent/tool composition
 - whether it's an authorization, tool-use, or instruction-hijack failure
 
-## Relationship to 0sec cloud
+<span id="relationship-to-0sec-cloud"></span>
+## Product scope
 
-0sec is the public, self-run tool; 0sec cloud is the managed service for
-orchestration and recurring runs. Adversarial evals should work on both — locally
-and in CI through `0sec`, and as a managed recurring product through `0sec cloud`.
+Run local evaluations through `0sec`. Managed testing belongs to **0cloud**; recurring adversarial evaluation remains planned. **0sec Cloud** is the optional inference service. These products have separate access and billing.

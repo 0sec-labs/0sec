@@ -1,21 +1,26 @@
 ---
 title: Dynamic Triage Routing — Design Doc
-description: A learned per-finding classifier that picks which subset of 0sec's triage layers to run, motivated by the 2026-04-11 ablation finding that no static policy wins on all three benchmark slices.
+description: Learned layer selection, training objectives, model tradeoffs, and April 2026 evaluation results.
 ---
 
-> **Status:** Design doc, open for review. Tracking issue [0sec#113](https://github.com/0sec-labs/0sec/issues/113). Nothing is implemented yet; this page describes what we're going to build and why.
+> Historical design and April 2026 results, tracked in [0sec#113](https://github.com/0sec-labs/0sec/issues/113). See [rule-based v0](/research/dynamic-triage-routing/) for the implementation record.
 
-## The problem in one paragraph
+<span id="the-problem-in-one-paragraph"></span>
+## Motivation
 
-The 2026-04-11 ablation ([writeup](/research/2026-04-11-ablation/), [full data](/research/fp-reduction-moat/)) measured 0sec's 11-layer FP reduction moat on three benchmark slices. No single static triage policy wins on all three. `no-triage` wins XBOW white-box by flag count. `moat` strictly dominates on XBOW black-box. `none` wins npm-bench on FPR. The single-feature isolation found that `reachability` is the best individual layer on stubborn-14 (+3 flags at $1.61/flag) while `egats` is the only one that regresses (−1 flag at $15.93/flag). Different layers help different findings, and a static scan-level feature-flag system can't pick the right subset per finding. A learned router can.
+The 2026-04-11 ablation ([writeup](/research/2026-04-11-ablation/),
+[data](/research/fp-reduction-moat/)) found different best policies by slice:
+`no-triage` for white-box flag count, `moat` for black-box, and `none` for npm FPR.
+On stubborn-14, reachability added three flags at $1.61/flag; EGATS lost one at
+$15.93/flag. The proposed router selects layers per finding.
 
 ## Design goals
 
-1. **Per-finding layer selection.** The router sees a finding and emits a subset of triage layers to invoke. The scan-level `0SEC_FEATURE_*` flags stay as escape hatches, but they're no longer the right granularity for production.
-2. **Beat the best static profile on every slice simultaneously.** The bar to clear is: at least match `no-triage` on XBOW white-box, at least match `moat` on XBOW black-box, at least match `none` on npm-bench. Any learned policy that doesn't do better than the best static policy on its own home turf is worse than just picking the right static policy per slice by hand.
-3. **Sub-millisecond inference.** The router runs on every finding before the expensive triage layers execute. It cannot become a bottleneck. 45-feature vector + small MLP head, no network calls, no GPU.
-4. **Interpretable enough to debug.** When the router skips a layer for a finding, an operator should be able to understand why. This rules out big opaque transformers and pushes toward additive feature importance.
-5. **Feature-flag-gated for A/B testing.** Every 0sec behavior change lands behind a flag so we can measure its effect. The router ships as `0SEC_FEATURE_LEARNED_ROUTER` default OFF, A/B tested against the existing static profiles in CI, and promoted to default ON only after measured gains on all three slices.
+1. Select layers per finding while preserving operator feature controls.
+2. Match or exceed the best static profile on every slice.
+3. Keep inference below one millisecond using local features and CPU execution.
+4. Expose the features behind each routing decision.
+5. A/B test behind a default-off flag before changing defaults.
 
 ## What the router sees
 
@@ -34,7 +39,7 @@ Two classes of inputs:
 - Target type (`web-app` / `url` / `npm-package` / `source-code` / `oci-image`)
 - Benchmark slice when applicable (`xbow` / `npm-bench` / `production` / `unknown`)
 
-The mode and target-type inputs are first-order predictors per the ablation — `moat` is good on black-box and bad on white-box, `none` is good on npm-bench, etc. A router that doesn't see these will underperform static profiles; a router that does see them should strictly improve on any static per-slice choice.
+Mode and target type may help predict useful layers. Their value requires held-out evaluation.
 
 ## What the router outputs
 
@@ -60,7 +65,7 @@ interface RouterOutput {
 }
 ```
 
-The `autoAccept` / `autoReject` shortcut paths are where the TP/FP head provides the most value — if the classifier is confident either way, no layer needs to run at all, and that's a pure cost win. The multi-label `runLayers` output is where the router earns its keep on the middle 60-80% of findings where no single static profile is right.
+`autoAccept` and `autoReject` can bypass further layers when their acceptance criteria hold. `runLayers` selects checks for remaining findings. Measure the recall cost of either shortcut.
 
 ## Training signal
 
@@ -92,23 +97,23 @@ Three candidates, in order of preference:
 
 ### Option A: XGBoost multi-label head on the 45-feature vector
 
-- **Pros:** Sub-millisecond inference on CPU, feature importances fall out of the model for free, small enough to ship in the npm package, trains in minutes on 1k-10k labeled rows.
-- **Cons:** Can't leverage the finding text directly — only the 45 handcrafted features. The cross-attention fusion that makes VulnBERT hit 92% recall / 1.2% FPR doesn't have an analogue here.
-- **When it wins:** If the 45 handcrafted features carry most of the signal (which the VulnBERT ablation on kernel commits suggests — features alone get 76.8% recall). On a dataset our size (1k–10k rows), a gradient-boosted tree is likely to outperform a small neural net anyway.
+- CPU inference below one millisecond, feature importance, and a small distributable model.
+- Uses the 45 handcrafted features; finding text is excluded.
+- Evaluate first on the available 1k–10k-row dataset. VulnBERT's feature-only ablation reported 76.8% recall on kernel commits.
 
 ### Option B: Small MLP head on fused (features, CodeBERT embedding)
 
-- **Pros:** Matches VulnBERT's architecture — handcrafted features linearly projected, fused with a neural text embedding via cross-attention, classification head on top. The winning numbers on kernel commits are 92.2% recall / 1.2% FPR with this exact shape. We have the feature half shipped; CodeBERT is off-the-shelf at `microsoft/codebert-base`.
-- **Cons:** Inference cost is higher (CodeBERT forward pass is ~10ms on CPU, ~1ms on GPU — not sub-millisecond). Training needs a GPU for any reasonable turnaround. The model weights are ~125M parameters, too big to ship in the npm package; we'd need a separate model distribution mechanism (HuggingFace Hub at inference time, or a local cache directory).
-- **When it wins:** If Option A plateaus below the "beat every static profile" bar, and if we're willing to pay the inference cost for a measurable accuracy gain. This is the option most directly aligned with VulnBERT's published architecture (Guanni Qu, Pebblebed Research Residency).
+- Combines features with `microsoft/codebert-base`, following VulnBERT's cross-attention design (92.2% recall / 1.2% FPR on kernel commits).
+- Approximately 125M parameters; estimated inference is ~10 ms on CPU or ~1 ms on GPU. Training and model distribution add requirements.
+- Consider if measured accuracy gains justify the additional inference cost.
 
 ### Option C: Knowledge distillation from a larger LLM
 
-- **Pros:** Could leverage larger text encoders for richer embeddings. Fine-tune GPT-5.4-mini on the routing labels, distill into a small student model for inference.
-- **Cons:** Highest training cost, most complex pipeline, slowest iteration.
-- **When it wins:** If Options A and B both plateau and we're ready to commit a sprint to a real ML pipeline.
+- Distill a larger text model, such as GPT-5.4-mini, into a routing student.
+- Requires a more expensive training and distribution pipeline.
+- Consider after evaluating options A and B.
 
-**Recommendation:** Ship Option A first. It's the simplest thing that could clear the bar. If XGBoost-on-features beats every static profile on every slice, that's a complete paper in itself and we don't need a neural model. If it doesn't, we know exactly how much headroom Option B needs to justify its cost.
+Evaluate XGBoost first. Use its measured errors and cost to decide whether a neural model is justified.
 
 ### Phase 3 results (2026-04-12): Option A trained and evaluated
 
@@ -162,7 +167,7 @@ where $y \in \{0, 1\}$ is the final verdict (flag found / package verdict / blin
 
 Combined: $\mathcal{L} = \mathcal{L}_{\text{route}} + \lambda \cdot \mathcal{L}_{\text{tp}}$, with $\lambda$ swept over $\{0.1, 0.5, 1.0, 2.0\}$ in the ablation.
 
-Focal loss on both heads to handle the class imbalance (the v1 dataset is 884 TP / 85 FP = 91.2% TP, which is heavy). VulnBERT uses focal loss for exactly this reason and it's the obvious choice.
+The v1 dataset contains 884 TP and 85 FP rows (91.2% TP). Evaluate focal loss for this imbalance.
 
 ## Evaluation
 
