@@ -575,4 +575,3 @@ function defaultOpenBrowser(url: string): Promise<void> {
     child.once("spawn", () => { child.unref(); resolve(); });
   });
 }
-
