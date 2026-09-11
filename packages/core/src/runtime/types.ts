@@ -8,6 +8,8 @@ export interface RuntimeConfig {
   cwd?: string;
   env?: Record<string, string>;
   model?: string;
+  /** Explicit provider for this new runtime; conflicting FORCE pins fail closed. */
+  provider?: "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen" | "xai" | "opencode" | "hosted";
   apiKey?: string;
   /** Called when the subprocess executes a tool (read file, run command, etc.) */
   onToolCall?: (name: string, detail: string) => void;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   getChatGptCodexAccessToken,
+  LlmApiRuntime,
   __resetChatGptCodexAuthStateForTests,
 } from "./llm-api.js";
 
@@ -55,6 +56,59 @@ describe("Codex refresh-token rotation write-back", () => {
         throw new Error(`unexpected fetch: ${url}`);
       }),
     );
+
+  it("isolates two credential snapshots while sharing refresh for the same credential", async () => {
+    process.env["0SEC_CHATGPT_AUTH_FILE"] = authPath;
+    const refreshes: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const refresh = new URLSearchParams(String(init.body)).get("refresh_token")!;
+      refreshes.push(refresh);
+      await Promise.resolve();
+      return new Response(JSON.stringify({
+        access_token: `access-for-${refresh}`, refresh_token: `rotated-${refresh}`, expires_in: 3600,
+      }), { headers: { "content-type": "application/json" } });
+    }));
+    const firstEnv = { "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN": "first-fixture", "0SEC_CHATGPT_ACCOUNT_ID": "first-account" };
+    const secondEnv = { "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN": "second-fixture", "0SEC_CHATGPT_ACCOUNT_ID": "second-account" };
+    const [first, same, second] = await Promise.all([
+      getChatGptCodexAccessToken(firstEnv),
+      getChatGptCodexAccessToken({ ...firstEnv }),
+      getChatGptCodexAccessToken(secondEnv),
+    ]);
+    expect(first).toEqual({ accessToken: "access-for-first-fixture", accountId: "first-account" });
+    expect(same).toEqual(first);
+    expect(second).toEqual({ accessToken: "access-for-second-fixture", accountId: "second-account" });
+    expect(refreshes).toEqual(["first-fixture", "second-fixture"]);
+    expect(existsSync(authPath)).toBe(false);
+  });
+
+  it("keeps an existing runtime identity without overwriting a later file login", async () => {
+    writeFileSync(authPath, JSON.stringify({ tokens: { refresh_token: "older-fixture", account_id: "older-account" } }));
+    const runtime = new LlmApiRuntime({
+      type: "api", timeout: 5000, provider: "chatgpt-codex", model: "gpt-fixture",
+      env: {
+        "0SEC_CHATGPT_AUTH_FILE": authPath, "0SEC_CHATGPT_ACCESS_TOKEN": "",
+        "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN": "", "0SEC_FORCE_PROVIDER": "",
+        "0SEC_LLM_FALLBACK": "", "0SEC_SKIP_PROVIDER_BANNER": "1",
+      },
+    });
+    const laterLogin = JSON.stringify({ tokens: { refresh_token: "later-fixture", account_id: "later-account" } });
+    writeFileSync(authPath, laterLogin);
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (String(url).includes("oauth/token")) {
+        requests.push(new URLSearchParams(String(init.body)).get("refresh_token")!);
+        return new Response(JSON.stringify({
+          access_token: "older-access", refresh_token: "older-rotated", expires_in: 3600,
+        }), { headers: { "content-type": "application/json" } });
+      }
+      requests.push(new Headers(init.headers).get("authorization")!);
+      return new Response('{"error":"fixture-stop"}', { status: 401 });
+    }));
+    await runtime.executeNative("sys", [{ role: "user", content: [{ type: "text", text: "hello" }] }], []);
+    expect(requests).toEqual(["older-fixture", "Bearer older-access"]);
+    expect(readFileSync(authPath, "utf8")).toBe(laterLogin);
+  });
 
   it("writes the rotated refresh token back to auth.json, preserving other fields", async () => {
     writeFileSync(

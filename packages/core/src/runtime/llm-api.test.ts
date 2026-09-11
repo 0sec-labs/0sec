@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   LlmApiRuntime,
   probeAzureRegion,
@@ -20,8 +24,13 @@ import type { NativeMessage, NativeContentBlock } from "./types.js";
 
 describe("LlmApiRuntime provider detection", () => {
   const origEnv = { ...process.env };
+  let fixtureHome: string;
 
   beforeEach(() => {
+    fixtureHome = mkdtempSync(join(tmpdir(), "0sec-provider-detection-"));
+    process.env.HOME = fixtureHome;
+    delete process.env["0SEC_CLOUD_TOKEN"];
+    delete process.env["0SEC_CLOUD_HOST"];
     delete process.env.OPENROUTER_API_KEY;
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.DEEPSEEK_BASE_URL;
@@ -60,10 +69,74 @@ describe("LlmApiRuntime provider detection", () => {
     process.env["0SEC_SKIP_PROVIDER_BANNER"] = "1";
   });
   afterEach(() => {
+    rmSync(fixtureHome, { recursive: true, force: true });
     for (const key of Object.keys(process.env)) {
       if (!(key in origEnv)) delete process.env[key];
     }
     Object.assign(process.env, origEnv);
+  });
+
+  it("keeps explicit new-runtime provider and credentials isolated from later selections", async () => {
+    process.env["0SEC_SELECTED_PROVIDER"] = "azure";
+    process.env["0SEC_MODEL"] = "ambient-model";
+    const firstEnv = {
+      OPENAI_API_KEY: "first-fixture-key",
+      "0SEC_FORCE_PROVIDER": " ",
+      OPENAI_BASE_URL: "https://first.example.test/v1",
+    };
+    const first = new LlmApiRuntime({
+      type: "api", timeout: 5000, provider: "openai", model: "first-model", env: firstEnv,
+    });
+    const second = new LlmApiRuntime({
+      type: "api", timeout: 5000, provider: "azure", model: "second-model",
+      env: {
+        AZURE_OPENAI_API_KEY: "second-fixture-key",
+        AZURE_OPENAI_BASE_URL: "https://second.example.test/v1",
+      },
+    });
+    firstEnv.OPENAI_API_KEY = "mutated-fixture-key";
+    firstEnv.OPENAI_BASE_URL = "https://mutated.example.test/v1";
+    process.env.OPENAI_API_KEY = "ambient-fixture-key";
+    const requests: Array<{ url: string; authorization: string | null; model: unknown }> = [];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      requests.push({
+        url: String(url), authorization: new Headers(init?.headers).get("authorization") ?? new Headers(init?.headers).get("api-key"),
+        model: JSON.parse(String(init?.body)).model,
+      });
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "isolated" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }), { headers: { "content-type": "application/json" } });
+    });
+    try {
+      for (const runtime of [second, first]) {
+        const result = await runtime.executeNative("sys", [
+          { role: "user", content: [{ type: "text", text: "hello" }] },
+        ], []);
+        expect(result.error).toBeUndefined();
+      }
+      expect(requests).toEqual([
+        { url: "https://second.example.test/v1/chat/completions", authorization: "second-fixture-key", model: "second-model" },
+        { url: "https://first.example.test/v1/chat/completions", authorization: "Bearer first-fixture-key", model: "first-model" },
+      ]);
+      expect(process.env["0SEC_SELECTED_PROVIDER"]).toBe("azure");
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("rejects an explicit provider conflicting with FORCE even with a supplied API key", () => {
+    expect(() => new LlmApiRuntime({
+      type: "api", timeout: 5000, provider: "openai", model: "test-model",
+      apiKey: "fixture-key", env: { "0SEC_FORCE_PROVIDER": "azure" },
+    })).toThrow(/conflicts/);
+  });
+
+  it("does not replace an explicitly selected provider when its credential is absent", () => {
+    process.env.DEEPSEEK_API_KEY = "unrelated-fixture-key";
+    expect(() => new LlmApiRuntime({
+      type: "api", timeout: 5000, provider: "openai", model: "test-model",
+    })).toThrow(/no configured credentials/);
   });
 
   it("selects OpenRouter when OPENROUTER_API_KEY is set", async () => {
@@ -186,12 +259,11 @@ describe("LlmApiRuntime provider detection", () => {
     expect(rt.getConfigurationDiagnostics().provider).toBe("anthropic");
   });
 
-  it("selects Anthropic when ANTHROPIC_API_KEY is set", async () => {
+  it("keeps explicit Anthropic credentials ahead of hosted login", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test456";
+    process.env["0SEC_CLOUD_TOKEN"] = randomUUID();
     const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
-    expect((rt as any).provider).toBe("anthropic");
-    // Anthropic uses its own Messages API, wireApi is just a default
-    expect((rt as any).wireApi).toBe("chat_completions");
+    expect(rt.getConfigurationDiagnostics().provider).toBe("anthropic");
   });
 
   it("selects Azure when AZURE_OPENAI_API_KEY is set (before OPENAI_API_KEY)", async () => {

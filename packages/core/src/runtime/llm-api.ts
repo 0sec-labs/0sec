@@ -14,9 +14,11 @@ import type {
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { VERSION } from "@0sec/shared";
+import { VERSION, homeStateDir } from "@0sec/shared";
 import { features } from "../agent/features.js";
 import { diag } from "../diagnostics/channel.js";
+import { loadCloudCredentials, CloudAuthMissingError, DEFAULT_CLOUD_HOST } from "../cloud/credentials.js";
+import { CloudClient } from "../cloud/client.js";
 import {
   MESSAGE_CACHE_BREAKPOINTS,
   planMessageBreakpoints,
@@ -736,7 +738,7 @@ function opencodeWireApiForModel(model: string | undefined): WireApi {
   throw new Error(`OpenCode Zen has no wire mapping for model "${bare}"`);
 }
 
-type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen" | "xai" | "opencode";
+type ApiProvider = NonNullable<RuntimeConfig["provider"]>;
 /**
  * Azure Foundry deployment ids used by 0cloud. The worker can inject both
  * the Azure primary key and a direct-DeepSeek fallback key; route a Foundry
@@ -777,13 +779,14 @@ interface FallbackEntry {
  * the empty array when the env var is absent, empty, or every entry is
  * malformed (logged to stderr as a warning).
  */
-export function parseLlmFallbackChain(): FallbackEntry[] {
-  const raw = process.env["0SEC_LLM_FALLBACK"];
+export function parseLlmFallbackChain(env: Readonly<NodeJS.ProcessEnv> = process.env): FallbackEntry[] {
+  const raw = env["0SEC_LLM_FALLBACK"];
   if (!raw || raw.trim().length === 0) return [];
   const entries: FallbackEntry[] = [];
   const VALID_PROVIDERS: Record<string, true> = {
     openrouter: true, anthropic: true, openai: true, azure: true, deepseek: true,
     "chatgpt-codex": true, "z-ai": true, kimi: true, qwen: true, xai: true, opencode: true,
+    hosted: true,
   };
   for (const part of raw.split(",")) {
     const trimmed = part.trim();
@@ -820,6 +823,12 @@ export function parseLlmFallbackChain(): FallbackEntry[] {
   return entries;
 }
 
+export interface ApiProviderConnection {
+  apiKey: string;
+  baseUrl: string;
+  wireApi: WireApi;
+}
+
 /**
  * Resolve a (provider, model) pair to the env-var-driven config fields a
  * runtime needs. Returns `undefined` when the provider's auth env var is
@@ -828,64 +837,83 @@ export function parseLlmFallbackChain(): FallbackEntry[] {
 export function resolveFailoverProvider(
   provider: ApiProvider,
   model: string,
-): { apiKey: string; baseUrl: string; wireApi: WireApi } | undefined {
+  env: Readonly<NodeJS.ProcessEnv> = process.env,
+  apiKey?: string,
+): ApiProviderConnection | undefined {
   switch (provider) {
     case "deepseek": {
-      const key = process.env.DEEPSEEK_API_KEY;
+      const key = apiKey ?? env.DEEPSEEK_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: process.env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL, wireApi: "responses" };
+      return { apiKey: key, baseUrl: env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL, wireApi: "responses" };
     }
     case "openrouter": {
-      const key = process.env.OPENROUTER_API_KEY;
+      const key = apiKey ?? env.OPENROUTER_API_KEY;
       if (!key) return undefined;
       return { apiKey: key, baseUrl: "https://openrouter.ai/api/v1", wireApi: "chat_completions" };
     }
     case "azure": {
-      const key = process.env.AZURE_OPENAI_API_KEY;
+      const key = apiKey ?? env.AZURE_OPENAI_API_KEY;
       if (!key) return undefined;
-      const url = process.env.AZURE_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL;
+      const url = env.AZURE_OPENAI_BASE_URL ?? env.OPENAI_BASE_URL;
       if (!url) return undefined;
-      return { apiKey: key, baseUrl: url, wireApi: (process.env.AZURE_OPENAI_WIRE_API as WireApi) ?? "chat_completions" };
+      return { apiKey: key, baseUrl: url, wireApi: (env.AZURE_OPENAI_WIRE_API as WireApi) ?? "chat_completions" };
     }
     case "openai": {
-      const key = process.env.OPENAI_API_KEY;
+      const key = apiKey ?? env.OPENAI_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", wireApi: "chat_completions" };
     }
     case "anthropic": {
-      const key = process.env.ANTHROPIC_API_KEY;
+      const key = apiKey ?? env.ANTHROPIC_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com", wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com", wireApi: "chat_completions" };
     }
     case "chatgpt-codex": {
       // Codex uses OAuth, not an api key — presence of refresh/access token = available.
-      if (!process.env["0SEC_CHATGPT_ACCESS_TOKEN"] && !process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]) return undefined;
+      if (!env["0SEC_CHATGPT_ACCESS_TOKEN"] && !env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"] && !readChatGptCodexAuthFile(env)) return undefined;
       return { apiKey: "", baseUrl: CODEX_API_ENDPOINT, wireApi: "responses" };
     }
     case "z-ai": {
-      const key = process.env.Z_AI_API_KEY;
+      const key = apiKey ?? env.Z_AI_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
     }
     case "kimi": {
-      const key = process.env.KIMI_API_KEY;
+      const key = apiKey ?? env.KIMI_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: process.env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
     }
     case "qwen": {
-      const key = process.env.QWEN_API_KEY;
+      const key = apiKey ?? env.QWEN_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: process.env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL, wireApi: "chat_completions" };
     }
     case "xai": {
-      const key = process.env.XAI_API_KEY;
+      const key = apiKey ?? env.XAI_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+      return { apiKey: key, baseUrl: env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
     }
     case "opencode": {
-      const key = process.env.OPENCODE_API_KEY;
+      const key = apiKey ?? env.OPENCODE_API_KEY;
       if (!key) return undefined;
-      return { apiKey: key, baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, wireApi: opencodeWireApiForModel(model) };
+      return { apiKey: key, baseUrl: env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, wireApi: opencodeWireApiForModel(model) };
+    }
+    case "hosted": {
+      // Hosted inference uses cloud credentials from env or cloud.env.
+      try {
+        const creds = loadCloudCredentials({
+          env: env,
+          warn: () => { /* silent — failover entries don't print warnings */ },
+        });
+        return {
+          apiKey: creds.token,
+          baseUrl: `${creds.host}/api/inference/v1`,
+          wireApi: "chat_completions",
+        };
+      } catch (err) {
+        if (err instanceof CloudAuthMissingError) return undefined;
+        throw err;
+      }
     }
   }
 }
@@ -895,13 +923,14 @@ export function __resetFallbackChainForTests(): void {
   fallbackChainCache = undefined;
 }
 
-let fallbackChainCache: FallbackEntry[] | undefined;
+let fallbackChainCache: { raw: string | undefined; entries: FallbackEntry[] } | undefined;
 
-function getFallbackChain(): FallbackEntry[] {
-  if (fallbackChainCache === undefined) {
-    fallbackChainCache = parseLlmFallbackChain();
+function getFallbackChain(env: Readonly<NodeJS.ProcessEnv>): FallbackEntry[] {
+  const raw = env["0SEC_LLM_FALLBACK"];
+  if (!fallbackChainCache || fallbackChainCache.raw !== raw) {
+    fallbackChainCache = { raw, entries: parseLlmFallbackChain(env) };
   }
-  return fallbackChainCache;
+  return fallbackChainCache.entries;
 }
 
 // ── Z.ai GLM (flat-rate Coding Plan key) ───────────────────────────────
@@ -939,7 +968,7 @@ function zaiThinkingBudget(): number {
 // The only kimi-specific config is the default base URL + model below
 // (override via KIMI_BASE_URL / 0SEC_MODEL); note the base URL differs
 // from z.ai so kimi requests never hit api.z.ai.
-const KIMI_DEFAULT_BASE_URL = "https://api.kimi.com/coding";
+const KIMI_DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1";
 const KIMI_DEFAULT_MODEL = "k3";
 
 // ── Alibaba Model Studio Qwen (Token Plan subscription key) ────────────
@@ -1040,31 +1069,27 @@ interface ChatGptCodexAuthState {
   authFilePath?: string;
 }
 
-/**
- * Module-singleton OAuth-refresh state for the chatgpt-codex provider.
- *
- * One refresh cycle per ~hour amortised across every LlmApiRuntime
- * instance — the alternative (per-instance refresh) would burn a
- * refresh call on every CLI invocation and rapidly hit the OAuth
- * provider's rate-limit. Initialised lazily so `0sec audit` runs
- * on hosts WITHOUT the env var pay zero startup cost.
- */
-let chatGptCodexAuthState: ChatGptCodexAuthState | undefined;
+/** Share refresh singleflight only among identical credential sources, never accounts. */
+const chatGptCodexAuthStates = new Map<string, ChatGptCodexAuthState>();
 
-/** Reset the module-singleton codex auth state (test isolation). */
-export function __resetChatGptCodexAuthStateForTests(): void {
-  chatGptCodexAuthState = undefined;
+function codexAuthStateKey(state: Pick<ChatGptCodexAuthState, "authFilePath" | "accountId" | "refreshToken" | "accessToken">): string {
+  return JSON.stringify([state.authFilePath, state.accountId, state.refreshToken || state.accessToken]);
 }
 
-function readChatGptCodexEnv():
+/** Reset credential-scoped Codex auth state (test isolation). */
+export function __resetChatGptCodexAuthStateForTests(): void {
+  chatGptCodexAuthStates.clear();
+}
+
+function readChatGptCodexEnv(env: Readonly<NodeJS.ProcessEnv> = process.env):
   | { accessToken?: string; refreshToken?: string; accountId?: string }
   | undefined {
-  const access = process.env["0SEC_CHATGPT_ACCESS_TOKEN"];
-  const refresh = process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"];
+  const access = env["0SEC_CHATGPT_ACCESS_TOKEN"];
+  const refresh = env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"];
   if ((!access || access.length === 0) && (!refresh || refresh.length === 0)) {
     return undefined;
   }
-  const accountId = process.env["0SEC_CHATGPT_ACCOUNT_ID"];
+  const accountId = env["0SEC_CHATGPT_ACCOUNT_ID"];
   return {
     accessToken: access && access.length > 0 ? access : undefined,
     refreshToken: refresh && refresh.length > 0 ? refresh : undefined,
@@ -1073,8 +1098,8 @@ function readChatGptCodexEnv():
 }
 
 /** Resolve the codex auth.json path (env override or the default `~/.codex`). */
-function resolveChatGptCodexAuthPath(): string {
-  return process.env["0SEC_CHATGPT_AUTH_FILE"] ?? join(homedir(), ".codex", "auth.json");
+function resolveChatGptCodexAuthPath(env: Readonly<NodeJS.ProcessEnv> = process.env): string {
+  return env["0SEC_CHATGPT_AUTH_FILE"] ?? join(env.HOME ?? homedir(), ".codex", "auth.json");
 }
 
 /**
@@ -1090,7 +1115,7 @@ function resolveChatGptCodexAuthPath(): string {
  * swallowed — the in-memory token still works for THIS process; only the next
  * process would need a re-login.
  */
-function persistChatGptCodexAuthFile(authPath: string, tokens: CodexTokenResponse): void {
+function persistChatGptCodexAuthFile(authPath: string, tokens: CodexTokenResponse, usedRefreshToken: string): void {
   try {
     let existing: Record<string, unknown> = {};
     try {
@@ -1100,6 +1125,8 @@ function persistChatGptCodexAuthFile(authPath: string, tokens: CodexTokenRespons
     }
     const prevTokens =
       (existing.tokens as Record<string, unknown> | undefined) ?? {};
+    // A different login or logout must not be overwritten by an older runtime.
+    if (prevTokens.refresh_token !== usedRefreshToken) return;
     const nextTokens: Record<string, unknown> = {
       ...prevTokens,
       access_token: tokens.access_token,
@@ -1124,10 +1151,10 @@ function persistChatGptCodexAuthFile(authPath: string, tokens: CodexTokenRespons
   }
 }
 
-function readChatGptCodexAuthFile():
+function readChatGptCodexAuthFile(env: Readonly<NodeJS.ProcessEnv> = process.env):
   | { accessToken?: string; refreshToken?: string; accountId?: string }
   | undefined {
-  const authPath = resolveChatGptCodexAuthPath();
+  const authPath = resolveChatGptCodexAuthPath(env);
   if (!existsSync(authPath)) return undefined;
   try {
     const auth = JSON.parse(readFileSync(authPath, "utf8")) as {
@@ -1241,50 +1268,49 @@ function extractChatGptAccountId(tokens: CodexTokenResponse): string | undefined
  * Exported so callers outside the runtime (e.g. one-off cli probes)
  * can bootstrap a token with the same logic.
  */
-export async function getChatGptCodexAccessToken(): Promise<{
+export async function getChatGptCodexAccessToken(env: Readonly<NodeJS.ProcessEnv> = process.env): Promise<{
   accessToken: string;
   accountId?: string;
 }> {
-  if (!chatGptCodexAuthState) {
-    // Prefer env-forwarded tokens (worker-controller/cloud path — no write-back);
-    // fall back to the on-disk auth.json (local CLI/TUI path — write rotations
-    // back so a later process doesn't replay a used refresh token).
-    const fromEnvOnly = readChatGptCodexEnv();
-    const fromFile = fromEnvOnly ? undefined : readChatGptCodexAuthFile();
-    const fromEnv = fromEnvOnly ?? fromFile;
-    if (!fromEnv) {
-      throw new Error(
-        "ChatGPT Codex auth: neither 0SEC_CHATGPT_ACCESS_TOKEN nor " +
-          "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN is set. Run `codex login` and " +
-          "either forward the access token via worker-controller (preferred " +
-          "for multi-sandbox dispatch — avoids the OAuth refresh-token " +
-          "rotation race) or keep a valid ~/.codex/auth.json on this host.",
-      );
-    }
-    chatGptCodexAuthState = {
-      // refreshToken is optional now — the worker-controller path forwards
-      // a pre-issued access_token and no refresh capability. Local CLI use
-      // still gets a refresh_token from env and refreshes in-process.
-      refreshToken: fromEnv.refreshToken ?? "",
-      accountId: fromEnv.accountId,
-      accessToken: fromEnv.accessToken,
-      accessTokenExpiresAt: fromEnv.accessToken
-        ? accessTokenExpiryMs(fromEnv.accessToken)
-        : 0,
-      // Only the on-disk source is written back; env-forwarded tokens are not.
-      ...(fromFile ? { authFilePath: resolveChatGptCodexAuthPath() } : {}),
-    };
-    // Seed accountId from the forwarded access_token's JWT when not
-    // already provided — saves one round-trip for cloud sandboxes that
-    // never refresh.
-    if (fromEnv.accessToken && !chatGptCodexAuthState.accountId) {
-      const seedAccountId = extractChatGptAccountId({
-        access_token: fromEnv.accessToken,
-      } as CodexTokenResponse);
-      if (seedAccountId) chatGptCodexAuthState.accountId = seedAccountId;
-    }
+  return refreshChatGptCodexAuthState(resolveChatGptCodexAuthState(env));
+}
+
+function resolveChatGptCodexAuthState(env: Readonly<NodeJS.ProcessEnv>): ChatGptCodexAuthState {
+  const fromEnvOnly = readChatGptCodexEnv(env);
+  const fromFile = fromEnvOnly ? undefined : readChatGptCodexAuthFile(env);
+  const tokens = fromEnvOnly ?? fromFile;
+  if (!tokens) {
+    throw new Error(
+      "ChatGPT Codex auth: neither 0SEC_CHATGPT_ACCESS_TOKEN nor " +
+        "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN is set. Run `codex login` and " +
+        "either forward the access token via worker-controller (preferred " +
+        "for multi-sandbox dispatch — avoids the OAuth refresh-token " +
+        "rotation race) or keep a valid ~/.codex/auth.json on this host.",
+    );
   }
-  const state = chatGptCodexAuthState;
+  const identity = {
+    refreshToken: tokens.refreshToken ?? "",
+    accessToken: tokens.accessToken,
+    accountId: tokens.accountId ?? (tokens.accessToken
+      ? extractChatGptAccountId({ access_token: tokens.accessToken } as CodexTokenResponse)
+      : undefined),
+    ...(fromFile ? { authFilePath: resolveChatGptCodexAuthPath(env) } : {}),
+  };
+  const key = codexAuthStateKey(identity);
+  const existing = chatGptCodexAuthStates.get(key);
+  if (existing) return existing;
+  const state: ChatGptCodexAuthState = {
+    ...identity,
+    accessTokenExpiresAt: tokens.accessToken ? accessTokenExpiryMs(tokens.accessToken) : 0,
+  };
+  chatGptCodexAuthStates.set(key, state);
+  return state;
+}
+
+async function refreshChatGptCodexAuthState(state: ChatGptCodexAuthState): Promise<{
+  accessToken: string;
+  accountId?: string;
+}> {
   const now = Date.now();
   // Refresh if we have no token or we're within 60s of expiry.
   const needsRefresh =
@@ -1323,12 +1349,15 @@ export async function getChatGptCodexAccessToken(): Promise<{
             // operator hit. The env-forwarded cloud path has authFilePath
             // undefined and is left to the worker-controller.
             if (state.authFilePath) {
-              persistChatGptCodexAuthFile(state.authFilePath, tokens);
+              persistChatGptCodexAuthFile(state.authFilePath, tokens, usedRefresh);
             }
           }
           if (!state.accountId) {
             state.accountId = extractChatGptAccountId(tokens);
           }
+          // A new runtime may read the rotated file while an existing runtime
+          // still holds its original credential snapshot. Both share singleflight.
+          chatGptCodexAuthStates.set(codexAuthStateKey(state), state);
         } finally {
           // Always clear so the next refresh-needed check can fire
           // again — even on failure (e.g. transient 5xx). The caller
@@ -1353,13 +1382,13 @@ export interface ApiRuntimeDiagnostics {
   fatalError?: string;
 }
 
-function parseCodexAzureConfig(): {
+function parseCodexAzureConfig(env: Readonly<NodeJS.ProcessEnv> = process.env): {
   baseUrl?: string;
   model?: string;
   wireApi?: WireApi;
   reasoningEffort?: string;
 } {
-  const configPath = `${process.env.HOME ?? ""}/.codex/config.toml`;
+  const configPath = `${env.HOME ?? ""}/.codex/config.toml`;
   if (!existsSync(configPath)) return {};
 
   try {
@@ -1401,59 +1430,67 @@ function parseCodexAzureConfig(): {
  * picking one provider for the whole process. Returns undefined → fall back to
  * the env-priority chain (existing behaviour).
  */
-function providerForModel(model: string | undefined): ApiProvider | undefined {
+function providerForModel(model: string | undefined, env: Readonly<NodeJS.ProcessEnv>): ApiProvider | undefined {
   if (!model) return undefined;
   const m = model.toLowerCase();
   // Direct DeepSeek's stable V4.1 id and still-accepted V4 Flash API id.
   // Preserve the latter's precedence over the separately cased Azure deployment.
   if (model === DEEPSEEK_DEFAULT_MODEL || model === "deepseek-v4-flash") {
-    return process.env.DEEPSEEK_API_KEY ? "deepseek" : undefined;
+    return env.DEEPSEEK_API_KEY ? "deepseek" : undefined;
   }
   // Azure Foundry deployment ids must win when the worker injects a direct
   // DeepSeek failover key; otherwise env priority would send the Azure model
   // to the direct endpoint.
   if (AZURE_FOUNDRY_DEPLOYMENT_IDS[m]) {
-    return process.env.AZURE_OPENAI_API_KEY ? "azure" : undefined;
+    return env.AZURE_OPENAI_API_KEY ? "azure" : undefined;
   }
   // Alibaba Token Plan DeepSeek revision: qwen-served, exact id.
   if (m === QWEN_TOKEN_PLAN_DEEPSEEK_MODEL) {
-    return process.env.QWEN_API_KEY ? "qwen" : undefined;
+    return env.QWEN_API_KEY ? "qwen" : undefined;
   }
-  if (m.startsWith("openrouter/")) return process.env.OPENROUTER_API_KEY ? "openrouter" : undefined;
+  if (m.startsWith("openrouter/")) return env.OPENROUTER_API_KEY ? "openrouter" : undefined;
   // GLM / Z.ai.
   if (m.startsWith("glm-") || m.startsWith("z-ai/") || m.includes("glm")) {
-    return process.env.Z_AI_API_KEY ? "z-ai" : undefined;
+    return env.Z_AI_API_KEY ? "z-ai" : undefined;
   }
   // Kimi K3 / Moonshot.
   if (m.startsWith("k3") || m.startsWith("kimi")) {
-    return process.env.KIMI_API_KEY ? "kimi" : undefined;
+    return env.KIMI_API_KEY ? "kimi" : undefined;
   }
   // Qwen / Alibaba Model Studio.
   if (m.startsWith("qwen")) {
-    return process.env.QWEN_API_KEY ? "qwen" : undefined;
+    return env.QWEN_API_KEY ? "qwen" : undefined;
   }
   // xAI Grok. Matches bare ids ("grok-4.6") and the vendor-prefixed form.
   if (m.startsWith("grok") || m.startsWith("xai/") || m.startsWith("x-ai/")) {
-    return process.env.XAI_API_KEY ? "xai" : undefined;
+    return env.XAI_API_KEY ? "xai" : undefined;
   }
   // OpenCode Zen: vendor prefix + Zen-exclusive families (no native provider).
   if (/^(opencode\/|muse-spark|mimo|ling|big-pickle|nemotron|minimax)/.test(m)) {
-    return process.env.OPENCODE_API_KEY ? "opencode" : undefined;
+    return env.OPENCODE_API_KEY ? "opencode" : undefined;
   }
   // OpenAI GPT-5 / o-series → ChatGPT-Codex subscription if present, else OpenAI.
   if (/^gpt-|^o[1-4](?:[-_]|$)/.test(m)) {
-    if (process.env["0SEC_CHATGPT_ACCESS_TOKEN"] || process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]) return "chatgpt-codex";
-    if (process.env.OPENAI_API_KEY) return "openai";
+    if (env["0SEC_CHATGPT_ACCESS_TOKEN"] || env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]) return "chatgpt-codex";
+    if (env.OPENAI_API_KEY) return "openai";
     return undefined;
   }
   // Claude / Anthropic → direct anthropic key, else OpenRouter (anthropic/*).
   if (m.startsWith("claude") || m.startsWith("anthropic/") || m.includes("sonnet") || m.includes("opus") || m.includes("haiku")) {
-    if (process.env.ANTHROPIC_API_KEY) return "anthropic";
-    if (process.env.OPENROUTER_API_KEY) return "openrouter";
+    if (env.ANTHROPIC_API_KEY) return "anthropic";
+    if (env.OPENROUTER_API_KEY) return "openrouter";
     return undefined;
   }
   return undefined;
 }
+
+const DEFAULT_PROVIDER_MODELS: Record<ApiProvider, string | undefined> = {
+  openrouter: DEFAULT_OPENROUTER_MODEL, anthropic: DEFAULT_ANTHROPIC_MODEL,
+  openai: DEFAULT_OPENAI_MODEL, azure: undefined, deepseek: DEEPSEEK_DEFAULT_MODEL,
+  "chatgpt-codex": CODEX_DEFAULT_MODEL, "z-ai": ZAI_DEFAULT_MODEL,
+  kimi: KIMI_DEFAULT_MODEL, qwen: QWEN_DEFAULT_MODEL, xai: XAI_DEFAULT_MODEL,
+  opencode: OPENCODE_DEFAULT_MODEL, hosted: "",
+};
 
 /**
  * Detect which API provider to use based on available keys.
@@ -1462,7 +1499,7 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
  * ANTHROPIC_API_KEY -> DEEPSEEK_API_KEY -> Z_AI_API_KEY -> AZURE_OPENAI_API_KEY ->
  * OPENAI_API_KEY -> OPENROUTER_API_KEY (last-resort)
  */
-function detectProvider(configApiKey?: string, preferredModel?: string): {
+function detectProvider(configApiKey: string | undefined, preferredModel: string | undefined, env: Readonly<NodeJS.ProcessEnv>, configProvider?: ApiProvider): {
   provider: ApiProvider;
   apiKey: string;
   baseUrl: string;
@@ -1470,6 +1507,57 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
   wireApi: WireApi;
   reasoningEffort?: string;
 } {
+  if (configProvider !== undefined && !Object.hasOwn(DEFAULT_PROVIDER_MODELS, configProvider)) {
+    throw new Error(`RuntimeConfig.provider is unsupported: ${configProvider}`);
+  }
+
+  // Cloud workers hand the selected provider to the sandbox explicitly. This
+  // wins over ambient credential precedence: fallback credentials must never
+  // become the primary merely because their key is also present. The older
+  // FORCE variant remains for controlled benchmark manifests.
+  const selectedProviderRaw = configProvider ?? env["0SEC_SELECTED_PROVIDER"]?.trim();
+  const forcedProviderRaw = env["0SEC_FORCE_PROVIDER"]?.trim() || undefined;
+  if (
+    selectedProviderRaw &&
+    forcedProviderRaw &&
+    selectedProviderRaw !== forcedProviderRaw
+  ) {
+    throw new Error(
+      `${configProvider !== undefined ? "RuntimeConfig.provider" : "0SEC_SELECTED_PROVIDER"} conflicts with 0SEC_FORCE_PROVIDER`,
+    );
+  }
+  // The worker pin chooses the primary scan provider. A hunt's refuter creates
+  // a runtime with a different explicit model; honoring the primary pin there
+  // would route that model through the wrong credential and defeat cross-family
+  // refutation. 0SEC_FORCE_PROVIDER remains an unconditional benchmark guard.
+  const primaryModel = env["0SEC_MODEL"]?.trim();
+  const selectedProviderApplies =
+    configProvider !== undefined || !preferredModel || !primaryModel || preferredModel === primaryModel;
+  const pinnedProviderRaw =
+    forcedProviderRaw ??
+    (selectedProviderApplies ? selectedProviderRaw : undefined);
+  if (pinnedProviderRaw) {
+    const source = pinnedProviderRaw === forcedProviderRaw
+      ? "0SEC_FORCE_PROVIDER"
+      : configProvider !== undefined ? "RuntimeConfig.provider" : "0SEC_SELECTED_PROVIDER";
+    if (!Object.hasOwn(DEFAULT_PROVIDER_MODELS, pinnedProviderRaw)) {
+      throw new Error(`${source} is unsupported: ${pinnedProviderRaw}`);
+    }
+    const provider = pinnedProviderRaw as ApiProvider;
+    const model = preferredModel ?? env["0SEC_MODEL"] ??
+      (configProvider !== undefined || provider === "hosted" ? DEFAULT_PROVIDER_MODELS[provider] : undefined);
+    if (model === undefined || (model === "" && provider !== "hosted")) {
+      throw new Error(`${source} requires an explicit model`);
+    }
+    if (configApiKey && (provider === "hosted" || provider === "chatgpt-codex")) {
+      throw new Error(`${source}=${provider} requires its own authentication, not RuntimeConfig.apiKey`);
+    }
+    const resolved = resolveFailoverProvider(provider, model, env, configApiKey);
+    if (!resolved) {
+      throw new Error(`${source}=${provider} has no configured credentials`);
+    }
+    return { provider, ...resolved, defaultModel: model };
+  }
   // If an explicit API key is passed via config, try to guess the provider from the key prefix
   if (configApiKey) {
     if (configApiKey.startsWith("sk-or-")) {
@@ -1500,90 +1588,33 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
-  // Cloud workers hand the selected provider to the sandbox explicitly. This
-  // wins over ambient credential precedence: fallback credentials must never
-  // become the primary merely because their key is also present. The older
-  // FORCE variant remains for controlled benchmark manifests.
-  const selectedProviderRaw = process.env["0SEC_SELECTED_PROVIDER"]?.trim();
-  const forcedProviderRaw = process.env["0SEC_FORCE_PROVIDER"]?.trim();
-  if (
-    selectedProviderRaw &&
-    forcedProviderRaw &&
-    selectedProviderRaw !== forcedProviderRaw
-  ) {
-    throw new Error(
-      "0SEC_SELECTED_PROVIDER conflicts with 0SEC_FORCE_PROVIDER",
-    );
-  }
-  // The worker pin chooses the primary scan provider. A hunt's refuter creates
-  // a runtime with a different explicit model; honoring the primary pin there
-  // would route that model through the wrong credential and defeat cross-family
-  // refutation. 0SEC_FORCE_PROVIDER remains an unconditional benchmark guard.
-  const primaryModel = process.env["0SEC_MODEL"]?.trim();
-  const selectedProviderApplies =
-    !preferredModel || !primaryModel || preferredModel === primaryModel;
-  const pinnedProviderRaw =
-    forcedProviderRaw ??
-    (selectedProviderApplies ? selectedProviderRaw : undefined);
-  if (pinnedProviderRaw) {
-    const source = pinnedProviderRaw === forcedProviderRaw
-      ? "0SEC_FORCE_PROVIDER"
-      : "0SEC_SELECTED_PROVIDER";
-    const supported: readonly ApiProvider[] = [
-      "openrouter",
-      "anthropic",
-      "openai",
-      "azure",
-      "deepseek",
-      "chatgpt-codex",
-      "z-ai",
-      "kimi",
-      "qwen",
-      "xai",
-      "opencode",
-    ];
-    if (!supported.includes(pinnedProviderRaw as ApiProvider)) {
-      throw new Error(`${source} is unsupported: ${pinnedProviderRaw}`);
-    }
-    const model = preferredModel ?? process.env["0SEC_MODEL"];
-    if (!model) {
-      throw new Error(`${source} requires an explicit model`);
-    }
-    const provider = pinnedProviderRaw as ApiProvider;
-    const resolved = resolveFailoverProvider(provider, model);
-    if (!resolved) {
-      throw new Error(`${source}=${provider} has no configured credentials`);
-    }
-    return { provider, ...resolved, defaultModel: model };
-  }
-
   // Per-call routing: if the requested model maps to a provider whose auth is
   // present, that provider wins over the global env priority — so one process
   // can fan calls across providers (gpt-5.5→codex, glm-5.2→z-ai, claude→anthropic).
-  switch (providerForModel(preferredModel)) {
+  switch (providerForModel(preferredModel, env)) {
     case "deepseek":
-      return { provider: "deepseek", apiKey: process.env.DEEPSEEK_API_KEY as string,
-        baseUrl: process.env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL,
+      return { provider: "deepseek", apiKey: env.DEEPSEEK_API_KEY as string,
+        baseUrl: env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL,
         defaultModel: DEEPSEEK_DEFAULT_MODEL, wireApi: "responses" };
     case "azure": {
-      const azureKey = process.env.AZURE_OPENAI_API_KEY;
+      const azureKey = env.AZURE_OPENAI_API_KEY;
       if (!azureKey) break;
-      const azureConfig = parseCodexAzureConfig();
+      const azureConfig = parseCodexAzureConfig(env);
       return {
         provider: "azure",
         apiKey: azureKey,
         baseUrl:
-          process.env.AZURE_OPENAI_BASE_URL ??
-          process.env.OPENAI_BASE_URL ??
+          env.AZURE_OPENAI_BASE_URL ??
+          env.OPENAI_BASE_URL ??
           azureConfig.baseUrl ??
           "https://api.openai.com/v1",
         defaultModel:
           preferredModel ??
-          process.env.AZURE_OPENAI_MODEL ??
+          env.AZURE_OPENAI_MODEL ??
           azureConfig.model ??
           DEFAULT_OPENAI_MODEL,
         wireApi:
-          (process.env.AZURE_OPENAI_WIRE_API as WireApi) ??
+          (env.AZURE_OPENAI_WIRE_API as WireApi) ??
           azureConfig.wireApi ??
           "chat_completions",
         reasoningEffort: azureConfig.reasoningEffort,
@@ -1594,32 +1625,32 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     // "chat_completions" below is an inert default that is intentionally UNUSED
     // for these two providers; do NOT add them to isOpenAICompat.
     case "z-ai":
-      return { provider: "z-ai", apiKey: process.env.Z_AI_API_KEY as string,
-        baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL, defaultModel: ZAI_DEFAULT_MODEL, wireApi: "chat_completions" };
+      return { provider: "z-ai", apiKey: env.Z_AI_API_KEY as string,
+        baseUrl: env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL, defaultModel: ZAI_DEFAULT_MODEL, wireApi: "chat_completions" };
     case "kimi":
-      return { provider: "kimi", apiKey: process.env.KIMI_API_KEY as string,
-        baseUrl: process.env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL, defaultModel: KIMI_DEFAULT_MODEL, wireApi: "chat_completions" };
+      return { provider: "kimi", apiKey: env.KIMI_API_KEY as string,
+        baseUrl: env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL, defaultModel: KIMI_DEFAULT_MODEL, wireApi: "chat_completions" };
     case "qwen":
-      return { provider: "qwen", apiKey: process.env.QWEN_API_KEY as string,
-        baseUrl: process.env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL, defaultModel: QWEN_DEFAULT_MODEL, wireApi: "chat_completions" };
+      return { provider: "qwen", apiKey: env.QWEN_API_KEY as string,
+        baseUrl: env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL, defaultModel: QWEN_DEFAULT_MODEL, wireApi: "chat_completions" };
     case "xai":
-      return { provider: "xai", apiKey: process.env.XAI_API_KEY as string,
-        baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, defaultModel: XAI_DEFAULT_MODEL, wireApi: "chat_completions" };
+      return { provider: "xai", apiKey: env.XAI_API_KEY as string,
+        baseUrl: env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, defaultModel: XAI_DEFAULT_MODEL, wireApi: "chat_completions" };
     case "opencode":
-      return { provider: "opencode", apiKey: process.env.OPENCODE_API_KEY as string,
-        baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, defaultModel: OPENCODE_DEFAULT_MODEL, wireApi: opencodeWireApiForModel(preferredModel) };
+      return { provider: "opencode", apiKey: env.OPENCODE_API_KEY as string,
+        baseUrl: env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL, defaultModel: OPENCODE_DEFAULT_MODEL, wireApi: opencodeWireApiForModel(preferredModel) };
     case "chatgpt-codex":
       return { provider: "chatgpt-codex", apiKey: "", baseUrl: CODEX_API_ENDPOINT,
-        defaultModel: process.env["0SEC_MODEL"] ?? CODEX_DEFAULT_MODEL, wireApi: "responses" };
+        defaultModel: env["0SEC_MODEL"] ?? CODEX_DEFAULT_MODEL, wireApi: "responses" };
     case "anthropic":
-      return { provider: "anthropic", apiKey: process.env.ANTHROPIC_API_KEY as string,
-        baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com", defaultModel: DEFAULT_ANTHROPIC_MODEL, wireApi: "chat_completions" };
+      return { provider: "anthropic", apiKey: env.ANTHROPIC_API_KEY as string,
+        baseUrl: env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com", defaultModel: DEFAULT_ANTHROPIC_MODEL, wireApi: "chat_completions" };
     case "openrouter":
-      return { provider: "openrouter", apiKey: process.env.OPENROUTER_API_KEY as string,
+      return { provider: "openrouter", apiKey: env.OPENROUTER_API_KEY as string,
         baseUrl: "https://openrouter.ai/api/v1", defaultModel: DEFAULT_OPENROUTER_MODEL, wireApi: "chat_completions" };
     case "openai":
-      return { provider: "openai", apiKey: process.env.OPENAI_API_KEY as string,
-        baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", defaultModel: DEFAULT_OPENAI_MODEL, wireApi: "chat_completions" };
+      return { provider: "openai", apiKey: env.OPENAI_API_KEY as string,
+        baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", defaultModel: DEFAULT_OPENAI_MODEL, wireApi: "chat_completions" };
     default:
       break; // fall through to env-priority detection
   }
@@ -1643,10 +1674,10 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
   // Either env present → use the chatgpt-codex provider; we skip the
   // api-key providers entirely because the operator has explicitly told
   // us to use the subscription path.
-  const chatGptAccess = process.env["0SEC_CHATGPT_ACCESS_TOKEN"];
-  const chatGptRefresh = process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"];
+  const chatGptAccess = env["0SEC_CHATGPT_ACCESS_TOKEN"];
+  const chatGptRefresh = env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"];
   const chatGptAuthFile = !chatGptAccess && !chatGptRefresh
-    ? readChatGptCodexAuthFile()
+    ? readChatGptCodexAuthFile(env)
     : undefined;
   if (
     (chatGptAccess && chatGptAccess.length > 0) ||
@@ -1663,25 +1694,25 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       // baseUrl is informational only — the runtime hardcodes
       // CODEX_API_ENDPOINT for this provider.
       baseUrl: CODEX_API_ENDPOINT,
-      defaultModel: process.env["0SEC_MODEL"] ?? CODEX_DEFAULT_MODEL,
+      defaultModel: env["0SEC_MODEL"] ?? CODEX_DEFAULT_MODEL,
       wireApi: "responses",
     };
   }
 
   // Direct DeepSeek is the first metered fallback after the Codex
   // subscription. Its native Responses API supports Flash 0731 tool calling.
-  const deepseekKey = process.env.DEEPSEEK_API_KEY;
+  const deepseekKey = env.DEEPSEEK_API_KEY;
   if (deepseekKey) {
     return {
       provider: "deepseek",
       apiKey: deepseekKey,
-      baseUrl: process.env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL,
+      baseUrl: env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL,
       defaultModel: DEEPSEEK_DEFAULT_MODEL,
       wireApi: "responses",
     };
   }
 
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
+  const openrouterKey = env.OPENROUTER_API_KEY;
   if (openrouterKey) {
     return {
       provider: "openrouter",
@@ -1692,25 +1723,25 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
-  const azureKey = process.env.AZURE_OPENAI_API_KEY;
+  const azureKey = env.AZURE_OPENAI_API_KEY;
   if (azureKey) {
-    const azureConfig = parseCodexAzureConfig();
+    const azureConfig = parseCodexAzureConfig(env);
     return {
       provider: "azure",
       apiKey: azureKey,
-      baseUrl: process.env.AZURE_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? azureConfig.baseUrl ?? "https://api.openai.com/v1",
-      defaultModel: process.env.AZURE_OPENAI_MODEL ?? azureConfig.model ?? DEFAULT_OPENAI_MODEL,
-      wireApi: (process.env.AZURE_OPENAI_WIRE_API as WireApi) ?? azureConfig.wireApi ?? "chat_completions",
+      baseUrl: env.AZURE_OPENAI_BASE_URL ?? env.OPENAI_BASE_URL ?? azureConfig.baseUrl ?? "https://api.openai.com/v1",
+      defaultModel: env.AZURE_OPENAI_MODEL ?? azureConfig.model ?? DEFAULT_OPENAI_MODEL,
+      wireApi: (env.AZURE_OPENAI_WIRE_API as WireApi) ?? azureConfig.wireApi ?? "chat_completions",
       reasoningEffort: azureConfig.reasoningEffort,
     };
   }
 
-  const openaiKey = process.env.OPENAI_API_KEY;
+  const openaiKey = env.OPENAI_API_KEY;
   if (openaiKey) {
     return {
       provider: "openai",
       apiKey: openaiKey,
-      baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+      baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       defaultModel: DEFAULT_OPENAI_MODEL,
       wireApi: "chat_completions",
     };
@@ -1723,12 +1754,12 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
   // header/url/parser paths (routed by LlmApiRuntime.isAnthropicWire). The
   // `wireApi` below is an inert default that is intentionally UNUSED for z-ai;
   // do NOT add z-ai to isOpenAICompat.
-  const zaiKey = process.env.Z_AI_API_KEY;
+  const zaiKey = env.Z_AI_API_KEY;
   if (zaiKey) {
     return {
       provider: "z-ai",
       apiKey: zaiKey,
-      baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL,
+      baseUrl: env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL,
       defaultModel: ZAI_DEFAULT_MODEL,
       wireApi: "chat_completions",
     };
@@ -1738,12 +1769,12 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
   // the Anthropic wire (routed by LlmApiRuntime.isAnthropicWire); the `wireApi`
   // below is an inert default that is intentionally UNUSED for kimi — do NOT
   // add kimi to isOpenAICompat.
-  const kimiKey = process.env.KIMI_API_KEY;
+  const kimiKey = env.KIMI_API_KEY;
   if (kimiKey) {
     return {
       provider: "kimi",
       apiKey: kimiKey,
-      baseUrl: process.env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL,
+      baseUrl: env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL,
       defaultModel: KIMI_DEFAULT_MODEL,
       wireApi: "chat_completions",
     };
@@ -1751,12 +1782,12 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
 
   // Alibaba Qwen — same explicit-opt-in treatment as z-ai/kimi, still
   // before the Anthropic final fallback.
-  const qwenKey = process.env.QWEN_API_KEY;
+  const qwenKey = env.QWEN_API_KEY;
   if (qwenKey) {
     return {
       provider: "qwen",
       apiKey: qwenKey,
-      baseUrl: process.env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL,
+      baseUrl: env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL,
       defaultModel: QWEN_DEFAULT_MODEL,
       wireApi: "chat_completions",
     };
@@ -1764,12 +1795,12 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
 
   // xAI Grok — OpenAI-compatible wire, same explicit-opt-in treatment as
   // z-ai/kimi/qwen, still before the Anthropic final fallback.
-  const xaiKey = process.env.XAI_API_KEY;
+  const xaiKey = env.XAI_API_KEY;
   if (xaiKey) {
     return {
       provider: "xai",
       apiKey: xaiKey,
-      baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL,
+      baseUrl: env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL,
       defaultModel: XAI_DEFAULT_MODEL,
       wireApi: "chat_completions",
     };
@@ -1778,33 +1809,53 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
   // OpenCode Zen — multi-wire gateway selected per model (see
   // opencodeWireApiForModel), same explicit-opt-in treatment as z-ai/kimi/qwen/xai,
   // still before the Anthropic final fallback.
-  const opencodeKey = process.env.OPENCODE_API_KEY;
+  const opencodeKey = env.OPENCODE_API_KEY;
   if (opencodeKey) {
     return {
       provider: "opencode",
       apiKey: opencodeKey,
-      baseUrl: process.env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL,
+      baseUrl: env.OPENCODE_BASE_URL ?? OPENCODE_DEFAULT_BASE_URL,
       defaultModel: OPENCODE_DEFAULT_MODEL,
       wireApi: opencodeWireApiForModel(preferredModel),
     };
   }
 
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const anthropicKey = env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     return {
       provider: "anthropic",
       apiKey: anthropicKey,
-      baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com",
+      baseUrl: env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com",
       defaultModel: DEFAULT_ANTHROPIC_MODEL,
       wireApi: "chat_completions",
     };
   }
+  // 0sec Cloud hosted inference. Detected when cloud credentials are present
+  // and no explicit BYOK provider was configured above. The default model is
+  // a placeholder; the first async catalog fetch replaces it at invocation
+  // time with the actual first model from the server's catalog.
+  try {
+    const hostedCreds = loadCloudCredentials({
+      env: env,
+      warn: () => { /* silent in detection path */ },
+    });
+    return {
+      provider: "hosted",
+      apiKey: hostedCreds.token,
+      baseUrl: `${hostedCreds.host}/api/inference/v1`,
+      defaultModel: "",
+      wireApi: "chat_completions",
+    };
+  } catch {
+    // No cloud credentials — continue to BYOK fallbacks.
+  }
+
 
   // No key found — default to Anthropic (will fail at runtime with helpful message)
   return {
     provider: "anthropic",
     apiKey: "",
-    baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com",
+    baseUrl: env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com",
     defaultModel: DEFAULT_ANTHROPIC_MODEL,
     wireApi: "chat_completions",
   };
@@ -1830,6 +1881,8 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
 export class LlmApiRuntime implements Runtime, NativeRuntime {
   readonly type = "api" as const;
   private config: RuntimeConfig;
+  private readonly env: Readonly<NodeJS.ProcessEnv>;
+  private readonly codexAuthState?: ChatGptCodexAuthState;
   private provider: ApiProvider;
   private apiKey: string;
   private baseUrl: string;
@@ -1839,29 +1892,41 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   private azureConfig: ReturnType<typeof parseCodexAzureConfig>;
   private serverCompactionTokens?: number;
   /** Ordered fallback chain (0SEC_LLM_FALLBACK). Empty = no failover. */
-  private fallbackChain: FallbackEntry[];
+  private fallbackChain: Array<FallbackEntry & { credentials?: ApiProviderConnection }>;
   /** Index into fallbackChain — which entry to try next. */
   private fallbackIndex: number;
+  /** Resolve and validate the hosted model and wire protocol once per runtime. */
+  private hostedCatalogPromise: Promise<void> | null = null;
+  /** Catalog ceiling, resolved before hosted inference is submitted. */
+  private hostedMaxOutputTokens: number | undefined;
 
   constructor(config: RuntimeConfig) {
-    this.config = config;
-    this.azureConfig = parseCodexAzureConfig();
-    this.fallbackChain = getFallbackChain();
+    this.config = { ...config };
+    this.env = Object.freeze({ ...process.env, ...config.env });
+    this.azureConfig = parseCodexAzureConfig(this.env);
+    this.fallbackChain = getFallbackChain(this.env).map(entry => ({
+      ...entry, credentials: resolveFailoverProvider(entry.provider, entry.model, this.env),
+    }));
     this.fallbackIndex = 0;
     // Thread the requested model into detection so provider follows the model
     // per-call (per-call multi-provider routing) when its auth is available.
-    const detected = detectProvider(config.apiKey, config.model ?? process.env["0SEC_MODEL"]);
+    const detected = detectProvider(config.apiKey, config.model ?? this.env["0SEC_MODEL"], this.env, config.provider);
     this.provider = detected.provider;
     this.apiKey = detected.apiKey;
     this.baseUrl = detected.baseUrl;
     this.wireApi = detected.wireApi;
-    this.reasoningEffort = process.env["0SEC_REASONING_EFFORT"] ?? detected.reasoningEffort;
+    if (this.provider === "chatgpt-codex" || this.fallbackChain.some(entry => entry.provider === "chatgpt-codex")) {
+      if (readChatGptCodexEnv(this.env) || readChatGptCodexAuthFile(this.env)) {
+        this.codexAuthState = resolveChatGptCodexAuthState(this.env);
+      }
+    }
+    this.reasoningEffort = this.env["0SEC_REASONING_EFFORT"] ?? detected.reasoningEffort;
     // `compact_threshold` has an API minimum of 1000; clamp rather than send a
     // value the server will reject on the hot path of every request.
     this.serverCompactionTokens = config.serverCompactionTokens !== undefined
       ? Math.max(1000, config.serverCompactionTokens)
       : undefined;
-    const requestedModel = config.model ?? process.env["0SEC_MODEL"];
+    const requestedModel = config.model ?? this.env["0SEC_MODEL"];
     // "free" is a special alias for the free OpenRouter model
     if (requestedModel === "free" && this.provider === "openrouter") {
       this.model = FREE_OPENROUTER_MODEL;
@@ -1893,7 +1958,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     // is cached and tolerant of failures — never blocks the main path.
     // Skip entirely when no key is configured (the diagnostics path will
     // surface the missing-key error to the user instead).
-    if (this.apiKey && !process.env["0SEC_SKIP_PROVIDER_BANNER"]) {
+    if (this.apiKey && !this.env["0SEC_SKIP_PROVIDER_BANNER"]) {
       void logProviderStartup(
         this.provider,
         this.providerLabel,
@@ -1907,13 +1972,48 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     }
   }
 
+  /** The server catalog is authoritative even when a model was selected explicitly. */
+  private async ensureHostedModel(): Promise<void> {
+    if (this.provider !== "hosted") return;
+
+    if (!this.hostedCatalogPromise) {
+      this.hostedCatalogPromise = (async () => {
+        const client = new CloudClient({
+          host: this.baseUrl.replace(/\/api\/inference\/v1$/, ""),
+          token: this.apiKey,
+        });
+        const catalog = await client.getInferenceModels();
+        const selected = this.model
+          ? catalog.data.find((model) => model.id === this.model)
+          : catalog.data[0];
+        if (!selected) {
+          throw new Error(this.model
+            ? `Hosted model "${this.model}" is unavailable. Run \`0sec models\` for available models.`
+            : "No hosted models are available. Run `0sec models` to check service availability.");
+        }
+        this.model = selected.id;
+        this.wireApi = selected.wire_api;
+        this.hostedMaxOutputTokens = selected.max_output_tokens;
+      })();
+    }
+    await this.hostedCatalogPromise;
+  }
+
   /**
    * A hard dollar ceiling needs a provider-enforced bound on the next response.
    * ChatGPT Codex OAuth rejects `max_output_tokens`, so it cannot support that
    * contract; callers must fail closed before making a metered comparison call.
    */
   get outputTokenLimit(): number | undefined {
-    return this.provider === "chatgpt-codex" ? undefined : NATIVE_COMPLETION_TOKEN_LIMIT;
+    return this.provider === "chatgpt-codex" ? undefined : this.effectiveOutputTokens;
+  }
+
+  /** Hosted requests honor both the catalog ceiling and the local hard cap. */
+  private get effectiveOutputTokens(): number {
+    if (this.provider === "hosted" && this.hostedMaxOutputTokens !== undefined) {
+      return Math.min(NATIVE_COMPLETION_TOKEN_LIMIT, this.hostedMaxOutputTokens);
+    }
+    return NATIVE_COMPLETION_TOKEN_LIMIT;
   }
 
   /**
@@ -1933,6 +2033,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.provider === "deepseek" ||
       this.provider === "qwen" ||
       this.provider === "xai" ||
+      this.provider === "hosted" ||
       (this.provider === "opencode" &&
         (this.wireApi === "chat_completions" || this.wireApi === "responses")) ||
       // chatgpt-codex always speaks Responses API; treat it as
@@ -2056,7 +2157,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   private async ensureFreshHeaders(): Promise<Record<string, string>> {
     const base = this.buildHeaders();
     if (this.provider !== "chatgpt-codex") return base;
-    const { accessToken, accountId } = await getChatGptCodexAccessToken();
+    if (!this.codexAuthState) throw new Error("ChatGPT Codex auth: no credential captured for this runtime");
+    const { accessToken, accountId } = await refreshChatGptCodexAuthState(this.codexAuthState);
     base["Authorization"] = `Bearer ${accessToken}`;
     if (accountId) base["ChatGPT-Account-Id"] = accountId;
     base["session_id"] = PROCESS_SESSION_ID;
@@ -2246,6 +2348,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       case "qwen": return "Qwen (Alibaba Model Studio)";
       case "xai": return "xAI (Grok)";
       case "opencode": return "OpenCode Zen";
+      case "hosted": return "0sec Cloud";
     }
   }
 
@@ -2262,7 +2365,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       "  export KIMI_API_KEY=...                (Moonshot Kimi K3 — flat-rate coding, Anthropic-compatible)\n" +
       "  export QWEN_API_KEY=...                (Alibaba Qwen — Token Plan sub, OpenAI-compatible)\n" +
       "  export XAI_API_KEY=...                 (xAI Grok — OpenAI-compatible)\n" +
-      "  export OPENCODE_API_KEY=...            (OpenCode Zen — multi-wire gateway)"
+      "  export OPENCODE_API_KEY=...            (OpenCode Zen — multi-wire gateway)\n" +
+      "  Run `0sec login`                     (0sec hosted inference)"
     );
   }
 
@@ -2289,14 +2393,14 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     }
 
     const hasConfiguredBaseUrl = !!(
-      process.env.AZURE_OPENAI_BASE_URL ||
-      process.env.OPENAI_BASE_URL ||
+      this.env.AZURE_OPENAI_BASE_URL ||
+      this.env.OPENAI_BASE_URL ||
       this.azureConfig.baseUrl
     );
     const hasConfiguredModel = !!(
       this.config.model ||
-      process.env["0SEC_MODEL"] ||
-      process.env.AZURE_OPENAI_MODEL ||
+      this.env["0SEC_MODEL"] ||
+      this.env.AZURE_OPENAI_MODEL ||
       this.azureConfig.model
     );
 
@@ -2368,7 +2472,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     while (this.fallbackIndex < this.fallbackChain.length) {
       const entry = this.fallbackChain[this.fallbackIndex]!;
       this.fallbackIndex++;
-      const cfg = resolveFailoverProvider(entry.provider, entry.model);
+      const cfg = entry.credentials;
       if (!cfg) {
         diag.warn(
           "failover_provider_skipped",
@@ -2382,6 +2486,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.apiKey = cfg.apiKey;
       this.baseUrl = cfg.baseUrl;
       this.wireApi = cfg.wireApi;
+      this.hostedCatalogPromise = null;
       diag.warn(
         "failover_engaged",
         `${reason} — failover to ${entry.provider} (${entry.model})`,
@@ -2399,10 +2504,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
    * full jitter (so a burst of concurrent scans desynchronises instead of
    * hammering the limit in lockstep).
    *
-   * The body is supplied as a zero-arg factory (`bodyFactory`) so that when
-   * cross-provider failover fires (plan quota or 429 retry budget exhausted →
-   * next provider), the body can be regenerated with the new model name by
-   * calling the factory again, which reads `this.model` lazily.
+   * The body factory is valid only for the current provider and wire protocol.
+   * A null result signals failover: the caller resolves the hosted catalog and
+   * rebuilds the complete request under its existing timeout/cancellation signal.
    *
    * Retry + failover caps documented on `retryBackoffMs` / `llm429MaxRetries`.
    *
@@ -2413,7 +2517,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     bodyFactory: () => string,
     signal: AbortSignal,
     abort?: CallAbort,
-  ): Promise<Response> {
+  ): Promise<Response | null> {
     let waited429Ms = 0;
     let waitedOtherMs = 0;
     for (let attempt = 0; ; attempt++) {
@@ -2440,6 +2544,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         // it FIRST so it can never be treated as a retryable transport fault
         // or wrapped as a "transport failure".
         abort?.throwIfCancelled();
+        if (this.provider === "hosted") {
+          throw new Error(
+            "0sec hosted request outcome is unknown. Automatic replay is disabled; check your inference usage before retrying.",
+            { cause: error },
+          );
+        }
         const cause = error instanceof Error ? error.cause : undefined;
         const causeCode =
           cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string"
@@ -2479,6 +2589,17 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       }
       if (res.ok || !isRetryableHttpStatus(res.status)) {
         return res;
+      }
+      // Provider 429s and unresolved charges can follow billable work. Retry only
+      // when the gateway explicitly proves it rejected pre-dispatch admission.
+      if (this.provider === "hosted" && res.status === 429 && res.headers.get("x-0sec-retry-safe") !== "1") {
+        return res;
+      }
+      if (this.provider === "hosted" && res.status >= 500) {
+        await res.body?.cancel();
+        throw new Error(
+          `0sec hosted request returned HTTP ${res.status}; its outcome may be unknown. Automatic replay is disabled; check your inference usage before retrying.`,
+        );
       }
 
       // Past this point every branch either retries or fails over to another
@@ -2532,10 +2653,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             quota,
           );
           if (this._tryFailover("plan quota exhausted")) {
-            attempt = -1;
-            waited429Ms = 0;
-            waitedOtherMs = 0;
-            continue;
+            return null;
           }
           throw quotaError;
         }
@@ -2556,12 +2674,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       if (attempt >= maxRetries) {
         // 429 budget exhausted — try cross-provider failover before giving up.
         if (is429 && this._tryFailover("429 retry budget exhausted")) {
-          // Provider switched; reset retry state. The next bodyFactory() call
-          // picks up `this.model` for the new provider.
-          attempt = -1;
-          waited429Ms = 0;
-          waitedOtherMs = 0;
-          continue;
+          return null;
         }
         return handBack();
       }
@@ -2572,10 +2685,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       if (waitedMs + delay > maxWaitMs) {
         // 429 cumulative backoff budget exhausted — try cross-provider failover.
         if (is429 && this._tryFailover("429 retry budget exhausted")) {
-          attempt = -1;
-          waited429Ms = 0;
-          waitedOtherMs = 0;
-          continue;
+          return null;
         }
         return handBack();
       }
@@ -2625,6 +2735,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     prompt: string,
     context?: RuntimeContext,
   ): Promise<RuntimeResult> {
+    await this.ensureHostedModel();
     const start = Date.now();
 
     // chatgpt-codex's "key" is an OAuth refresh token in env, not
@@ -2649,78 +2760,81 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     );
 
     try {
-      let res: Response;
+      let res: Response | null;
+      do {
 
-      if (this.isOpenAICompat && this.wireApi === "chat_completions") {
-        // OpenRouter / OpenAI / Azure chat completions format
-        const messages: Array<Record<string, string>> = [];
-        if (systemPrompt) {
-          messages.push({ role: "system", content: systemPrompt });
-        }
-        messages.push({ role: "user", content: prompt });
+        if (this.isOpenAICompat && this.wireApi === "chat_completions") {
+          // OpenRouter / OpenAI / Azure chat completions format
+          const messages: Array<Record<string, string>> = [];
+          if (systemPrompt) {
+            messages.push({ role: "system", content: systemPrompt });
+          }
+          messages.push({ role: "user", content: prompt });
 
-        res = await this.postWithRetry(
-          () => JSON.stringify({
-            model: this.model,
-            [this.maxTokensParamKey]: NATIVE_COMPLETION_TOKEN_LIMIT,
-            messages,
-            // See executeNative: explicit reasoning_effort passthrough only.
-            ...(this.reasoningEffort
-              ? { reasoning_effort: this.reasoningEffort }
-              : {}),
-          }),
-          controller.signal,
-        );
-      } else if (this.isOpenAICompat && this.wireApi === "responses") {
-        // Azure Responses API format
-        const input: Array<Record<string, unknown>> = [];
-        if (systemPrompt) {
+          res = await this.postWithRetry(
+            () => JSON.stringify({
+              model: this.model,
+              [this.maxTokensParamKey]: this.effectiveOutputTokens,
+              messages,
+              // See executeNative: explicit reasoning_effort passthrough only.
+              ...(this.reasoningEffort
+                ? { reasoning_effort: this.reasoningEffort }
+                : {}),
+            }),
+            controller.signal,
+          );
+        } else if (this.isOpenAICompat && this.wireApi === "responses") {
+          // Azure Responses API format
+          const input: Array<Record<string, unknown>> = [];
+          if (systemPrompt) {
+            input.push({
+              role: "system",
+              content: [{ type: "input_text", text: systemPrompt }],
+            });
+          }
           input.push({
-            role: "system",
-            content: [{ type: "input_text", text: systemPrompt }],
+            role: "user",
+            content: [{ type: "input_text", text: prompt }],
           });
-        }
-        input.push({
-          role: "user",
-          content: [{ type: "input_text", text: prompt }],
-        });
 
-        const isCodex = this.provider === "chatgpt-codex";
-        res = await this.postWithRetry(
-          () => JSON.stringify({
-            model: this.model,
-            input,
-            ...(isCodex ? { store: false } : { max_output_tokens: NATIVE_COMPLETION_TOKEN_LIMIT }),
-          }),
-          controller.signal,
-        );
-      } else if (this.isGoogleWire) {
-        res = await this.postWithRetry(
-          () => JSON.stringify({
-            ...(systemPrompt
-              ? { systemInstruction: { parts: [{ text: systemPrompt }] } }
-              : {}),
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
-          }),
-          controller.signal,
-        );
-      } else if (this.isAnthropicWire) {
-        // Anthropic Messages API format (also serves the z-ai/GLM and
-        // kimi/Moonshot providers — see `isAnthropicWire`).
-        res = await this.postWithRetry(
-          () => JSON.stringify({
-            model: this.model,
-            max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
-            ...this.anthropicThinkingField(),
-            ...(systemPrompt ? { system: systemPrompt } : {}),
-            messages: [{ role: "user", content: prompt }],
-          }),
-          controller.signal,
-        );
-      } else {
-        throw new Error(`execute: provider ${this.provider} is not mapped to a wire`);
-      }
+          const isCodex = this.provider === "chatgpt-codex";
+          res = await this.postWithRetry(
+            () => JSON.stringify({
+              model: this.model,
+              input,
+              ...(isCodex ? { store: false } : { max_output_tokens: this.effectiveOutputTokens }),
+            }),
+            controller.signal,
+          );
+        } else if (this.isGoogleWire) {
+          res = await this.postWithRetry(
+            () => JSON.stringify({
+              ...(systemPrompt
+                ? { systemInstruction: { parts: [{ text: systemPrompt }] } }
+                : {}),
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
+            }),
+            controller.signal,
+          );
+        } else if (this.isAnthropicWire) {
+          // Anthropic Messages API format (also serves the z-ai/GLM and
+          // kimi/Moonshot providers — see `isAnthropicWire`).
+          res = await this.postWithRetry(
+            () => JSON.stringify({
+              model: this.model,
+              max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
+              ...this.anthropicThinkingField(),
+              ...(systemPrompt ? { system: systemPrompt } : {}),
+              messages: [{ role: "user", content: prompt }],
+            }),
+            controller.signal,
+          );
+        } else {
+          throw new Error(`execute: provider ${this.provider} is not mapped to a wire`);
+        }
+        if (!res) await this.ensureHostedModel();
+      } while (!res);
 
       clearTimeout(timer);
 
@@ -2829,6 +2943,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     callbacks?: NativeStreamCallbacks,
     signal?: AbortSignal,
   ): Promise<NativeRuntimeResult> {
+    await this.ensureHostedModel();
     const start = Date.now();
 
     // chatgpt-codex's "key" is an OAuth refresh token in env, not
@@ -2858,437 +2973,444 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     const call = composeCallAbort(controller.signal, signal);
 
     try {
-      let res: Response;
+      let res: Response | null;
+      do {
 
-      if (this.isOpenAICompat && this.wireApi === "chat_completions") {
-        // Convert to OpenAI chat completions format
-        const chatMessages: Array<Record<string, unknown>> = [];
-        chatMessages.push({ role: "system", content: system });
+        if (this.isOpenAICompat && this.wireApi === "chat_completions") {
+          // Convert to OpenAI chat completions format
+          const chatMessages: Array<Record<string, unknown>> = [];
+          chatMessages.push({ role: "system", content: system });
 
-        for (const m of messages) {
-          // Batch all tool_use blocks from the same message into a
-          // single assistant message with a tool_calls array. gpt-5+
-          // strictly validates that every assistant with tool_calls is
-          // immediately followed by tool responses for each call id —
-          // splitting one turn into multiple assistant messages breaks
-          // that invariant and produces a 400 from Azure.
-          type ToolCall = {
-            id: string;
-            type: "function";
-            function: { name: string; arguments: string };
-          };
-          const pendingToolCalls: ToolCall[] = [];
-          let pendingAssistantText: string | null = null;
-          const flushAssistant = (): void => {
-            if (pendingToolCalls.length === 0 && pendingAssistantText === null) return;
-            const msg: Record<string, unknown> = { role: "assistant" };
-            if (pendingAssistantText !== null) msg.content = pendingAssistantText;
-            else msg.content = null;
-            if (pendingToolCalls.length > 0) msg.tool_calls = pendingToolCalls.slice();
-            chatMessages.push(msg);
-            pendingToolCalls.length = 0;
-            pendingAssistantText = null;
-          };
+          for (const m of messages) {
+            // Batch all tool_use blocks from the same message into a
+            // single assistant message with a tool_calls array. gpt-5+
+            // strictly validates that every assistant with tool_calls is
+            // immediately followed by tool responses for each call id —
+            // splitting one turn into multiple assistant messages breaks
+            // that invariant and produces a 400 from Azure.
+            type ToolCall = {
+              id: string;
+              type: "function";
+              function: { name: string; arguments: string };
+            };
+            const pendingToolCalls: ToolCall[] = [];
+            let pendingAssistantText: string | null = null;
+            const flushAssistant = (): void => {
+              if (pendingToolCalls.length === 0 && pendingAssistantText === null) return;
+              const msg: Record<string, unknown> = { role: "assistant" };
+              if (pendingAssistantText !== null) msg.content = pendingAssistantText;
+              else msg.content = null;
+              if (pendingToolCalls.length > 0) msg.tool_calls = pendingToolCalls.slice();
+              chatMessages.push(msg);
+              pendingToolCalls.length = 0;
+              pendingAssistantText = null;
+            };
 
-          for (const block of m.content) {
-            if (block.type === "text") {
-              if (m.role === "assistant") {
-                pendingAssistantText = (pendingAssistantText ?? "") + block.text;
-              } else {
+            for (const block of m.content) {
+              if (block.type === "text") {
+                if (m.role === "assistant") {
+                  pendingAssistantText = (pendingAssistantText ?? "") + block.text;
+                } else {
+                  flushAssistant();
+                  chatMessages.push({ role: m.role, content: block.text });
+                }
+              } else if (block.type === "tool_use") {
+                pendingToolCalls.push({
+                  id: block.id,
+                  type: "function",
+                  function: { name: block.name, arguments: JSON.stringify(block.input) },
+                });
+              } else if (block.type === "tool_result") {
                 flushAssistant();
-                chatMessages.push({ role: m.role, content: block.text });
+                chatMessages.push({
+                  role: "tool",
+                  tool_call_id: block.tool_use_id,
+                  content: block.content,
+                });
               }
-            } else if (block.type === "tool_use") {
-              pendingToolCalls.push({
-                id: block.id,
-                type: "function",
-                function: { name: block.name, arguments: JSON.stringify(block.input) },
-              });
-            } else if (block.type === "tool_result") {
-              flushAssistant();
-              chatMessages.push({
-                role: "tool",
-                tool_call_id: block.tool_use_id,
-                content: block.content,
-              });
             }
+            // End-of-message flush so a turn that ends with tool_use
+            // blocks emits one assistant message with the full tool_calls
+            // array before the next turn's tool_results land.
+            flushAssistant();
           }
-          // End-of-message flush so a turn that ends with tool_use
-          // blocks emits one assistant message with the full tool_calls
-          // array before the next turn's tool_results land.
-          flushAssistant();
-        }
 
-        const body: Record<string, unknown> = {
-          model: this.model,
-          [this.maxTokensParamKey]: NATIVE_COMPLETION_TOKEN_LIMIT,
-          messages: chatMessages,
-        };
+          const body: Record<string, unknown> = {
+            model: this.model,
+            [this.maxTokensParamKey]: this.effectiveOutputTokens,
+            messages: chatMessages,
+          };
 
-        // reasoning_effort on the chat_completions wire — only when the
-        // operator set it explicitly (0SEC_REASONING_EFFORT / Azure config).
-        // DeepSeek direct honors it (measured 4x reasoning-token separation,
-        // 2026-08-12); endpoints that don't know the field (Alibaba
-        // compatible-mode) silently ignore it. Never apply the gpt-5/o1
-        // default here — default request shape must stay byte-identical.
-        if (this.reasoningEffort) {
-          body.reasoning_effort = this.reasoningEffort;
-        }
+          // reasoning_effort on the chat_completions wire — only when the
+          // operator set it explicitly (0SEC_REASONING_EFFORT / Azure config).
+          // DeepSeek direct honors it (measured 4x reasoning-token separation,
+          // 2026-08-12); endpoints that don't know the field (Alibaba
+          // compatible-mode) silently ignore it. Never apply the gpt-5/o1
+          // default here — default request shape must stay byte-identical.
+          if (this.reasoningEffort) {
+            body.reasoning_effort = this.reasoningEffort;
+          }
 
-        if (tools.length > 0) {
-          body.tools = tools.map((t) => ({
-            type: "function",
-            function: {
-              name: t.name,
-              description: t.description,
-              parameters: t.input_schema,
-            },
-          }));
-        }
+          if (tools.length > 0) {
+            body.tools = tools.map((t) => ({
+              type: "function",
+              function: {
+                name: t.name,
+                description: t.description,
+                parameters: t.input_schema,
+              },
+            }));
+          }
 
-        res = await this.postWithRetry(
-          () => JSON.stringify({ ...body, model: this.model }),
-          call.signal,
-          call,
-        );
-      } else if (this.isOpenAICompat && this.wireApi === "responses") {
-        // Responses API uses a flat list of items, not role-based messages.
-        // function_call and function_call_output are top-level items, not nested
-        // inside content arrays. See: developers.openai.com/docs/api-reference/responses
-        //
-        // ChatGPT Codex backend deviates: the system/developer prompt MUST
-        // travel as the top-level `instructions` body field, not as a
-        // role:"system" item inside `input`. A request without `instructions`
-        // gets a 400 `{"detail":"Instructions are required"}` regardless of
-        // what's in `input`. Send the prompt as `instructions` for codex and
-        // skip the in-input system message.
-        const isCodexProvider = this.provider === "chatgpt-codex";
-        const input: Array<Record<string, unknown>> = isCodexProvider
-          ? []
-          : [
+          res = await this.postWithRetry(
+            () => JSON.stringify({ ...body, model: this.model }),
+            call.signal,
+            call,
+          );
+        } else if (this.isOpenAICompat && this.wireApi === "responses") {
+          // Responses API uses a flat list of items, not role-based messages.
+          // function_call and function_call_output are top-level items, not nested
+          // inside content arrays. See: developers.openai.com/docs/api-reference/responses
+          //
+          // ChatGPT Codex backend deviates: the system/developer prompt MUST
+          // travel as the top-level `instructions` body field, not as a
+          // role:"system" item inside `input`. A request without `instructions`
+          // gets a 400 `{"detail":"Instructions are required"}` regardless of
+          // what's in `input`. Send the prompt as `instructions` for codex and
+          // skip the in-input system message.
+          const isCodexProvider = this.provider === "chatgpt-codex";
+          const input: Array<Record<string, unknown>> = isCodexProvider
+            ? []
+            : [
               {
                 role: "system",
                 content: [{ type: "input_text", text: system }],
               },
             ];
 
-        for (const m of messages) {
-          // ── Retained reasoning ──
-          // When this assistant turn carries the provider's own item array AND
-          // it was produced by exactly this provider+model+wireApi, replay it
-          // verbatim. That is the only supported way to return encrypted
-          // reasoning on this backend: `previous_response_id` is unsupported,
-          // and a field-by-field reconstruction cannot honour "a reasoning item
-          // must be immediately followed by the item it produced" — the flush
-          // below emits pending text as a `{role, content}` message BEFORE the
-          // function_call, which would land a message between the two and 400
-          // with `Item 'rs_…' … without its required following item`.
-          //
-          // The `continue` is load-bearing: falling through would emit the raw
-          // items AND their reconstructed twins.
-          //
-          // Any identity mismatch degrades to today's exact behaviour, which is
-          // also the model-switch strip point — encrypted reasoning is bound to
-          // the model that produced it. That covers the ensemble runtime
-          // (`openrouter.ts`), which hands ONE shared messages array to N models
-          // and appends the winner's turn back: every non-producing model sees a
-          // mismatch and reconstructs, instead of 400-ing on a sibling's items.
-          if (
-            features.retainedReasoning
-            && m.role === "assistant"
-            && m.providerRaw
-            && m.providerRaw.provider === this.provider
-            && m.providerRaw.model === this.model
-            && m.providerRaw.wireApi === this.wireApi
-            && m.providerRaw.output.length > 0
-          ) {
-            input.push(...(m.providerRaw.output as Array<Record<string, unknown>>));
-            continue;
-          }
+          for (const m of messages) {
+            // ── Retained reasoning ──
+            // When this assistant turn carries the provider's own item array AND
+            // it was produced by exactly this provider+model+wireApi, replay it
+            // verbatim. That is the only supported way to return encrypted
+            // reasoning on this backend: `previous_response_id` is unsupported,
+            // and a field-by-field reconstruction cannot honour "a reasoning item
+            // must be immediately followed by the item it produced" — the flush
+            // below emits pending text as a `{role, content}` message BEFORE the
+            // function_call, which would land a message between the two and 400
+            // with `Item 'rs_…' … without its required following item`.
+            //
+            // The `continue` is load-bearing: falling through would emit the raw
+            // items AND their reconstructed twins.
+            //
+            // Any identity mismatch degrades to today's exact behaviour, which is
+            // also the model-switch strip point — encrypted reasoning is bound to
+            // the model that produced it. That covers the ensemble runtime
+            // (`openrouter.ts`), which hands ONE shared messages array to N models
+            // and appends the winner's turn back: every non-producing model sees a
+            // mismatch and reconstructs, instead of 400-ing on a sibling's items.
+            if (
+              features.retainedReasoning
+              && m.role === "assistant"
+              && m.providerRaw
+              && m.providerRaw.provider === this.provider
+              && m.providerRaw.model === this.model
+              && m.providerRaw.wireApi === this.wireApi
+              && m.providerRaw.output.length > 0
+            ) {
+              input.push(...(m.providerRaw.output as Array<Record<string, unknown>>));
+              continue;
+            }
 
-          // Collect text blocks into a role-based message. The OpenAI Responses
-          // API distinguishes text content by producer: user/system/developer
-          // roles use `input_text`, but the assistant role must use
-          // `output_text` (or `refusal`). Sending `input_text` on an assistant
-          // message yields a 400 on Azure with:
-          //   "Invalid value: 'input_text'. Supported values are:
-          //    'output_text' and 'refusal'."
-          // The agent loop replays the assistant's prior text replies on every
-          // turn, so this bug used to kill every multi-turn scan on Azure
-          // starting at turn 2 — the error was misdiagnosed as a "max turns
-          // without completion" because each retry failed with the same 400.
-          const assistantText = m.role === "assistant";
-          const textType = assistantText ? "output_text" : "input_text";
-          const textBlocks: Array<Record<string, unknown>> = [];
-          for (const block of m.content) {
-            if (block.type === "text") {
-              textBlocks.push({ type: textType, text: block.text });
-            } else if (block.type === "tool_use") {
-              // Flush any pending text blocks first
-              if (textBlocks.length > 0) {
-                input.push({ role: m.role, content: [...textBlocks] });
-                textBlocks.length = 0;
+            // Collect text blocks into a role-based message. The OpenAI Responses
+            // API distinguishes text content by producer: user/system/developer
+            // roles use `input_text`, but the assistant role must use
+            // `output_text` (or `refusal`). Sending `input_text` on an assistant
+            // message yields a 400 on Azure with:
+            //   "Invalid value: 'input_text'. Supported values are:
+            //    'output_text' and 'refusal'."
+            // The agent loop replays the assistant's prior text replies on every
+            // turn, so this bug used to kill every multi-turn scan on Azure
+            // starting at turn 2 — the error was misdiagnosed as a "max turns
+            // without completion" because each retry failed with the same 400.
+            const assistantText = m.role === "assistant";
+            const textType = assistantText ? "output_text" : "input_text";
+            const textBlocks: Array<Record<string, unknown>> = [];
+            for (const block of m.content) {
+              if (block.type === "text") {
+                textBlocks.push({ type: textType, text: block.text });
+              } else if (block.type === "tool_use") {
+                // Flush any pending text blocks first
+                if (textBlocks.length > 0) {
+                  input.push({ role: m.role, content: [...textBlocks] });
+                  textBlocks.length = 0;
+                }
+                // Assistant tool_use → top-level function_call item
+                input.push({
+                  type: "function_call",
+                  call_id: block.id,
+                  name: block.name,
+                  arguments: JSON.stringify(block.input),
+                });
+              } else if (block.type === "tool_result") {
+                // Flush any pending text blocks first
+                if (textBlocks.length > 0) {
+                  input.push({ role: m.role, content: [...textBlocks] });
+                  textBlocks.length = 0;
+                }
+                // Tool result → top-level function_call_output item
+                input.push({
+                  type: "function_call_output",
+                  call_id: block.tool_use_id,
+                  output: block.content,
+                });
               }
-              // Assistant tool_use → top-level function_call item
-              input.push({
-                type: "function_call",
-                call_id: block.id,
-                name: block.name,
-                arguments: JSON.stringify(block.input),
-              });
-            } else if (block.type === "tool_result") {
-              // Flush any pending text blocks first
-              if (textBlocks.length > 0) {
-                input.push({ role: m.role, content: [...textBlocks] });
-                textBlocks.length = 0;
-              }
-              // Tool result → top-level function_call_output item
-              input.push({
-                type: "function_call_output",
-                call_id: block.tool_use_id,
-                output: block.content,
-              });
+            }
+            // Flush remaining text blocks
+            if (textBlocks.length > 0) {
+              input.push({ role: m.role, content: textBlocks });
             }
           }
-          // Flush remaining text blocks
-          if (textBlocks.length > 0) {
-            input.push({ role: m.role, content: textBlocks });
-          }
-        }
 
-        const reasoningEffort = this.reasoningEffort ?? defaultReasoningEffort(this.model);
-        // Codex backend rejects `max_output_tokens` set explicitly +
-        // expects `store: false` to stay stateless (opencode
-        // transform.ts:1056-1063 sets these for every Responses
-        // request). For the public Platform API path keep the
-        // explicit cap so we stay budget-bounded. Diff is per-key,
-        // not per-shape — same body otherwise.
-        const isCodex = this.provider === "chatgpt-codex";
-        const body: Record<string, unknown> = {
-          model: this.model,
-          input,
-          ...(isCodex
-            ? { store: false, instructions: system }
-            : { max_output_tokens: NATIVE_COMPLETION_TOKEN_LIMIT }),
-          ...(reasoningEffort
-            ? {
+          const reasoningEffort = this.reasoningEffort ?? defaultReasoningEffort(this.model);
+          // Codex backend rejects `max_output_tokens` set explicitly +
+          // expects `store: false` to stay stateless (opencode
+          // transform.ts:1056-1063 sets these for every Responses
+          // request). For the public Platform API path keep the
+          // explicit cap so we stay budget-bounded. Diff is per-key,
+          // not per-shape — same body otherwise.
+          const isCodex = this.provider === "chatgpt-codex";
+          const body: Record<string, unknown> = {
+            model: this.model,
+            input,
+            ...(isCodex
+              ? { store: false, instructions: system }
+              : { max_output_tokens: this.effectiveOutputTokens }),
+            ...(reasoningEffort
+              ? {
                 reasoning: {
                   effort: reasoningEffort,
                   summary: "auto",
                 },
                 include: ["reasoning.encrypted_content"],
               }
-            : {}),
-          // Server-side compaction, opt-in per runtime. ZDR-friendly: it works
-          // with `store: false`, so nothing is retained server-side between
-          // requests. Only the loops with no context strategy of their own ask
-          // for it — the native loop compacts client-side and must not be
-          // compacted twice.
-          //
-          // SHAPE IS LOAD-BEARING and was verified live against
-          // chatgpt.com/backend-api/codex/responses, because this backend
-          // rejects unknown and mis-typed body fields rather than ignoring
-          // them (a bogus field returns
-          // `400 Unsupported parameter: <name>`):
-          //   [{"type":"compaction","compact_threshold":N}]  → 200
-          //   {"compaction":{"compact_threshold":N}}         → 400 expected an
-          //                                                    array of objects
-          //   [{"compaction":{...}}]                         → 400 missing
-          //                                                    'context_management[0].type'
-          //   []                                             → 400 minimum
-          //                                                    length 1
-          // The object form is what the public Responses docs show; it is not
-          // what this backend takes. Never emit the key with an empty array —
-          // that is a hard 400, hence the guard rather than a `.filter()`.
-          //
-          // Only the two stages that opt in send this, and they run on the
-          // Codex backend. The shape is UNVERIFIED on plain OpenAI / Azure
-          // Responses; if a caller ever enables it there, verify with a live
-          // request before trusting it.
-          ...(this.serverCompactionTokens
-            ? {
+              : {}),
+            // Server-side compaction, opt-in per runtime. ZDR-friendly: it works
+            // with `store: false`, so nothing is retained server-side between
+            // requests. Only the loops with no context strategy of their own ask
+            // for it — the native loop compacts client-side and must not be
+            // compacted twice.
+            //
+            // SHAPE IS LOAD-BEARING and was verified live against
+            // chatgpt.com/backend-api/codex/responses, because this backend
+            // rejects unknown and mis-typed body fields rather than ignoring
+            // them (a bogus field returns
+            // `400 Unsupported parameter: <name>`):
+            //   [{"type":"compaction","compact_threshold":N}]  → 200
+            //   {"compaction":{"compact_threshold":N}}         → 400 expected an
+            //                                                    array of objects
+            //   [{"compaction":{...}}]                         → 400 missing
+            //                                                    'context_management[0].type'
+            //   []                                             → 400 minimum
+            //                                                    length 1
+            // The object form is what the public Responses docs show; it is not
+            // what this backend takes. Never emit the key with an empty array —
+            // that is a hard 400, hence the guard rather than a `.filter()`.
+            //
+            // Only the two stages that opt in send this, and they run on the
+            // Codex backend. The shape is UNVERIFIED on plain OpenAI / Azure
+            // Responses; if a caller ever enables it there, verify with a live
+            // request before trusting it.
+            ...(this.serverCompactionTokens
+              ? {
                 context_management: [
                   { type: "compaction", compact_threshold: this.serverCompactionTokens },
                 ],
               }
-            : {}),
-        };
+              : {}),
+          };
 
-        if (tools.length > 0) {
-          body.tools = tools.map((t) => ({
-            type: "function",
-            name: t.name,
-            description: t.description,
-            // Codex backend's Responses API expects `strict` alongside
-            // parameters. `false` keeps schema enforcement off so a model
-            // that drifts on argument shape still emits the call instead
-            // of failing it server-side. The public OpenAI Responses
-            // schema tolerates the extra field.
-            strict: false,
-            parameters: t.input_schema,
-          }));
-          if (isCodex) {
-            // Every reference Codex client (openai/codex,
-            // glowbom/glowby) sets these. Omitting them shouldn't be
-            // fatal — the backend doesn't 400 — but it leaves the
-            // tool-invocation policy implicit. Setting them explicitly
-            // matches the canonical client behaviour and rules out a
-            // server-side default that gates tool use.
-            body.tool_choice = "auto";
-            body.parallel_tool_calls = true;
+          if (tools.length > 0) {
+            body.tools = tools.map((t) => ({
+              type: "function",
+              name: t.name,
+              description: t.description,
+              // Codex backend's Responses API expects `strict` alongside
+              // parameters. `false` keeps schema enforcement off so a model
+              // that drifts on argument shape still emits the call instead
+              // of failing it server-side. The public OpenAI Responses
+              // schema tolerates the extra field.
+              strict: false,
+              parameters: t.input_schema,
+            }));
+            if (isCodex) {
+              // Every reference Codex client (openai/codex,
+              // glowbom/glowby) sets these. Omitting them shouldn't be
+              // fatal — the backend doesn't 400 — but it leaves the
+              // tool-invocation policy implicit. Setting them explicitly
+              // matches the canonical client behaviour and rules out a
+              // server-side default that gates tool use.
+              body.tool_choice = "auto";
+              body.parallel_tool_calls = true;
+            }
           }
-        }
 
-        res = await this.postWithRetry(
-          () => JSON.stringify({ ...body, stream: true, model: this.model }),
-          call.signal,
-          call,
-        );
+          res = await this.postWithRetry(
+            () => JSON.stringify({ ...body, stream: true, model: this.model }),
+            call.signal,
+            call,
+          );
+          if (!res) {
+            await this.ensureHostedModel();
+            continue;
+          }
 
 
-        if (!res.ok) {
-          const responseText = await res.text();
+          if (!res.ok) {
+            const responseText = await res.text();
+            clearTimeout(timer);
+            return {
+              content: [{ type: "text", text: "" }],
+              stopReason: "error",
+              durationMs: Date.now() - start,
+              error: `${this.providerLabel} API error ${res.status}: ${responseText.slice(0, 500)}`,
+            };
+          }
+
+          const streamed = await this.consumeResponsesStream(res, start, callbacks, {
+            idleTimeoutMs: llmStreamIdleTimeoutMs(),
+            abort: call,
+          });
           clearTimeout(timer);
-          return {
-            content: [{ type: "text", text: "" }],
-            stopReason: "error",
-            durationMs: Date.now() - start,
-            error: `${this.providerLabel} API error ${res.status}: ${responseText.slice(0, 500)}`,
+          return streamed;
+        } else if (this.isGoogleWire) {
+          const body: Record<string, unknown> = {
+            ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+            contents: this.googleContents(messages),
+            generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
           };
-        }
+          if (tools.length > 0) {
+            body.tools = [{
+              functionDeclarations: tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                parametersJsonSchema: tool.input_schema,
+              })),
+            }];
+          }
+          res = await this.postWithRetry(
+            () => JSON.stringify(body),
+            call.signal,
+            call,
+          );
+        } else if (this.isAnthropicWire) {
+          // Anthropic Messages API format (also serves the z-ai/GLM and
+          // kimi/Moonshot providers — see `isAnthropicWire`).
+          const replayedRawMessageIndexes = new Set<number>();
+          const apiMessages: Array<{ role: string; content: WireBlock[] }> = messages.map((m, index) => {
+            // Anthropic requires an assistant turn containing thinking or
+            // redacted_thinking to be echoed back EXACTLY as received. Rebuilding
+            // it from visible text/tool blocks drops the signature and 400s on the
+            // next tool-use turn. The full response content array keeps each
+            // thinking block adjacent to the text/tool_use item it produced.
+            if (
+              features.retainedReasoning
+              && m.role === "assistant"
+              && m.providerRaw
+              && m.providerRaw.provider === this.provider
+              && m.providerRaw.model === this.model
+              && m.providerRaw.wireApi === this.wireApi
+              && m.providerRaw.output.length > 0
+              && isWireBlockArray(m.providerRaw.output)
+            ) {
+              replayedRawMessageIndexes.add(index);
+              return { role: m.role, content: m.providerRaw.output };
+            }
 
-        const streamed = await this.consumeResponsesStream(res, start, callbacks, {
-          idleTimeoutMs: llmStreamIdleTimeoutMs(),
-          abort: call,
-        });
-        clearTimeout(timer);
-        return streamed;
-      } else if (this.isGoogleWire) {
-        const body: Record<string, unknown> = {
-          ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-          contents: this.googleContents(messages),
-          generationConfig: { maxOutputTokens: NATIVE_COMPLETION_TOKEN_LIMIT },
-        };
-        if (tools.length > 0) {
-          body.tools = [{
-            functionDeclarations: tools.map((tool) => ({
-              name: tool.name,
-              description: tool.description,
-              parametersJsonSchema: tool.input_schema,
-            })),
-          }];
-        }
-        res = await this.postWithRetry(
-          () => JSON.stringify(body),
-          call.signal,
-          call,
-        );
-      } else if (this.isAnthropicWire) {
-        // Anthropic Messages API format (also serves the z-ai/GLM and
-        // kimi/Moonshot providers — see `isAnthropicWire`).
-        const replayedRawMessageIndexes = new Set<number>();
-        const apiMessages: Array<{ role: string; content: WireBlock[] }> = messages.map((m, index) => {
-          // Anthropic requires an assistant turn containing thinking or
-          // redacted_thinking to be echoed back EXACTLY as received. Rebuilding
-          // it from visible text/tool blocks drops the signature and 400s on the
-          // next tool-use turn. The full response content array keeps each
-          // thinking block adjacent to the text/tool_use item it produced.
-          if (
-            features.retainedReasoning
-            && m.role === "assistant"
-            && m.providerRaw
-            && m.providerRaw.provider === this.provider
-            && m.providerRaw.model === this.model
-            && m.providerRaw.wireApi === this.wireApi
-            && m.providerRaw.output.length > 0
-            && isWireBlockArray(m.providerRaw.output)
-          ) {
-            replayedRawMessageIndexes.add(index);
-            return { role: m.role, content: m.providerRaw.output };
+            return {
+              role: m.role,
+              content: m.content.map((block): WireBlock => {
+                if (block.type === "text") return { type: "text", text: block.text };
+                if (block.type === "tool_use") {
+                  return { type: "tool_use", id: block.id, name: block.name, input: block.input };
+                }
+                if (block.type === "tool_result") {
+                  return {
+                    type: "tool_result",
+                    tool_use_id: block.tool_use_id,
+                    content: block.content,
+                    ...(block.is_error ? { is_error: true } : {}),
+                  };
+                }
+                // Unreachable for the current block union (`block` narrows to
+                // `never` here); kept as the original passthrough so an added
+                // block kind degrades to "sent as-is" rather than being dropped.
+                return block;
+              }),
+            };
+          });
+
+          // ── Prompt caching ──
+          // Only Anthropic (and explicitly opted-in Anthropic-compatible
+          // endpoints) get `cache_control`. This branch is the ONLY one that can
+          // emit it: the OpenAI chat-completions and Responses branches above
+          // build their bodies independently and never reach this code, so the
+          // Azure / OpenAI / Codex / OpenRouter wires are structurally incapable
+          // of receiving an Anthropic-shaped field.
+          const cacheEnabled =
+            features.promptCache && providerSupportsPromptCache(this.provider);
+
+          for (const index of cacheEnabled
+            ? planMessageBreakpoints(apiMessages, MESSAGE_CACHE_BREAKPOINTS)
+            : []) {
+            // `cache_control` would mutate a replayed assistant turn and violate
+            // Anthropic's "echo exactly as received" signature contract. Keep the
+            // stable system breakpoint and other message breakpoints; skip only
+            // the opaque replayed turn.
+            if (replayedRawMessageIndexes.has(index)) continue;
+            // Mark the message's LAST block so the cached prefix covers it whole.
+            // Breakpoints are recomputed from the current array on every call and
+            // never carried across turns — which is exactly what makes recovery
+            // from `native-loop`'s compaction automatic: compaction rewrites the
+            // transcript and voids these entries, and the next call simply plans
+            // fresh breakpoints over the rewritten history.
+            const blocks = apiMessages[index]?.content;
+            const lastBlock = blocks?.length ? blocks[blocks.length - 1] : undefined;
+            if (blocks && lastBlock) blocks[blocks.length - 1] = withCacheControl(lastBlock);
           }
 
-          return {
-            role: m.role,
-            content: m.content.map((block): WireBlock => {
-              if (block.type === "text") return { type: "text", text: block.text };
-              if (block.type === "tool_use") {
-                return { type: "tool_use", id: block.id, name: block.name, input: block.input };
-              }
-              if (block.type === "tool_result") {
-                return {
-                  type: "tool_result",
-                  tool_use_id: block.tool_use_id,
-                  content: block.content,
-                  ...(block.is_error ? { is_error: true } : {}),
-                };
-              }
-              // Unreachable for the current block union (`block` narrows to
-              // `never` here); kept as the original passthrough so an added
-              // block kind degrades to "sent as-is" rather than being dropped.
-              return block;
-            }),
+          const body: Record<string, unknown> = {
+            model: this.model,
+            max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
+            ...this.anthropicThinkingField(),
+            // The remaining breakpoint goes on the system prompt. Because the
+            // wire renders `tools` → `system` → `messages`, one marker here
+            // caches the tool schemas AND the system prompt together — the
+            // largest, most static span in the request, and the one that never
+            // changes for the lifetime of an agent session. Sent as a block array
+            // (the only shape that accepts `cache_control`) when caching is on,
+            // and left as a plain string otherwise so non-caching providers see a
+            // byte-identical body to before this change.
+            system: cacheEnabled
+              ? [withCacheControl({ type: "text", text: system })]
+              : system,
+            messages: apiMessages,
           };
-        });
 
-        // ── Prompt caching ──
-        // Only Anthropic (and explicitly opted-in Anthropic-compatible
-        // endpoints) get `cache_control`. This branch is the ONLY one that can
-        // emit it: the OpenAI chat-completions and Responses branches above
-        // build their bodies independently and never reach this code, so the
-        // Azure / OpenAI / Codex / OpenRouter wires are structurally incapable
-        // of receiving an Anthropic-shaped field.
-        const cacheEnabled =
-          features.promptCache && providerSupportsPromptCache(this.provider);
+          if (tools.length > 0) {
+            body.tools = tools;
+          }
 
-        for (const index of cacheEnabled
-          ? planMessageBreakpoints(apiMessages, MESSAGE_CACHE_BREAKPOINTS)
-          : []) {
-          // `cache_control` would mutate a replayed assistant turn and violate
-          // Anthropic's "echo exactly as received" signature contract. Keep the
-          // stable system breakpoint and other message breakpoints; skip only
-          // the opaque replayed turn.
-          if (replayedRawMessageIndexes.has(index)) continue;
-          // Mark the message's LAST block so the cached prefix covers it whole.
-          // Breakpoints are recomputed from the current array on every call and
-          // never carried across turns — which is exactly what makes recovery
-          // from `native-loop`'s compaction automatic: compaction rewrites the
-          // transcript and voids these entries, and the next call simply plans
-          // fresh breakpoints over the rewritten history.
-          const blocks = apiMessages[index]?.content;
-          const lastBlock = blocks?.length ? blocks[blocks.length - 1] : undefined;
-          if (blocks && lastBlock) blocks[blocks.length - 1] = withCacheControl(lastBlock);
+          res = await this.postWithRetry(
+            () => JSON.stringify({ ...body, model: this.model }),
+            call.signal,
+            call,
+          );
+        } else {
+          throw new Error(`executeNative: provider ${this.provider} is not mapped to a wire`);
         }
-
-        const body: Record<string, unknown> = {
-          model: this.model,
-          max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
-          ...this.anthropicThinkingField(),
-          // The remaining breakpoint goes on the system prompt. Because the
-          // wire renders `tools` → `system` → `messages`, one marker here
-          // caches the tool schemas AND the system prompt together — the
-          // largest, most static span in the request, and the one that never
-          // changes for the lifetime of an agent session. Sent as a block array
-          // (the only shape that accepts `cache_control`) when caching is on,
-          // and left as a plain string otherwise so non-caching providers see a
-          // byte-identical body to before this change.
-          system: cacheEnabled
-            ? [withCacheControl({ type: "text", text: system })]
-            : system,
-          messages: apiMessages,
-        };
-
-        if (tools.length > 0) {
-          body.tools = tools;
-        }
-
-        res = await this.postWithRetry(
-          () => JSON.stringify({ ...body, model: this.model }),
-          call.signal,
-          call,
-        );
-      } else {
-        throw new Error(`executeNative: provider ${this.provider} is not mapped to a wire`);
-      }
+        if (!res) await this.ensureHostedModel();
+      } while (!res);
 
       // Keep the abort timer ARMED through the body read. `fetch()` resolves as
       // soon as the response HEADERS arrive; the body is drained by `res.text()`.
@@ -3979,11 +4101,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   }
 
   async isAvailable(): Promise<boolean> {
-    // chatgpt-codex uses an OAuth refresh token (env-supplied) rather
-    // than an api key; treat presence of the env var as availability.
+    // Credential presence only; this does not promise provider readiness or funds.
     if (this.provider === "chatgpt-codex") {
-      const refresh = process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"];
-      return typeof refresh === "string" && refresh.length > 0;
+      return this.codexAuthState !== undefined;
     }
     return !!this.apiKey;
   }
