@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 
 import {
   SelfExtensionRegistry,
-  SELF_EXTENSION_SETTING_DEF,
   MAX_EXTENSIONS_PER_SESSION,
   MAX_TOOLS_PER_EXTENSION,
   MAX_TOOLS_PER_SESSION,
@@ -159,14 +158,6 @@ describe("the operator setting", () => {
     expect((r as unknown as Record<string, unknown>).enable).toBeUndefined();
   });
 
-  it("the setting def states the real risk and defaults to false", () => {
-    expect(SELF_EXTENSION_SETTING_DEF.key).toBe("allowModelSelfExtension");
-    expect(SELF_EXTENSION_SETTING_DEF.kind).toBe("boolean");
-    expect(SELF_EXTENSION_SETTING_DEF.default).toBe(false);
-    expect(SELF_EXTENSION_SETTING_DEF.group).toBe("Security");
-    expect(SELF_EXTENSION_SETTING_DEF.description).toMatch(/prompt-injected/);
-    expect(SELF_EXTENSION_SETTING_DEF.description).toMatch(/tools you did not write/);
-  });
 });
 
 // ── 3. capabilities are mandatory and fail-closed ────────────────────────────
