@@ -400,6 +400,7 @@ pre {
 }
 
 .docs-hero-actions a {
+  min-height: 44px;
   border-radius: 0.6rem;
   font-weight: 650;
 }
