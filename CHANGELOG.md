@@ -22,8 +22,9 @@ on the published npm package and the GitHub Release tag.
   the same conversation after approval. Explicit exclusions, denied hosts,
   private-address checks, and revoked tool authority remain enforced.
 - Main and worker transcripts share expandable command and output views.
-  The composer uses compact status icons; cancellation keeps partial output
-  without adding a persistent interruption notice.
+  Status rows and pickers use Nerd Font icons with retained text labels;
+  glyph appearance depends on the terminal font. Cancellation keeps partial
+  output without adding a persistent interruption notice.
 - Child runtimes inherit the parent's resolved provider configuration.
   Scoped harness shutdown drains work before disposal and reports incomplete
   cleanup. Restarting an engine does not reconstruct active harness state.

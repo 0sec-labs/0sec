@@ -151,7 +151,7 @@ export function SelectorPanel({
         const metaFg = active ? CANVAS : MUTED;
         return (
           <box key={item.id} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0} backgroundColor={rowBg}>
-            <text width={1} flexShrink={0} fg={dotFg} bg={rowBg} attributes={TextAttributes.BOLD}>{item.current ? "✓" : item.disabled ? "✘" : active ? "▸" : "◯"}</text>
+            <text width={1} flexShrink={0} fg={dotFg} bg={rowBg} attributes={TextAttributes.BOLD}>{item.current ? "\uf192" : item.disabled ? "\uf05e" : active ? "\uf054" : "\uf10c"}</text>
             <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1} backgroundColor={rowBg}>
               <text fg={labelFg} bg={rowBg} attributes={active ? TextAttributes.BOLD : undefined}>{fitTuiText(item.label, labelWidth)}</text>
             </box>

@@ -194,22 +194,22 @@ const ORDER: StatusSegmentKind[] = [
 ];
 
 /**
- * Recognizable Unicode glyphs with no Nerd Font requirement. Their width is
- * included in the status-row budget alongside the label.
+ * OMP-style Nerd Font BMP glyphs. Their width is included in the status-row
+ * budget alongside the label.
  */
 const ICON: Record<StatusSegmentKind, string> = {
-  model: "🤖",
-  effort: "🧠",
-  mode: "🧭",
+  model: "\uec19",
+  effort: "\uee9c",
+  mode: "\uf14e",
   evolution: "",
-  cwd: "📂",
-  branch: "🔀",
+  cwd: "\uf115",
+  branch: "\uf126",
   dirty: "±",
-  tokens: "🔢",
-  cost: "💰",
-  context: "📊",
-  meter: "📊",
-  plan: "📋",
+  tokens: "\ue26b",
+  cost: "\uf155",
+  context: "\ue70f",
+  meter: "\ue70f",
+  plan: "\uf2d2",
 };
 
 /** Semantic colour role per kind; the meter shares the plain percent's role. */
