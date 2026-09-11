@@ -205,6 +205,9 @@ on the published npm package and the GitHub Release tag.
 
 ### Fixed
 
+- Windows Cloud sign-in passes the browser URL as data to a fixed launcher
+  command, so URL metacharacters are not interpreted as shell commands.
+
 - Source evolution rejects candidates that lose an already-solved case, even
   when aggregate development and held-out scores improve. The retention check
   also applies to approval and canary evaluations.

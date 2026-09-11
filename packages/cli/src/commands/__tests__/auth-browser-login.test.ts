@@ -1,8 +1,19 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import { hostedBrowserLoginFlow, type HostedBrowserLoginOptions } from "../auth.js";
+
+const browserProcess = vi.hoisted(() => ({ platform: "linux", spawn: vi.fn() }));
+vi.mock("node:os", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:os")>(),
+  platform: () => browserProcess.platform,
+}));
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:child_process")>(),
+  spawn: browserProcess.spawn,
+}));
 
 const homes: string[] = [];
 const token = "fixture-cloud-token-never-expose";
@@ -15,9 +26,37 @@ function expectNoCredentials(home: string) {
   expect(existsSync(join(home, ".0sec", "cloud.env"))).toBe(false);
   expect(existsSync(join(home, ".0cloud", "credentials.json"))).toBe(false);
 }
-afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  browserProcess.platform = "linux";
+  browserProcess.spawn.mockReset();
+});
 
 describe("neutral Cloud login", () => {
+  it("keeps a Windows sign-in URL out of command-interpreter source", async () => {
+    browserProcess.platform = "win32";
+    browserProcess.spawn.mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), { unref() {} });
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
+    });
+    const opts = options();
+    const host = "https://fixture.invalid/&calc&";
+    const result = await hostedBrowserLoginFlow({
+      ...opts,
+      host,
+      openBrowser: undefined,
+      fetchImpl: async () => Response.json({ status: "ready", token }),
+    });
+    expect(result.ok).toBe(true);
+    const [executable, args, spawnOptions] = browserProcess.spawn.mock.calls[0]!;
+    expect(executable).not.toMatch(/^cmd(?:\.exe)?$/i);
+    expect(args.join(" ")).not.toContain("&calc&");
+    expect(spawnOptions.env.OSEC_BROWSER_LOGIN_URL).toMatch(
+      /^https:\/\/fixture\.invalid\/&calc&\/cli-auth\?session=[A-Za-z0-9_-]+$/,
+    );
+  });
+
   it.each(["sleep", "fetch", "body"] as const)("cancels a pending %s without waiting for that operation or persisting credentials", async (boundary) => {
     const opts = options();
     const entered = Promise.withResolvers<void>();

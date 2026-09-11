@@ -542,8 +542,7 @@ function extractToken(body: unknown): string | null {
  * Open a URL in the user's default browser without adding a runtime
  * dependency. We use platform-detected child_process.spawn:
  *   - darwin → `open <url>`
- *   - win32  → `cmd /c start "" <url>` (the empty title arg is required
- *             because `start` treats a quoted first arg as a window title)
+ *   - win32  → fixed PowerShell script; URL passed as environment data
  *   - other  → `xdg-open <url>` (Linux + most BSDs)
  *
  * The spawned process is detached + unref'd so we don't keep the CLI
@@ -557,20 +556,18 @@ function extractToken(body: unknown): string | null {
  */
 function defaultOpenBrowser(url: string): Promise<void> {
   const plat = platform();
-  let cmd: string;
-  let args: string[];
-  if (plat === "darwin") {
-    cmd = "open";
-    args = [url];
-  } else if (plat === "win32") {
-    cmd = "cmd";
-    args = ["/c", "start", "", url];
-  } else {
-    cmd = "xdg-open";
-    args = [url];
-  }
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    const options = { detached: true, stdio: "ignore" as const, shell: false };
+    // cmd /c start interprets URL metacharacters even though spawn uses no shell.
+    // Never interpolate the URL into PowerShell source or its command arguments.
+    const child = plat === "darwin"
+      ? spawn("open", [url], options)
+      : plat === "win32"
+        ? spawn("powershell.exe", [
+          "-NoProfile", "-NonInteractive", "-Command",
+          "Start-Process -FilePath $env:OSEC_BROWSER_LOGIN_URL",
+        ], { ...options, env: { ...process.env, OSEC_BROWSER_LOGIN_URL: url } })
+        : spawn("xdg-open", [url], options);
     child.once("error", reject);
     child.once("spawn", () => { child.unref(); resolve(); });
   });
