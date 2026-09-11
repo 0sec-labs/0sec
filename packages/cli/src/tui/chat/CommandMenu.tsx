@@ -7,21 +7,21 @@ import type { SlashCommand } from "../slash-commands.js";
 import type { Theme } from "../theme-context.js";
 
 const COMMAND_ICONS: Readonly<Record<string, string>> = {
-  help: "?",
-  status: "◫",
-  connect: "⇄",
-  providers: "⇄",
-  model: "◉",
-  settings: "⚙",
-  resume: "↶",
-  transcript: "≡",
-  history: "◷",
-  "new-chat": "+",
-  clear: "⌫",
-  scope: "◎",
-  mode: "◈",
-  agents: "♟",
-  tools: "⌘",
+  help: "💡",
+  status: "📊",
+  connect: "🔌",
+  providers: "🔌",
+  model: "🤖",
+  settings: "🔧",
+  resume: "🔄",
+  transcript: "📜",
+  history: "📋",
+  "new-chat": "💬",
+  clear: "🧹",
+  scope: "🎯",
+  mode: "🧭",
+  agents: "👥",
+  tools: "🧰",
 };
 
 /**
@@ -94,11 +94,11 @@ export function CommandMenu({
                 : command.category;
               return (
                 <box key={command.name} flexDirection="row" width={layout.innerWidth} flexShrink={0} minWidth={0}>
-                  <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
+                  <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "▸" : " "}</text>
                   <box flexDirection="column" width={layout.rowWidth} flexGrow={0} flexShrink={0} minWidth={0} marginLeft={1}>
                     <box flexDirection="row" width={layout.rowWidth} minWidth={0} gap={1}>
                       <box width={layout.nameWidth} flexShrink={0} minWidth={0}>
-                        <text fg={active ? PRIMARY : TEXT}>{fitTuiText(`${COMMAND_ICONS[command.name] ?? "›"} /${command.name}`, layout.nameWidth)}</text>
+                        <text fg={active ? PRIMARY : TEXT}>{fitTuiText(`${COMMAND_ICONS[command.name] ?? "▸"} /${command.name}`, layout.nameWidth)}</text>
                       </box>
                       {layout.metaWidth > 0 ? (
                         <box width={layout.metaWidth} flexShrink={0} minWidth={0}>

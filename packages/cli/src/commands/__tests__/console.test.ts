@@ -1,9 +1,74 @@
-import { describe, expect, it } from "vitest";
+import type * as Core from "@0sec/core";
+import { Command } from "commander";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   CONSOLE_AUTONOMY_MODES,
   resolveConsoleAutonomyMode,
+  registerConsoleCommand,
 } from "../console.js";
+
+const startup = vi.hoisted(() => ({
+  bun: true,
+  interactive: true,
+  showConsole: vi.fn(),
+}));
+
+vi.mock("../../tui/runtime.js", () => ({
+  isBunRuntime: () => startup.bun,
+  canUseOpenTui: () => startup.interactive,
+}));
+vi.mock("../../tui/run.js", () => ({
+  showOpenTuiConsole: startup.showConsole,
+  showOpenTuiResume: vi.fn(),
+}));
+vi.mock("@0sec/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof Core>();
+  return { ...actual, connectMcpServers: async () => undefined };
+});
+
+describe("console launch authorization", () => {
+  let previousExitCode: typeof process.exitCode;
+
+  beforeEach(() => {
+    previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    startup.bun = true;
+    startup.interactive = true;
+    startup.showConsole.mockReset();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.exitCode = previousExitCode;
+    vi.restoreAllMocks();
+  });
+
+  async function launch(args: string[] = []) {
+    const program = new Command();
+    registerConsoleCommand(program);
+    await program.parseAsync(["console", ...args], { from: "user" });
+  }
+
+  it("opens interactive YOLO without scope so the operator can approve targets", async () => {
+    await launch();
+    expect(startup.showConsole).toHaveBeenCalledOnce();
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("retains configured-scope requirements for the Node fallback", async () => {
+    startup.bun = false;
+    await launch();
+    expect(process.exitCode).toBe(2);
+    expect(startup.showConsole).not.toHaveBeenCalled();
+  });
+
+  it("does not treat headless prompts as an interactive approval channel", async () => {
+    await launch(["--print", "inspect this target"]);
+    expect(process.exitCode).toBe(2);
+    expect(startup.showConsole).not.toHaveBeenCalled();
+  });
+});
 
 describe("resolveConsoleAutonomyMode", () => {
   it("defaults to yolo when no flag is given", () => {

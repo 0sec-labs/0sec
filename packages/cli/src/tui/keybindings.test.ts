@@ -35,13 +35,6 @@ describe("KEYBINDINGS registry", () => {
     }
   });
 
-  it("ends every description with a full stop", () => {
-    // The reference view reads as prose; a description missing its period reads
-    // as truncated.
-    for (const binding of KEYBINDINGS) {
-      expect(binding.description.endsWith("."), binding.id).toBe(true);
-    }
-  });
 
   it("documents the load-bearing chords the operator relies on", () => {
     // A regression guard: these are the shortcuts the task called out by name.

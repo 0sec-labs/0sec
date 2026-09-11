@@ -170,8 +170,8 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "mode",
     aliases: [],
     category: "mode",
-    description: "Set Standard (automatic in scope), Co-pilot (approve non-read-only tools), or YOLO (configured scope only)",
-    usage: "/mode [standard|copilot|yolo]",
+    description: "Set Standard (approve actions), Co-pilot (autonomous in scope), YOLO (full autonomy; approve new targets), or Recon (passive)",
+    usage: "/mode [standard|copilot|yolo|recon]",
   },
   {
     name: "resume",
