@@ -32,6 +32,7 @@ import { mkdirSync, writeFileSync, chmodSync, unlinkSync, existsSync } from "nod
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Command } from "commander";
 import chalk from "chalk";
 import { consolePresentationOutput } from "../presentation/process-output.js";
@@ -51,7 +52,42 @@ const EXIT_USER_ERROR = 1;
 const EXIT_AUTH = 2;
 const EXIT_NET = 3;
 
-interface LoginOptions {
+// ── reusable flow for TUI, desktop daemon, and CLI ──
+
+/**
+ * Structured result from the hosted browser login flow. Callers use this to
+ * decide next UI state rather than sniffing process exit codes or stdout.
+ */
+export type LoginResult =
+  | { ok: true; host: string }
+  | { ok: false; error: string; recoverable?: boolean; cancelled?: boolean };
+
+/**
+ * Options for `hostedBrowserLoginFlow`. Every seam is injectable so callers
+ * in tests or non-CLI environments (TUI, desktop) never depend on real IO.
+ * The `onStatus` callback fires for progress display; `signal` drives cancel.
+ */
+export interface HostedBrowserLoginOptions {
+  host?: string;
+  /** Override the poll-attempt budget. Default 150 (~5min @ 2s). */
+  pollAttempts?: number;
+  /** Override the poll interval in ms. Default 2000. */
+  pollIntervalMs?: number;
+  /** Test seam: skip the actual browser launch. */
+  openBrowser?: (url: string) => void | Promise<void>;
+  /** Test seam: override fetch impl for poll loop. */
+  fetchImpl?: typeof fetch;
+  /** Test seam: override home directory for credential file. */
+  homeDir?: string;
+  /** Test seam: override sleep so tests don't actually wait. */
+  sleep?: (ms: number) => Promise<void>;
+  /** AbortSignal for cancellation from the caller (Escape, unmount). */
+  signal?: AbortSignal;
+  /** Progress callback for UI display during the flow. Uses a bounded phase union. */
+  onStatus?: (phase: HostedLoginPhase, message: string, loginUrl?: string) => void;
+}
+
+export interface LoginOptions {
   host?: string;
   token?: string;
   /** Override the poll-attempt budget (tests). Default 150 (~5min @ 2s). */
@@ -59,7 +95,7 @@ interface LoginOptions {
   /** Override the poll interval in ms (tests). Default 2000. */
   pollIntervalMs?: number;
   /** Test seam: skip the actual browser launch. */
-  openBrowser?: (url: string) => void;
+  openBrowser?: (url: string) => void | Promise<void>;
   /** Test seam: override fetch impl for poll loop. */
   fetchImpl?: typeof fetch;
   /** Test seam: override home directory for credential file. */
@@ -113,115 +149,205 @@ export function registerAuthCommand(program: Command): void {
 // Exported for the unit tests so we can drive the action without
 // constructing a full Commander program.
 
+/**
+ * Bounded lifecycle phases emitted by `hostedBrowserLoginFlow` for display.
+ * Every value is stable — callers MUST NOT test for arbitrary strings.
+ */
+export type HostedLoginPhase = "opening" | "opener-failed" | "polling" | "cancelled" | "ready" | "timeout";
+
+/** Browser sign-in with caller-owned cancellation and daemon-side persistence.
+ * Returned status contains no credentials and does not imply inference availability.
+ */
+export async function hostedBrowserLoginFlow(opts: HostedBrowserLoginOptions = {}): Promise<LoginResult> {
+  const host = normaliseHostArg(opts.host ?? DEFAULT_CLOUD_HOST);
+  if (host === null) {
+    return { ok: false, error: "Cloud host must be an http(s) URL without credentials, query or fragment." };
+  }
+  const attempts = opts.pollAttempts ?? 150;
+  const intervalMs = opts.pollIntervalMs ?? 2000;
+  if (!Number.isSafeInteger(attempts) || attempts <= 0 || !Number.isFinite(intervalMs) || intervalMs < 0) {
+    return { ok: false, error: "Invalid sign-in polling budget." };
+  }
+  const cancelled = (): LoginResult => {
+    opts.onStatus?.("cancelled", "Sign-in cancelled.");
+    return { ok: false, error: "Sign-in cancelled.", recoverable: true, cancelled: true };
+  };
+  if (opts.signal?.aborted) return cancelled();
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), 300_000);
+  const signal = opts.signal ? AbortSignal.any([opts.signal, deadline.signal]) : deadline.signal;
+  const session = randomBytes(9).toString("base64url").slice(0, 12);
+  const loginUrl = `${host}/cli-auth?session=${session}`;
+  const pollUrl = `${host}/cli-auth/sessions/${session}`;
+  const timedOut = (): LoginResult => {
+    opts.onStatus?.("timeout", "Sign-in timed out. Try again.");
+    return { ok: false, error: "Sign-in timed out. Try again.", recoverable: true };
+  };
+  try {
+    opts.onStatus?.("opening", "Opening browser for 0sec Cloud sign-in.", loginUrl);
+    signal.throwIfAborted();
+    try {
+      await awaitLoginStep(Promise.resolve().then(() => {
+        signal.throwIfAborted();
+        return (opts.openBrowser ?? defaultOpenBrowser)(loginUrl);
+      }), signal);
+    } catch {
+      signal.throwIfAborted();
+      opts.onStatus?.("opener-failed", "Could not open a browser. Open this sign-in URL manually.", loginUrl);
+    }
+    const fetcher = opts.fetchImpl ?? fetch;
+    for (let i = 0; i < attempts; i++) {
+      signal.throwIfAborted();
+      opts.onStatus?.("polling", "Waiting for browser sign-in.", loginUrl);
+      signal.throwIfAborted();
+      await awaitLoginStep(
+        opts.sleep ? opts.sleep(intervalMs) : delay(intervalMs, undefined, { signal }),
+        signal,
+      );
+      signal.throwIfAborted();
+      const request = new AbortController();
+      const requestTimer = setTimeout(() => request.abort(), 10_000);
+      const requestSignal = AbortSignal.any([signal, request.signal]);
+      try {
+        let res: Response;
+        try {
+          res = await awaitLoginStep(fetcher(pollUrl, {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            signal: requestSignal,
+            redirect: "error",
+          }), requestSignal);
+        } catch {
+          signal.throwIfAborted();
+          continue;
+        }
+        signal.throwIfAborted();
+        if (res.status === 200) {
+          let body: unknown;
+          try {
+            body = await awaitLoginStep(res.json(), requestSignal);
+          } catch {
+            signal.throwIfAborted();
+            if (requestSignal.aborted) continue;
+            return { ok: false, error: "Login response was not valid JSON." };
+          }
+          signal.throwIfAborted();
+          const rawStatus = body && typeof body === "object" ? (body as Record<string, unknown>).status : undefined;
+          const status = sessionStatus(body);
+          const token = extractToken(body);
+          if (token) {
+            if (rawStatus !== undefined && status !== "ready") {
+              return { ok: false, error: "Login returned credentials before the session was ready." };
+            }
+            try {
+              persistCredentials(host, token, opts.homeDir);
+            } catch {
+              return { ok: false, error: "Could not save 0sec Cloud credentials." };
+            }
+            opts.onStatus?.("ready", "Signed in to 0sec Cloud.");
+            return { ok: true, host };
+          }
+          if (status === "pending") continue;
+          if (status === "expired") return { ok: false, error: "Sign-in request expired. Try again.", recoverable: true };
+          return { ok: false, error: "Login response did not contain valid credentials." };
+        }
+        if ([202, 204, 404].includes(res.status)) continue;
+        if (res.status === 410) return { ok: false, error: "Sign-in request expired. Try again.", recoverable: true };
+        return {
+          ok: false,
+          error: `0sec Cloud sign-in unavailable (HTTP ${res.status}). Use your own provider or try again later.`,
+          recoverable: res.status === 429 || res.status >= 500,
+        };
+      } finally {
+        clearTimeout(requestTimer);
+        request.abort();
+      }
+    }
+    return timedOut();
+  } catch (error) {
+    if (opts.signal?.aborted) return cancelled();
+    if (deadline.signal.aborted) return timedOut();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Cancel even when an injected operation ignores its signal; remove listeners on settlement. */
+async function awaitLoginStep<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason);
+    };
+    operation.then(
+      (value) => { signal.removeEventListener("abort", onAbort); resolve(value); },
+      (error) => { signal.removeEventListener("abort", onAbort); reject(error); },
+    );
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** CLI command wrapper: calls hostedBrowserLoginFlow and prints results. */
 export async function runLogin(opts: LoginOptions): Promise<void> {
-  // Validate --host even when --token is also passed; persisting an
-  // invalid host now would just cause `0sec auth status` to fail
-  // later with a less actionable error.
-  let host: string;
-  if (opts.host) {
-    const parsed = normaliseHostArg(opts.host);
-    if (parsed === null) return; // normaliseHostArg already set exitCode + printed
-    host = parsed;
-  } else {
-    host = DEFAULT_CLOUD_HOST;
+  const host = normaliseHostArg(opts.host ?? DEFAULT_CLOUD_HOST);
+  if (host === null) {
+    consolePresentationOutput.stderr(chalk.red("Error: Cloud host must be an http(s) URL without credentials, query or fragment."), "auth.login.host-error");
+    process.exitCode = EXIT_USER_ERROR;
+    return;
   }
 
-  // Escape-hatch path: caller pasted a token directly. This is the
-  // only path that actually works until the server-side mint endpoint
-  // lands — we persist immediately and skip the browser dance.
-  if (opts.token) {
+  // Direct token path: persist immediately, skip the browser dance.
+  if (opts.token !== undefined) {
     const tok = opts.token.trim();
-    if (tok.length === 0) {
-      consolePresentationOutput.stderr(chalk.red("Error: --token cannot be empty."), "auth.login.token-empty");
+    if (!validCloudToken(tok)) {
+      consolePresentationOutput.stderr(chalk.red("Error: --token must be a nonempty credential without whitespace."), "auth.login.token-empty");
       process.exitCode = EXIT_USER_ERROR;
       return;
     }
-    persistCredentials(host, tok, opts.homeDir);
+    try {
+      persistCredentials(host, tok, opts.homeDir);
+    } catch {
+      consolePresentationOutput.stderr(chalk.red("Could not save 0sec Cloud credentials."), "auth.login.save-error");
+      process.exitCode = EXIT_USER_ERROR;
+      return;
+    }
     consolePresentationOutput.stdout(`Logged in (host=${host})`, "auth.login.logged-in");
     process.exitCode = EXIT_OK;
     return;
   }
 
-  // Browser flow. The landing page registers the session and, after the
-  // operator confirms the organization, the poll endpoint returns a scoped
-  // token in its `ready` response.
-  const session = randomBytes(9).toString("base64url").slice(0, 12);
-  const loginUrl = `${host}/cli-auth?session=${session}`;
-  const pollUrl = `${host}/cli-auth/sessions/${session}`;
-
-  consolePresentationOutput.stdout(chalk.dim("Opening browser..."), "auth.login.opening");
-  consolePresentationOutput.stdout(chalk.dim(`  ${loginUrl}`), "auth.login.url");
-  consolePresentationOutput.stdout("", "auth.login.empty-line");
-  consolePresentationOutput.stdout(chalk.dim("Complete sign-in in the opened browser, then return here."), "auth.login.browser-hint");
-  consolePresentationOutput.stdout("", "auth.login.empty-line");
-
-  const opener = opts.openBrowser ?? defaultOpenBrowser;
-  try {
-    opener(loginUrl);
-  } catch (err) {
-    consolePresentationOutput.stderr(chalk.yellow(
-      `Could not open browser automatically (${err instanceof Error ? err.message : String(err)}). ` +
-        `Open this URL manually: ${loginUrl}`,
-    ), "auth.login.browser-error");
-  }
-
-  const attempts = opts.pollAttempts ?? 150;
-  const intervalMs = opts.pollIntervalMs ?? 2000;
-  const fetchImpl = opts.fetchImpl ?? fetch;
-  const sleep = opts.sleep ?? defaultSleep;
-
-  for (let i = 0; i < attempts; i++) {
-    await sleep(intervalMs);
-    let res: Response;
-    try {
-      res = await fetchImpl(pollUrl, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      });
-    } catch {
-      // Transient network error during polling — keep trying.
-      continue;
-    }
-    if (res.status === 200) {
-      let body: unknown;
-      try {
-        body = await res.json();
-      } catch {
-        consolePresentationOutput.stderr(chalk.red("Login poll returned 200 but no JSON body. Aborting."), "auth.login.poll-json-error");
-        process.exitCode = EXIT_USER_ERROR;
-        return;
+  // Browser flow via the reusable helper.
+  const result = await hostedBrowserLoginFlow({
+    host,
+    pollAttempts: opts.pollAttempts,
+    pollIntervalMs: opts.pollIntervalMs,
+    openBrowser: opts.openBrowser,
+    fetchImpl: opts.fetchImpl,
+    homeDir: opts.homeDir,
+    sleep: opts.sleep,
+    onStatus: (phase, msg, url) => {
+      if (phase === "opening") {
+        consolePresentationOutput.stdout(chalk.dim("Opening browser..."), "auth.login.opening");
+        if (url) consolePresentationOutput.stdout(chalk.dim(`  ${url}`), "auth.login.url");
+        consolePresentationOutput.stdout("", "auth.login.empty-line");
+        consolePresentationOutput.stdout(chalk.dim("Complete sign-in in the opened browser, then return here."), "auth.login.browser-hint");
+        consolePresentationOutput.stdout("", "auth.login.empty-line");
       }
-      const status = sessionStatus(body);
-      const token = extractToken(body);
-      if (token) {
-        if (status !== undefined && status !== "ready") {
-          consolePresentationOutput.stderr(chalk.red("Login poll returned a token before the session was ready. Aborting."), "auth.login.poll-status-error");
-          process.exitCode = EXIT_USER_ERROR;
-          return;
-        }
-        persistCredentials(host, token, opts.homeDir);
-        consolePresentationOutput.stdout(`Logged in (host=${host})`, "auth.login.logged-in");
-        process.exitCode = EXIT_OK;
-        return;
+      if (phase === "opener-failed") {
+        consolePresentationOutput.stderr(chalk.yellow(msg), "auth.login.browser-error");
       }
-      // The authenticated browser page creates a session before the operator
-      // confirms it, so the documented `200 { status: "pending" }` is normal.
-      // `expired` likewise stays a retryable poll state until this CLI's own
-      // bounded deadline elapses.
-      if (status === "pending" || status === "expired") continue;
-      consolePresentationOutput.stderr(chalk.red("Login poll returned 200 but body did not contain a token. Aborting."), "auth.login.poll-token-error");
-      process.exitCode = EXIT_USER_ERROR;
-      return;
-    }
-    // 404 = session not yet registered; keep polling. Anything else (401/
-    // 403/5xx) is also transient here — only the local timeout is fatal.
-  }
+    },
+  });
 
-  consolePresentationOutput.stderr(chalk.red(
-    `Login timed out after ${Math.round((attempts * intervalMs) / 1000)}s. ` +
-      "Retry the browser flow or use `0sec auth login --token <value>`.",
-  ), "auth.login.timed-out");
-  process.exitCode = EXIT_NET;
+  if (result.ok) {
+    consolePresentationOutput.stdout(`Logged in (host=${result.host})`, "auth.login.logged-in");
+    process.exitCode = EXIT_OK;
+  } else {
+    consolePresentationOutput.stderr(chalk.red(result.error), "auth.login.error");
+    process.exitCode = result.recoverable ? EXIT_NET : EXIT_USER_ERROR;
+  }
 }
 
 export function runLogout(opts: LogoutOptions): void {
@@ -318,18 +444,18 @@ function handleStatusError(err: unknown): void {
 // ── helpers ──
 
 function normaliseHostArg(host: string | undefined): string | null {
-  if (!host) return null;
-  let h = host.trim();
-  if (!/^https?:\/\//.test(h)) {
-    consolePresentationOutput.stderr(chalk.red(`Error: --host must be an http(s) URL (got ${JSON.stringify(host)}).`), "auth.login.host-error");
-    process.exitCode = EXIT_USER_ERROR;
+  if (!host?.trim()) return null;
+  try {
+    const url = new URL(host.trim());
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return null;
+    return url.href.replace(/\/+$/, "");
+  } catch {
     return null;
   }
-  while (h.endsWith("/")) h = h.slice(0, -1);
-  return h;
 }
 
 function persistCredentials(host: string, token: string, homeDirOverride?: string): void {
+  if (!validCloudToken(token)) throw new Error("Invalid Cloud credential");
   const home = homeDirOverride ?? homedir();
   const dir = homeStateDir(homeDirOverride);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -394,6 +520,10 @@ function sessionStatus(body: unknown): CliAuthPollStatus | undefined {
     : undefined;
 }
 
+function validCloudToken(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && !/[\s\x00-\x1f\x7f]/.test(value.trim());
+}
+
 /**
  * Extract a token from a `/cli-auth/sessions/<id>` response body. Keep the
  * legacy `access_token` spelling for compatible self-hosted receivers.
@@ -403,7 +533,7 @@ function extractToken(body: unknown): string | null {
   const obj = body as Record<string, unknown>;
   const candidates = [obj.token, obj.access_token];
   for (const c of candidates) {
-    if (typeof c === "string" && c.trim().length > 0) return c.trim();
+    if (validCloudToken(c)) return c.trim();
   }
   return null;
 }
@@ -425,7 +555,7 @@ function extractToken(body: unknown): string | null {
  * elsewhere. Adding a dep for a 12-line function loses on the
  * dependency-cost calculus.
  */
-function defaultOpenBrowser(url: string): void {
+function defaultOpenBrowser(url: string): Promise<void> {
   const plat = platform();
   let cmd: string;
   let args: string[];
@@ -439,13 +569,10 @@ function defaultOpenBrowser(url: string): void {
     cmd = "xdg-open";
     args = [url];
   }
-  const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
-  // `spawn` reports a missing desktop opener asynchronously on Node. Consume
-  // that error so a headless shell still keeps polling the printed login URL.
-  child.on("error", () => undefined);
-  child.unref();
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    child.once("error", reject);
+    child.once("spawn", () => { child.unref(); resolve(); });
+  });
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}

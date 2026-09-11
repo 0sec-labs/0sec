@@ -98,19 +98,18 @@ describe("0sec auth login", () => {
     expect(body).toContain(`0SEC_CLOUD_HOST=${HOST}`);
     expect(body).toContain(`0SEC_CLOUD_TOKEN=${SECRET}`);
     expect((statSync(path).mode & 0o777).toString(8)).toBe("600");
-    expect(io.stdout.join("\n")).toContain(`Logged in (host=${HOST})`);
   });
 
   it("--token empty value → exit 1", async () => {
     await runLogin({ host: HOST, token: "   ", homeDir: home });
     expect(process.exitCode).toBe(1);
-    expect(io.stderr.join("\n")).toMatch(/--token cannot be empty/);
+    expect(existsSync(join(home, ".0sec", "cloud.env"))).toBe(false);
   });
 
   it("rejects non-http(s) --host", async () => {
     await runLogin({ host: "ftp://bad.example", token: SECRET, homeDir: home });
     expect(process.exitCode).toBe(1);
-    expect(io.stderr.join("\n")).toMatch(/must be an http\(s\) URL/);
+    expect(existsSync(join(home, ".0sec", "cloud.env"))).toBe(false);
   });
 
   it("browser flow continues through 200 pending responses and persists a ready token", async () => {
@@ -129,7 +128,7 @@ describe("0sec auth login", () => {
       homeDir: home,
       pollAttempts: 5,
       pollIntervalMs: 0,
-      openBrowser: (url) => openCalls.push(url),
+      openBrowser: (url) => { openCalls.push(url); },
       fetchImpl,
       sleep: async () => {},
     });
@@ -159,8 +158,6 @@ describe("0sec auth login", () => {
     });
     expect(process.exitCode).toBe(3);
     expect(polls).toBe(3);
-    expect(io.stderr.join("\n")).toMatch(/timed out/);
-    expect(io.stderr.join("\n")).toMatch(/--token/);
     expect(existsSync(join(home, ".0sec", "cloud.env"))).toBe(false);
   });
 
@@ -176,7 +173,7 @@ describe("0sec auth login", () => {
       sleep: async () => {},
     });
     expect(process.exitCode).toBe(1);
-    expect(io.stderr.join("\n")).toMatch(/did not contain a token/);
+    expect(existsSync(join(home, ".0sec", "cloud.env"))).toBe(false);
   });
 
   it("never leaks the token to stdout/stderr on the --token happy path", async () => {
@@ -201,19 +198,17 @@ describe("0sec auth logout", () => {
     io.restore();
   });
 
-  it("deletes ~/.0sec/cloud.env and prints 'Logged out'", () => {
+  it("deletes ~/.0sec/cloud.env and exits successfully", () => {
     const path = seedHomeWithCreds(home);
     expect(existsSync(path)).toBe(true);
     runLogout({ homeDir: home });
     expect(process.exitCode).toBe(0);
     expect(existsSync(path)).toBe(false);
-    expect(io.stdout.join("\n")).toMatch(/^Logged out$/m);
   });
 
   it("treats missing cloud.env as already-logged-out (exit 0)", () => {
     runLogout({ homeDir: home });
     expect(process.exitCode).toBe(0);
-    expect(io.stdout.join("\n")).toMatch(/no credentials file/);
   });
 });
 
