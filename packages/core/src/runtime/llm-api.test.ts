@@ -739,6 +739,32 @@ describe("LlmApiRuntime chat completions format", () => {
     vi.restoreAllMocks();
   });
 
+  it("completes Astra requests with the reasoning-model output cap", async () => {
+    // Test-only access to the fixture's selected model, as with its wire above.
+    const internals = rt as unknown as { model: string };
+    internals.model = "gpt-6-astra";
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, opts: RequestInit) => {
+      const body = JSON.parse(String(opts.body));
+      if ("max_tokens" in body || !(body.max_completion_tokens > 0)) {
+        return new Response("Use max_completion_tokens for GPT-6", { status: 400 });
+      }
+      return Response.json({
+        choices: [{ message: { content: "Astra completed" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+    }));
+
+    const native = await rt.executeNative("system", [
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+    ], []);
+    expect(native.stopReason).toBe("end_turn");
+    expect(native.content).toContainEqual({ type: "text", text: "Astra completed" });
+
+    const legacy = await rt.execute("hello");
+    expect(legacy.output).toContain("Astra completed");
+    expect(legacy.exitCode).toBe(0);
+  });
+
   it("converts tool_use to OpenAI tool_calls format", async () => {
     const messages: NativeMessage[] = [
       { role: "user", content: [{ type: "text", text: "hello" }] },

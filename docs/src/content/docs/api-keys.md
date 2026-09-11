@@ -12,7 +12,7 @@ providers.
 | Provider | Env Var(s) | Default Model | Wire |
 |----------|-----------|---------------|------|
 | **ChatGPT Codex** | `0SEC_CHATGPT_ACCESS_TOKEN` (read first) / `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` | `gpt-5.5` | Responses (OAuth bearer) |
-| **DeepSeek** | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` | Responses |
+| **DeepSeek** | `DEEPSEEK_API_KEY` | `deepseek-flash` (V4.1 Flash) | Responses |
 | **OpenRouter** | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4.6` | Chat completions |
 | **Azure OpenAI** | `AZURE_OPENAI_API_KEY` | `gpt-4o` (override with `AZURE_OPENAI_MODEL`) | Chat completions (default) or Responses |
 | **OpenAI** | `OPENAI_API_KEY` | `gpt-4o` | Chat completions |
@@ -26,6 +26,37 @@ providers.
 These eleven are the only providers the runtime detects from the environment.
 Model families with no direct path (Meta, Mistral, Google Gemini) are reachable
 through OpenRouter or OpenCode Zen.
+
+### Current model choices
+
+The bundled `/model` picker includes GPT-6 Astra (`gpt-6-astra`), DeepSeek V4.1
+Flash (`deepseek-flash`), Claude Fable 5.1 / Opus 5 / Sonnet 5, Gemini 3.8 Flash
+and 3.5 Flash-Lite, and GLM-5.3-Flash. Existing models remain selectable; adding
+Astra does not change the OpenAI or ChatGPT Codex default.
+
+Qwen choices include `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-max`,
+`qwen3.7-plus`, `qwen3.6-plus`, and `qwen3.6-flash`. The offline catalog also
+includes `qwen3.8-max-preview` without a price. They use `QWEN_API_KEY` and the
+existing Token Plan endpoint; model availability depends on the account.
+Qwen estimates use the [Models.dev Alibaba PAYG rates](https://models.dev/api.json),
+not the subscription feed's zero-token rates. Plus requests above 256K input
+tokens have higher pricing; reconcile Token Plan credits against the invoice.
+
+Select the exact API id, for example:
+
+```bash
+env 0SEC_SELECTED_PROVIDER=openai 0SEC_MODEL=gpt-6-astra \
+  0sec review ./authorized-repo
+```
+
+Gemini still requires a gateway: use `opencode/gemini-3.8-flash` with OpenCode
+Zen, or the gateway's documented model id with OpenRouter.
+
+Prices are estimates, not invoices. [Astra's published base rates](https://developers.openai.com/api/docs/models/gpt-6-astra)
+apply through 272K input tokens; longer requests and cache writes cost more.
+[DeepSeek Flash](https://api-docs.deepseek.com/quick_start/pricing) is estimated
+at peak rates ($0.30 input / $1.20 output per million tokens); off-peak is half
+price. Gateway prices and subscription billing can differ from direct API rates.
 
 ## Credential priority
 
@@ -70,7 +101,7 @@ when more than one credential is present.
 | `muse-spark*`, `mimo*`, `ling*`, `big-pickle`, `nemotron*`, `minimax*` | OpenCode Zen | Chat completions wire |
 | `claude*`, `anthropic/*`, `*sonnet*`, `*opus*`, `*haiku*` | Anthropic (preferred), OpenRouter (fallback) | Anthropic Messages wire |
 | `gpt-*`, `o1`-`o4` | ChatGPT Codex (when configured), OpenAI (fallback) | Responses (Codex) or Chat completions (OpenAI) |
-| `deepseek-v4-flash` | DeepSeek | Responses wire |
+| `deepseek-flash`, `deepseek-v4-flash` | DeepSeek | Responses wire; V4.1 uses `deepseek-flash` |
 | Azure Foundry deployment ids | Azure | Chat completions or Responses |
 
 Without an explicit model, 0sec picks an available fallback via the [credential
@@ -95,7 +126,7 @@ bypassing the ambient credential priority. Accepts one of: `openrouter`,
 `qwen`, `xai`, `opencode`.
 
 ```bash
-env 0SEC_SELECTED_PROVIDER=deepseek 0SEC_MODEL=deepseek-v4-flash \
+env 0SEC_SELECTED_PROVIDER=deepseek 0SEC_MODEL=deepseek-flash \
   0sec scan --target https://example.com --scope ./scope.json --mode web
 ```
 
@@ -216,7 +247,7 @@ is requested but no `ANTHROPIC_API_KEY` is set — the runtime checks for
 primary exhausts its retry budget or hits a plan-quota limit:
 
 ```bash
-env 0SEC_LLM_FALLBACK=deepseek:deepseek-v4-flash,azure:gpt-5-deployment \
+env 0SEC_LLM_FALLBACK=deepseek:deepseek-flash,azure:gpt-5-deployment \
   0sec review ./authorized-repo
 ```
 

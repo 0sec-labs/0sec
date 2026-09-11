@@ -13,7 +13,7 @@ export interface TokenUsageForPricing {
   cachedInputTokens?: number;
 }
 
-export const PRICING_SNAPSHOT_DATE = "2026-07-05";
+export const PRICING_SNAPSHOT_DATE = "2026-09-11";
 
 /**
  * The IRREDUCIBLE manual residue: models no public pricing feed (LiteLLM, and by
@@ -36,7 +36,13 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   // Mistral — not in the OSS feed
   "mistral-large": { input: 2.00, output: 6.00 },
   "mistral-small": { input: 0.10, output: 0.30 },
+  // DeepSeek V4.1 Flash's stable API id (not yet in LiteLLM).
+  // https://api-docs.deepseek.com/quick_start/pricing — checked 2026-09-11.
+  // Peak rates: off-peak is half price; this table cannot express time tiers.
+  "deepseek-flash": { input: 0.30, output: 1.20, cachedInput: 0.006 },
   // Z.AI (open-weight, hosted) — see provos.org "Finding Zero-Days with Any Model" (Apr 2026)
+  // https://docs.z.ai/guides/overview/pricing — checked 2026-09-11.
+  "glm-5.3-flash": { input: 0.15, output: 0.50, cachedInput: 0.03 },
   "glm-5.3": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-5.2": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-5.1": { input: 1.40, output: 4.40, cachedInput: 0.26 },
@@ -46,17 +52,21 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   "k3": { input: 3.0, output: 15.0, cachedInput: 0.30 },
   "k3[1m]": { input: 3.0, output: 15.0, cachedInput: 0.30 },
   "kimi-for-coding": { input: 3.0, output: 15.0, cachedInput: 0.30 },
-  // Alibaba Model Studio Qwen (Token Plan) — list rates mirroring the 0cloud
-  // pricing source; actual spend is credit-billed at the operator's
-  // subscription discount, so reconcile to the Model Studio invoice. Only the
-  // entries the 0cloud rate source carries are pinned; the rest of the
-  // catalog deliberately warns + inherits `default` until they are.
+  // Alibaba Model Studio Qwen — base PAYG list estimates, not Token Plan
+  // subscription charges. Models.dev's `alibaba` provider (checked 2026-09-11),
+  // not its zero-priced subscription rows: https://models.dev/api.json.
+  // Plus has a higher >256K input tier; this flat table cannot represent it.
+  // Preview ids without published PAYG rates remain unpriced in the picker.
   // deepseek-v4-flash-0731 (Token Plan credit lane) is NOT pinned here on
   // purpose: AZURE_DEPLOYMENT_PRICE_ALIASES already resolves it to the
   // DeepSeek-V4-Flash list rate ($0.19/$0.51), the defensible anchor for a
   // credit-billed variant whose per-credit rate Alibaba does not publish.
-  "qwen3.8-max": { input: 2.00, output: 6.00 },
-  "qwen3.7-max": { input: 2.50, output: 7.50 },
+  "qwen3.8-max": { input: 2.00, output: 6.00, cachedInput: 0.25 },
+  "qwen3.8-flash": { input: 0.15, output: 0.47, cachedInput: 0.016 },
+  "qwen3.7-max": { input: 2.50, output: 7.50, cachedInput: 0.50 },
+  "qwen3.7-plus": { input: 0.50, output: 3.00, cachedInput: 0.05 },
+  "qwen3.6-plus": { input: 0.50, output: 3.00, cachedInput: 0.05 },
+  "qwen3.6-flash": { input: 0.1875, output: 1.125 },
   // OpenCode Zen free tier (https://opencode.ai/docs/zen/) — zero-rate gateway
   // models; actual spend is $0 while the free period lasts.
   "muse-spark-1.3-contributor-free": { input: 0, output: 0 },

@@ -14,6 +14,16 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Refresh the bundled model picker and pricing with GPT-6 Astra, DeepSeek V4.1
+  Flash, Claude Fable 5.1 / Opus 5 / Sonnet 5, Gemini 3.1 and 3.5–3.8 text
+  models, GLM-5.3-Flash, and Qwen 3.8 Flash / 3.7 Plus / 3.6 Plus and Flash.
+  The offline Qwen catalog also includes the unpriced 3.8 Max preview.
+  Qwen estimates now include published cache-read rates where available.
+  Direct DeepSeek now defaults to its stable
+  `deepseek-flash` API id; existing Azure and Token Plan routes are preserved.
+  GPT-6 requests use the reasoning-model output cap and Responses reasoning
+  defaults. Astra remains opt-in; estimates use base rates, not long-context,
+  cache-write, or off-peak billing tiers.
 - Evolution passes recover compatible development feedback from retained
   proposals and evaluation receipts, including after promotion. Proposal and
   receipt digests are checked; held-out and negative-control feedback stays

@@ -388,7 +388,7 @@ scans to a specific backend.
 `0SEC_SELECTED_PROVIDER` to different values is an error.
 
 ```bash
-env 0SEC_SELECTED_PROVIDER=deepseek 0SEC_MODEL=deepseek-v4-flash \
+env 0SEC_SELECTED_PROVIDER=deepseek 0SEC_MODEL=deepseek-flash \
   0sec scan --target https://example.com --scope ./scope.json --mode web
 ```
 
@@ -406,7 +406,7 @@ the provider whose credentials are available. The runtime maps model prefixes:
 | `opencode/*`, `muse-spark*`, `mimo*`, `ling*`, `big-pickle`, `nemotron*`, `minimax*` | OpenCode Zen |
 | `claude*`, `anthropic/*` | Anthropic, then OpenRouter when auth missing |
 | `gpt-*`, `o1`-`o4` | ChatGPT Codex subscription when configured, otherwise OpenAI |
-| `deepseek-v4-flash` | DeepSeek |
+| `deepseek-flash`, `deepseek-v4-flash` | DeepSeek (`deepseek-flash` is V4.1 Flash) |
 | Azure Foundry deployment ids | Azure |
 
 ### Ambient credential priority
@@ -433,7 +433,7 @@ vars in this priority order:
 primary exhausts its retry budget or hits a plan quota limit:
 
 ```bash
-env 0SEC_LLM_FALLBACK=deepseek:deepseek-v4-flash,azure:gpt-5-deployment \
+env 0SEC_LLM_FALLBACK=deepseek:deepseek-flash,azure:gpt-5-deployment \
   0sec review ./authorized-repo
 ```
 
