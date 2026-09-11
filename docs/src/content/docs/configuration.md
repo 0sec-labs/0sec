@@ -315,7 +315,7 @@ changes are printed so you know what was rejected.
 | `showTimestamps` | boolean | `false` | Relative timestamps on transcript entries |
 | `allowSubagentPeerMessaging` | boolean | `true` | Allow direct sibling-subagent messages |
 | `allowSubagentOperatorMessaging` | boolean | `true` | Allow sanitized child-to-operator transcript messages |
-| `allowModelSelfExtension` | boolean | `false` | Allow the model to add tools to its own session |
+| `allowModelSelfExtension` | boolean | `true` | Enable sandboxed model self-extension for new sessions, subject to role and capability gates |
 | `theme` | built-in or installed theme ID | `midnight` | Colour palette; installed themes live in `~/.0sec/themes` |
 | `showTokenUsage` | boolean | `false` | Per-turn input/output token line |
 | `showCost` | boolean | `false` | Estimated dollar cost, per turn and in the status bar |
@@ -323,6 +323,22 @@ changes are printed so you know what was rejected.
 | `modelDisplay` | `statusbar`, `message`, `off` | `statusbar` | Where the model name appears |
 | `logoAnimation` | animation name or `off` | `glitch` | Intro or idle logo effect |
 | `reduceMotion` | boolean | `false` | Disable decorative animations |
+
+### Self-extension and workspace trust
+
+New sessions use the shared `DEFAULT_ALLOW_MODEL_SELF_EXTENSION=true`.
+An explicitly selected or persisted `false` overrides the default. The desktop
+checkbox initializes from that shared default; existing disabled sessions aren't
+reconstructed or silently enabled.
+
+Sandboxed self-extension isn't a separate opt-in. Workspace-trusted ESM
+execution requires its own explicit acknowledgement and a trust grant scoped
+to the canonical workspace. Enabling self-extension never grants host trust.
+
+Autonomy mode, self-extension and trusted ESM are separate controls. The desktop
+keeps its unscoped-standard and scoped-YOLO authorization flow; the shared defaults
+don't make every desktop launch globally YOLO. See
+[Improvement Plane](/improvement-plane/) for lifecycle and qualification boundaries.
 
 ## Console credential store
 
@@ -373,6 +389,43 @@ Credentials are resolved in this order (first match wins):
 The token is never printed. `0sec auth status` echoes the host on success; on
 auth failure it surfaces the status code + path, never the token or Authorization
 header.
+
+### Hosted configuration (draft)
+
+> Status: 2026-09-11. Hosted-inference candidate configuration, not production
+> availability. See [draft setup](/getting-started/#hosted-models-draft).
+
+The candidate adds `0sec login` as an alias for `0sec auth login`, plus
+`0sec models [--json]` and `0sec balance [--json]`. It changes the default host
+to `https://cloud.0.security`; the existing-release table above describes
+`https://cloud.0sec.ai`. Use an explicit approved host during qualification,
+and check `0sec login --help` on the binary you're running.
+
+Hosted credentials use the same `0SEC_CLOUD_TOKEN`, `0SEC_CLOUD_HOST` and
+`cloud.env` resolution as cloud auth. An environment token takes precedence
+over the file; without an environment token, the host comes from the file or
+default, not a standalone `0SEC_CLOUD_HOST` override. Authenticate against the
+intended host rather than mixing a saved token with a different service.
+
+| Setting or action | Hosted candidate behavior |
+| --- | --- |
+| `--runtime api` | Uses the HTTP runtime; `hosted` is a provider, not a new runtime name. |
+| `0SEC_SELECTED_PROVIDER=hosted` | Pins hosted inference instead of ambient BYOK credentials. |
+| `0SEC_MODEL` or `--model` | Must match an alias returned by `0sec models`. The service catalog determines wire protocol and output ceiling. |
+| No provider pin | Configured BYOK providers are considered before hosted credentials. Logging in doesn't replace them. |
+| No explicit hosted model | Selects the first service catalog entry. Pin an alias for a repeatable route. |
+| `0SEC_LLM_FALLBACK` | Explicit backup chain for eligible failures. No automatic hosted wallet escape or hidden gateway substitution. |
+| `0sec auth status` | Checks credentials and service health, not model entitlement, credit sufficiency or paid-flow readiness. |
+| `0sec auth logout` | Removes local credential files; it doesn't revoke an issued token or clear a token exported in the environment. |
+
+Use the dashboard's hosted session controls to revoke an issued CLI credential.
+Membership and token scopes are checked by the gateway. The CLI credential
+can read balance and invoke models, but doesn't authorize purchases.
+
+Local cost ceilings and token estimates aren't the hosted wallet ledger.
+The gateway reserves and settles each hosted request separately; a local
+cancellation isn't a refund instruction. See the
+[accounting and failure contract](/api-keys/#charging-and-interrupted-requests).
 
 ## Provider selection and model routing
 

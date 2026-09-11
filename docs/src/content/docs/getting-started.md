@@ -3,8 +3,13 @@ title: CLI Getting Started
 description: Install 0sec, configure a provider, define scope, and run your first authorized CLI scan.
 ---
 
-Install 0sec, configure a model provider, define an authorized target, and run
-your first scan. No cloud account is required.
+0sec is a **Research Preview**. Install it, configure a model provider, define
+an authorized target, and run your first scan. Bring-your-own-key (BYOK) use
+doesn't require a cloud account.
+
+Hosted models are a separate, unreleased onboarding path. Installing the CLI
+or signing in doesn't establish a funded inference balance. See the
+[draft hosted setup](#hosted-models-draft) before trying that path.
 
 ## Install
 
@@ -73,6 +78,49 @@ managed-service authentication.
 When multiple credentials are present, select a matching model explicitly with
 `--model` or `0SEC_MODEL`. See [Configuration](/configuration/) for runtime and
 provider resolution. Never commit credentials or paste real keys into an issue.
+
+### Hosted models (draft)
+
+> Status: 2026-09-11. Candidate implementation, not a production launch.
+> These commands require the hosted-inference CLI candidate and an explicitly
+> approved test service. They aren't a promise that the installed release or
+> default cloud host supports hosted inference.
+
+The intended experience is one 0sec account, organization-funded model usage,
+and no upstream provider key on your machine. Local tools still run locally.
+Inference credit doesn't include cloud compute, managed testing, or review
+credits. Retail prices, included allowances and subscription terms aren't
+established by this preview.
+
+For an approved test deployment:
+
+1. Set `HOSTED_TEST_HOST` to the service URL supplied by its operator.
+   Run the login command below, sign in or create an account in the browser,
+   select the organization, and explicitly authorize the CLI.
+2. Inspect the catalog and balance. Login grants a scoped credential, not
+   credit. An owner or admin manages hosted-model purchases in the dashboard's
+   **Billing** section. Sandbox checkout creation has been exercised;
+   completed payment and the resulting funded first request remain unqualified.
+3. Select an exact alias from `0sec models`. Pin `hosted` so an existing
+   provider key or Codex login doesn't select BYOK instead.
+
+```bash
+0sec login --host "$HOSTED_TEST_HOST"
+0sec models --json
+0sec balance --json
+
+env 0SEC_SELECTED_PROVIDER=hosted 0SEC_MODEL="<alias-from-0sec-models>" \
+  0sec review ./authorized-repo --runtime api
+```
+
+Replace the alias and repository path before running. The last command uses
+model credit on a funded service; the preceding catalog and balance commands
+don't submit inference. An unfunded account returns HTTP 402 before an upstream
+model call. A positive balance can still be below the required request reserve.
+
+See [Hosted inference](/api-keys/#hosted-inference-draft) for streaming,
+accounting and errors, and [Hosted configuration](/configuration/#hosted-configuration-draft)
+for credential precedence. BYOK remains available independently.
 
 ## Run your first scan
 

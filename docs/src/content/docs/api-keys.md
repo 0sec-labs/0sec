@@ -7,6 +7,97 @@ The `api` runtime makes direct HTTP calls to a provider. Set credentials
 as environment variables, or use the console credential store for API-key
 providers.
 
+## Hosted inference (draft)
+
+> Status: 2026-09-11. Unreleased candidate behavior. Production hosted billing
+> isn't enabled. Local qualification does not establish paid access or provider
+> availability. The direct-provider instructions below remain the current setup.
+
+The candidate adds a `hosted` provider to the `api` runtime. A scoped 0sec
+organization credential replaces an upstream API key on the client. The gateway
+holds provider credentials and forwards model requests, including the context
+and tool results supplied by the agent. Shell commands and tools still execute
+on your configured local executor. Login doesn't sandbox them.
+
+### Account, models and usage
+
+Follow the [draft onboarding steps](/getting-started/#hosted-models-draft).
+`0sec models --json` reads the service catalog, including each alias, provider,
+wire protocol, context/output limits and versioned customer rates. Use that
+catalog for hosted selection, not the console's bundled BYOK model list.
+An explicit alias is validated before inference. Without an alias, the candidate
+selects the first service catalog entry.
+
+`0sec balance --json` reads the selected organization's inference wallet.
+It isn't a review-credit balance or a local scan cost estimate. The dashboard
+shows recent requests with model/provider identity, token usage, billed amount,
+cancellation and settlement status. There is no `0sec usage` command in this
+candidate; the authenticated usage endpoint is listed below.
+
+| Endpoint on the selected cloud host | Required token scope | Purpose |
+| --- | --- | --- |
+| `GET /api/inference/v1/models` | `inference:read` | Hosted aliases and rate metadata |
+| `GET /api/inference/account` | `billing:read` | Organization inference balance |
+| `GET /api/inference/usage` | `inference:read` | Up to 50 recent request records |
+| `POST /api/inference/v1/chat/completions` | `inference:invoke` | Catalog-selected Chat Completions route |
+| `POST /api/inference/v1/responses` | `inference:invoke` | Catalog-selected Responses route |
+
+These routes use bearer authentication. The catalog selects the protocol;
+clients don't supply an upstream endpoint or arbitrary provider. Older login
+tokens may lack the new scopes and require reauthorization.
+
+### Charging and interrupted requests
+
+The gateway reserves a bounded maximum before contacting a provider. The
+candidate reserve covers the catalog context window and bounded output at its
+reserve multiplier, rather than an estimate of your prompt alone. Final retail
+charges use the request's snapshotted customer rates and measured usage.
+An upstream provider receipt establishes provider cost and usage; it is not
+a customer pass-through price.
+
+Responses and Chat Completions support server-sent events on configured routes.
+Receiving output does not mean settlement has finished. Stopping delivery
+doesn't guarantee zero cost: the gateway can finish reading the bounded upstream
+request to collect usage. Missing usage or an uncertain billing acknowledgement
+remains unresolved rather than being treated as free. Check request status and
+balance before resubmitting.
+
+| Failure | Candidate behavior and next step |
+| --- | --- |
+| HTTP 401 | Missing, invalid or revoked credential. Sign in again. |
+| HTTP 403 | Required scope missing. Reauthorize the CLI for the intended organization. |
+| HTTP 402 | Insufficient credit for the reserve. No upstream request is made for this rejection. Check the inference wallet and purchase access. |
+| HTTP 429 | Concurrency limit, unresolved prior charge, or provider throttling. Inspect the error code and request history before retrying. |
+| HTTP 503 | Hosted inference disabled, provider unavailable, or billing unavailable. Login or a stored key doesn't bypass this gate. |
+| Transport failure or hosted HTTP 5xx | The CLI doesn't automatically replay a potentially consumed request. Inspect usage before trying again. |
+
+The gateway rejects detected model substitution. There is no automatic
+server-side model switch promised here. BYOK is a separate choice: configure
+its credential and select that provider explicitly. The candidate can use an
+operator-configured `0SEC_LLM_FALLBACK` chain for eligible retry/quota failures,
+but it doesn't turn an exhausted hosted wallet into free BYOK or another model.
+Changing providers changes who receives the request and which account pays.
+
+For hosted HTTP 429, the candidate retries or enters that configured fallback
+chain only when the gateway supplies `x-0sec-retry-safe: 1`. The gateway emits
+this marker only for a pre-dispatch concurrency rejection. Provider throttling
+can occur after dispatch with a pending charge; it and unresolved-charge
+responses carry no marker. An unmarked 429, including one from an older gateway,
+stops without automatic retry or fallback.
+
+A fallback or model migration changes the evaluated system. Before/after
+self-evolution comparisons must hold model and route fixed, or evaluate the
+changed route separately; don't attribute a different model's result to a
+harness improvement.
+
+The executable-plugin SDK's model broker uses its parent runtime, including
+model calls made during plugin evolution. If that parent routes through
+`hosted`, those calls use the same organization's inference accounting.
+This isn't a free self-evolution allowance or universal billing guarantee:
+subagents construct new runtimes, and trusted host code can use clients outside
+the SDK. The new live evolution lifecycle hasn't had end-to-end hosted billing
+qualification.
+
 ## Supported providers
 
 | Provider | Env Var(s) | Default Model | Wire |
