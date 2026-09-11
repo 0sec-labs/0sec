@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { canonicalEvolutionJson, parseEvolutionConfig } from "./config.js";
 import { verifyEvolutionSnapshot } from "./registry.js";
 import { allowlistedChildEnv } from "../agent/sanitized-env.js";
+import { resolveSmolvmImage, runSmolvm } from "../runtime/smolvm.js";
 import type { EvolutionConfig, EvolutionExecution, EvolutionSandbox } from "./types.js";
 
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/;
@@ -45,11 +46,13 @@ function quoteCommand(argv: string[]): string {
   return argv.map((argument) => `'${argument.replace(/'/g, `'\\''`)}'`).join(" ");
 }
 
-function workerScript(config: EvolutionConfig): string {
+function workerScript(config: EvolutionConfig, workspace = "/workspace"): string {
   return [
     "set -eu",
-    "cp -R /snapshot/. /workspace/",
-    "chmod -R u+rwX /workspace",
+    `mkdir -p ${quoteCommand([workspace])}`,
+    `cd ${quoteCommand([workspace])}`,
+    `cp -R /snapshot/. ${quoteCommand([workspace])}/`,
+    `chmod -R u+rwX ${quoteCommand([workspace])}`,
     ...(config.buildCommand ? [`${quoteCommand(config.buildCommand)} >&2`] : []),
     `exec ${quoteCommand(config.command)}`,
   ].join("\n");
@@ -146,4 +149,37 @@ export function createDockerEvolutionSandbox(dockerBinary = "docker"): Evolution
     verifyEvolutionSnapshot(snapshot);
     return execution;
   };
+}
+
+/** Resolve the operator-selected backend without substituting an execution engine. */
+export async function resolveEvolutionConfigImage(config: EvolutionConfig): Promise<string> {
+  if (config.backend !== "smolvm") return resolveEvolutionImage(config.image);
+  if (!config.imageArchive) throw new Error("smolvm requires a local imageArchive");
+  const digest = await resolveSmolvmImage(config.imageArchive);
+  if (IMAGE_ID.test(config.image) && config.image !== digest) throw new Error("smolvm archive identity mismatch");
+  return digest;
+}
+
+export function createSmolvmEvolutionSandbox(binary?: string): EvolutionSandbox {
+  return async ({ snapshot, config: rawConfig, input, signal }) => {
+    const config = parseEvolutionConfig(rawConfig);
+    if (config.backend !== "smolvm" || !config.imageArchive || !IMAGE_ID.test(config.image)) {
+      throw new Error("smolvm execution requires a resolved archive identity and backend smolvm");
+    }
+    verifyEvolutionSnapshot(snapshot);
+    const execution = await runSmolvm({
+      imageArchive: config.imageArchive, imageDigest: config.image, binary,
+      command: ["/bin/sh", "-c", workerScript(config, "/tmp/0sec-workspace")],
+      stdin: canonicalEvolutionJson(input),
+      mounts: [{ source: snapshot.root, target: "/snapshot" }],
+      timeoutMs: config.timeoutMs, memoryMb: config.memoryMb, cpus: config.cpus,
+      maxOutputBytes: config.maxOutputBytes, signal,
+    });
+    verifyEvolutionSnapshot(snapshot);
+    return execution;
+  };
+}
+
+export function createEvolutionSandbox(config: EvolutionConfig): EvolutionSandbox {
+  return config.backend === "smolvm" ? createSmolvmEvolutionSandbox() : createDockerEvolutionSandbox();
 }

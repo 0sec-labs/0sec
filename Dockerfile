@@ -3,8 +3,12 @@
 # 0sec — pre-built distribution image
 #
 # Multi-stage build:
-#   stage 1 (builder): node:20 + pnpm, builds the bundled CLI in /app/dist
-#   stage 2 (runtime): ubuntu:24.04 + Node 20 + pentest tooling + Playwright
+#   stage 1 (builder):    node:24 + pnpm, builds the bundled CLI in /app/dist
+#   stage 2 (toolbox):    ubuntu:24.04 + Node 24 + pentest/identity/Foxguard tooling
+#   stage 3 (runtime):    toolbox + CLI — the default target
+#
+#   docker build --target toolbox   →  tooling only, no CLI (useful as smolvm image)
+#   docker build                    →  full runtime image
 #
 # Usage:
 #   docker run --rm -e AZURE_OPENAI_API_KEY=$KEY \
@@ -13,8 +17,11 @@
 #   INSTALL_SECLISTS=1     include SecLists wordlists (~1GB extra, off by default)
 #   AZUREHOUND_VERSION=vX  pin the AzureHound release (checksum-verified, see below)
 
+# Shared Node payload; the toolbox does not depend on application compilation.
+FROM node:24-bookworm AS node-runtime
+
 # ---------- Stage 1: builder ----------
-FROM node:24-bookworm AS builder
+FROM node-runtime AS builder
 
 ENV PNPM_HOME=/root/.local/share/pnpm \
     PATH=/root/.local/share/pnpm:$PATH \
@@ -41,17 +48,23 @@ RUN pnpm build
 WORKDIR /app/dist
 RUN npm ci --omit=dev --ignore-scripts
 
-# ---------- Stage 2: runtime ----------
-FROM ubuntu:24.04 AS runtime
+# ---------- Stage 2: toolbox ----------
+FROM ubuntu:24.04 AS toolbox
 
 ARG INSTALL_SECLISTS=0
 ARG DEBIAN_FRONTEND=noninteractive
 
 ENV NODE_ENV=production \
     0SEC_DOCKER=1 \
-    PATH=/usr/local/bin:/usr/bin:/bin
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
 
-# Base system + Node 20 + pentest tooling.
+# Reuse the official Node image payload rather than downloading another runtime.
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+# Base system + pentest tooling.
 # `ripgrep` is included because the audit/scan agent's discovery loop
 # defaults to `rg` for fast source-tree searches across npm/cargo/oci
 # packages — without it, every audit run logs `spawnSync rg ENOENT`
@@ -66,12 +79,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         sqlmap nmap nikto gobuster hydra john ffuf wfuzz \
         whatweb wafw00f dirb \
     && rm -rf /var/lib/apt/lists/*
-
-# Node.js from builder stage (no remote script execution)
-COPY --from=builder /usr/local/bin/node /usr/local/bin/node
-COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
-RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Optional: SecLists wordlists (large)
 RUN if [ "$INSTALL_SECLISTS" = "1" ]; then \
@@ -151,27 +158,32 @@ RUN set -eux; \
     chmod +x /usr/local/bin/azurehound; \
     rm -f /tmp/azurehound.zip
 
-# Provision the checksum-pinned scanner without a runtime Node/npm download.
+# Foxguard — checksum-pinned static scanner.
 COPY scripts/provision-foxguard.sh /tmp/provision-foxguard.sh
 RUN sh /tmp/provision-foxguard.sh && rm /tmp/provision-foxguard.sh
+
+# Create the non-root runtime user and a writable work directory.
+# ubuntu:24.04 ships a default ubuntu user (uid 1000).
+RUN install -d -o ubuntu -g ubuntu /work
+USER ubuntu
+WORKDIR /work
+CMD ["/bin/bash"]
+
+# ---------- Stage 3: runtime ----------
+FROM toolbox AS runtime
+USER root
 
 WORKDIR /app
 
 # Copy the bundled CLI + its production node_modules from the builder
 COPY --from=builder /app/dist /app/dist
 
-
 # Make the bundled CLI globally invocable as `0sec` (and `0` for short).
 RUN ln -s /app/dist/0sec.js /usr/local/bin/0sec \
     && ln -s /app/dist/0sec.js /usr/local/bin/0 \
     && chmod +x /app/dist/0sec.js
 
-# Drop privileges by reusing the default ubuntu user (uid 1000) shipped with
-# ubuntu:24.04. Runtime code and browser assets are read-only to this user;
-# only the working directory needs ownership. Avoid recursively chowning the
-# large Playwright tree here: overlayfs metadata rewrites can take many minutes
-# on self-hosted runners and do not change runtime access.
-RUN install -d -o ubuntu -g ubuntu /work
+# App code remains root-owned; only the workspace is writable by the worker.
 USER ubuntu
 WORKDIR /work
 

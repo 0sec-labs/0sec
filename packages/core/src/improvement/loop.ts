@@ -10,7 +10,7 @@ import {
   startEvolutionCanary, verifyEvolutionSnapshot,
 } from "./registry.js";
 import { EvolutionGenerationError, proposeEvolutionEdits } from "./rewrite.js";
-import { createDockerEvolutionSandbox, resolveEvolutionImage } from "./sandbox.js";
+import { createEvolutionSandbox, resolveEvolutionConfigImage } from "./sandbox.js";
 import { acquireEvolutionController } from "./controller-lock.js";
 import type {
   EvolutionAttempt, EvolutionConfig, EvolutionDependencies, EvolutionEvaluation,
@@ -44,6 +44,7 @@ function feedbackContractDigest(config: EvolutionConfig): string {
     kind: config.kind,
     command: config.command,
     image: config.image,
+    backend: config.backend ?? "docker",
     timeoutMs: config.timeoutMs,
     memoryMb: config.memoryMb,
     cpus: config.cpus,
@@ -141,7 +142,7 @@ export function tryRecoverPreviousFeedback(
 export async function runEvolution(rawConfig: EvolutionConfig, deps: EvolutionDependencies = {}): Promise<EvolutionRunResult> {
   const config = parseEvolutionConfig(rawConfig);
   if (!config.allowModelSourceAccess) throw new Error("source rewriting requires explicit allowModelSourceAccess consent");
-  if (!deps.sandbox) config.image = await resolveEvolutionImage(config.image);
+  if (!deps.sandbox) config.image = await resolveEvolutionConfigImage(config);
   const release = acquireEvolutionController(config.storePath);
   try {
     return await runEvolutionPass(config, deps);
@@ -189,7 +190,7 @@ async function runEvolutionPass(config: EvolutionConfig, deps: EvolutionDependen
     feedback = "No previous candidate. Improve the stated objective using development inputs; hidden evaluation is independent.";
   }
   const runId = randomUUID();
-  const sandbox = deps.sandbox ?? createDockerEvolutionSandbox();
+  const sandbox = deps.sandbox ?? createEvolutionSandbox(config);
   const budgetedSandbox: NonNullable<EvolutionDependencies["sandbox"]> = async (request) => {
     const reserve = config.timeoutMs / 1000 * config.computeUsdPerSecond;
     if (result.evaluationCostUsd + reserve > config.maxEvaluationCostUsd) throw new Error("run evaluation budget cannot cover another execution");
@@ -316,7 +317,7 @@ export async function approveEvolutionCandidate(
     const config = parseEvolutionConfig(stored);
     if (config.storePath !== root) throw new Error("candidate belongs to a different store");
     if (!deps.sandbox && !/^sha256:[a-f0-9]{64}$/.test(config.image)) throw new Error("candidate is missing an immutable sandbox image identity");
-    const sandbox = deps.sandbox ?? createDockerEvolutionSandbox();
+    const sandbox = deps.sandbox ?? createEvolutionSandbox(config);
     let evaluationCostUsd = 0;
     const budgetedSandbox: NonNullable<EvolutionDependencies["sandbox"]> = async (request) => {
       const reserve = config.timeoutMs / 1000 * config.computeUsdPerSecond;
@@ -375,7 +376,7 @@ export async function executeEvolutionVersion(
   }
   publishEvolutionArtifact(join(config.storePath, "inputs", `${runId}.json`), { versionId: version.id, inputDigest: evolutionDigest(input) });
   verifyEvolutionSnapshot(version.snapshot);
-  const execution = await (deps.sandbox ?? createDockerEvolutionSandbox())({ snapshot: version.snapshot, config, input, signal: deps.signal });
+  const execution = await (deps.sandbox ?? createEvolutionSandbox(config))({ snapshot: version.snapshot, config, input, signal: deps.signal });
   verifyEvolutionSnapshot(version.snapshot);
   if (execution.exitCode === 0 && !execution.error && !execution.timedOut) {
     try {

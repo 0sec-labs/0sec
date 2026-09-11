@@ -10,9 +10,9 @@ would break scope control, replay, and evidence provenance.
 
 The improvement plane evaluates a candidate for a **future immutable worker**.
 It proposes bounded edits to copies of a source snapshot, never the active
-checkout. Candidate code executes in fresh Docker containers with no network
-or engagement credentials and bounded resources. Promotion is a separate step,
-authorized per candidate or by explicit `autoPromote` configuration.
+checkout. Candidate code executes in fresh Docker containers or opt-in local
+smolvm guests, without network access or engagement credentials and with bounded
+resources. Promotion is authorized per candidate or by explicit `autoPromote`.
 
 ```text
 sealed candidate artifacts
@@ -126,7 +126,7 @@ candidate) cannot:
 - reach the operator's network, credentials, or engagement workspace;
 - write to the evolution store (snapshots and receipts are published by the
   controller process, never by the sandbox);
-- persist outside the container.
+- persist outside the disposable worker.
 
 This trust boundary does **not** protect against a compromised host or operator
 account. An attacker with root access to the host or write access to the
@@ -146,8 +146,8 @@ replaced by explicit operator choice through the config. Default remains
 
 Every promoted version produces a content-addressed snapshot in the evolution
 store (`storePath`). The **`0sec evolve exec`** command pins and executes that
-snapshot against arbitrary JSON input, with the same network-none, credential-
-free Docker isolation:
+snapshot against arbitrary JSON input, with the stored backend's offline,
+credential-free isolation:
 
 ```bash
 0sec evolve exec --config ./evolution.json --run-id <id> --input '{"file": "src/main.ts"}'
@@ -155,7 +155,7 @@ free Docker isolation:
 
 The command:
 1. reads the active version's snapshot from the registry;
-2. copies its files into a fresh container;
+2. copies its files into a fresh isolated worker;
 3. runs the config's `command` with the provided input;
 4. for known config cases, validates stdout against the stored `expected`
    answer and rolls back the active version to its parent on mismatch (operator
@@ -212,7 +212,7 @@ rollback changes future reviews, not an in-flight review. The stored version's
 command, image identity, and limits remain authoritative; editing the supplied
 config cannot change an already-promoted worker.
 
-Execution uses the same isolated Docker path as `evolve exec`, with no host
+Execution uses the same configured backend as `evolve exec`, with no host
 execution fallback. The worker receives one scoped file of at most 1 MiB, not a
 target-directory mount. Invalid protocol output is a worker failure and enters
 the existing rollback path. A missing active version fails closed.
@@ -240,7 +240,7 @@ After evaluation passes, a candidate enters canary:
 
 ### Runtime prerequisites
 
-The Docker image specified by the config's `image` field must be:
+With the default Docker backend, the config's `image` must be:
 
 - available locally (pulled in advance);
 - contain the runtime for the configured `command` (e.g. `node`, `python3`);
@@ -250,9 +250,8 @@ Evolution runs resolve the image tag to an immutable image ID. Stored worker
 configurations retain that ID; resumed workers do not follow a subsequently
 retagged image.
 
-Running this path requires access to a local Docker daemon and a configured
-model provider. A unit test or a trusted local-process smoke run does not verify
-Docker isolation or live model quality. The Docker sandbox uses:
+Docker execution requires access to a local Docker daemon; source proposal
+generation separately requires a configured model provider. The Docker sandbox uses:
 
 - `docker create` + `docker start` lifecycle — each execution is a separate
   container; cleanup runs with a bounded timeout after the execution finishes.
@@ -268,6 +267,87 @@ Docker isolation or live model quality. The Docker sandbox uses:
 Containers share the host kernel. These restrictions reduce privilege; they
 are not a guarantee against container escapes. Use a dedicated worker host or
 VM when evaluating hostile code.
+
+#### Local smolvm backend
+
+Set `"backend": "smolvm"` and `"imageArchive": "/absolute/path/to/node.tar"`
+in the same evolution config. Keep `image` as the image's descriptive name for
+the initial run, or provide the expected `sha256:<archive-hash>` to require exact
+bytes. The controller resolves it to the archive's SHA-256 before recording a
+version. Stored execution and approval use that recorded identity, not a newly
+resolved replacement image.
+
+This backend is qualified for **non-root Linux, KVM, Node 24+, util-linux
+`setpriv`, and smolvm 1.14.6**. Other smolvm versions and host platforms are rejected
+until their lifecycle is qualified. Install the complete upstream runtime bundle,
+not just `smolvm-bin`, and put its launcher on `PATH`. Existing processes need
+restarting after group membership changes; do not make `/dev/kvm` world-writable.
+
+The toolbox stays an OCI image. A `docker save` archive is one way to provision
+it; Docker is not used to execute smolvm workers:
+
+```bash
+docker pull node:22-alpine
+docker save node:22-alpine -o node.tar
+```
+
+That is a small Node worker image, not the security toolbox. To provision the
+declared pentest/identity/Foxguard inventory without building the CLI application:
+
+```bash
+docker build --target toolbox -t 0sec-toolbox:local .
+docker save 0sec-toolbox:local -o toolbox.tar
+node scripts/smoke-smolvm-toolbox.mjs ./toolbox.tar
+```
+
+The `runtime` target remains the full distribution: it adds the CLI to the same
+toolbox. Both targets default to non-root execution. A Docker daemon is needed
+for these build/export commands, not for the subsequent smolvm run.
+
+The toolbox qualification checks startup of 37 commands, system and AD Python
+imports, Nmap TCP-connect discovery and curl against a guest-owned loopback
+server, and Foxguard detection of an unsafe-eval fixture with a clean control.
+It checks UID/GID 1000 and source immutability. It does not authenticate to real
+identity providers, scan external targets, or establish general scanner accuracy.
+The exercised profile is 2 vCPUs, 3072 MiB RAM, 4 GiB writable storage, a 1 GiB
+overlay and a 180-second host deadline. Optional SecLists and browser/privileged
+tooling are not covered by that qualification.
+
+Use the toolbox archive in the same evolution config when a worker needs those
+tools; set `cpus: 2`, `memoryMb: 3072` and `timeoutMs: 180000` for this profile.
+The small Node image remains appropriate for narrow source-evolution fixtures.
+Full toolbox import costs more than importing the small runtime image.
+Neither image selection makes console/PTY execution globally sandboxed; see
+[Execution isolation](/architecture/#execution-isolation-and-toolbox-packaging).
+
+The archive must contain `/bin/sh` and the runtime/dependencies needed by the
+worker. Provision it before evaluation. No automatic pull or dependency download
+runs inside a candidate. Start with `cpus: 2`, `memoryMb: 2048`, and
+`timeoutMs: 60000`; CPU counts must be integers. Smaller profiles are not guaranteed
+to accommodate image import and guest startup.
+
+Each invocation:
+
+- copies and hashes the archive into a private run directory before boot;
+- starts an offline, UID/GID 1000 guest with `--unprivileged`;
+- mounts the sealed source read-only at `/snapshot`, then copies it to writable,
+  guest-local `/tmp/0sec-workspace` for builds and execution;
+- sends only the case input through stdin and returns bounded stdout/stderr;
+- uses 4 GiB writable storage and a 1 GiB VM overlay, with configured CPU/RAM limits;
+- ignores ambient project Smolfiles and isolates host runtime state and caches;
+- enforces a host deadline covering preparation and execution, then waits for
+  VM and cleanup-helper termination before deleting its private state.
+
+Timeout, cancellation, output overflow, image mismatch, and cleanup failure are
+failures, never permission to run on the host or switch to Docker. Cleanup failure
+retains its private directory and reports the recovery path. `evolve exec` forwards
+SIGINT/SIGTERM into this cancellation path.
+
+These controls are not identical to Docker's: the guest has its own kernel and
+a disposable writable filesystem; Docker's PID limit and `noexec` tmpfs settings
+are not claimed for smolvm. VM isolation is not a proof against hypervisor escapes.
+This is the evolution-worker backend, **not a global redirection of console/PTY,
+replay, or exploit commands into a VM**.
 
 ### Execution protocol
 
@@ -417,7 +497,7 @@ verified detection outcomes are separate validation requirements.
                [--reason <text>]   version to retire, not a desired destination.
                                    Reason optional (default "operator rollback").
   exec         --config <path>   Execute a pinned evolution version snapshot against an
-               --run-id <id>       isolated Docker container with no network. Pins the
+               --run-id <id>       isolated worker with no network. Pins the
                --input <json>      active snapshot from the specified run. Known config
                [--json]            cases are validated; mismatch rolls active back to parent.
   feedback
@@ -526,7 +606,7 @@ larger independently curated positive, held-out, and clean-control corpora.
 | `schemaVersion` | Must be `1`. |
 | `sourceRoot` | Directory containing the source to evolve (resolved relative to config file). |
 | `storePath` | Evolution store for snapshots, receipts, configs, and registry. Must differ from `sourceRoot` and must not overlap any selected source path. |
-| `image` | Docker image tag (e.g. `node:22-alpine`). Resolved to immutable digest at runtime. |
+| `image` | Docker image reference, or initial smolvm image label / expected archive SHA-256. Stored workers retain an immutable backend-specific identity. |
 | `sourcePaths` | Relative paths (files or directories) within `sourceRoot` that form the snapshot. At least 1, max 256. |
 | `editablePaths` | Subset of `sourcePaths` the model may propose edits to. Each must be inside a `sourcePaths` entry. |
 | `command` | Executable + arguments run in the sandbox. At least 1 argument, max 128. |
@@ -538,6 +618,8 @@ larger independently curated positive, held-out, and clean-control corpora.
 
 | Field | Default | Description |
 |---|---|---|
+| `backend` | `"docker"` when omitted | `"docker"` or `"smolvm"`; no automatic fallback between engines. |
+| `imageArchive` | (none) | Required only for smolvm. Regular archive file, resolved relative to the config file; symlinked archive files are rejected. |
 | `kind` | `"source"` | Artifact kind: `source`, `skill`, `router`, or `lens`. Determines allowed extensions and promotion policy defaults. |
 | `buildCommand` | (none) | Optional build command run in the sandbox before evaluation. |
 | `model` | (none) | Model override for proposal generation. Uses the configured runtime by default. |
@@ -550,8 +632,8 @@ larger independently curated positive, held-out, and clean-control corpora.
 | `maxModelCostUsd` | `5` | Model cost ceiling per run (USD). |
 | `maxEvaluationCostUsd` | `5` | Evaluation cost ceiling per run (USD). |
 | `timeoutMs` | `60000` | Per-execution timeout (100–600000). |
-| `memoryMb` | `1024` | Container memory limit (32–16384). |
-| `cpus` | `1` | CPU count (up to 16). |
+| `memoryMb` | `1024` | Worker memory limit in MiB (32–16384); smolvm also needs room for its kernel and image import. |
+| `cpus` | `1` | CPU limit, up to 16; smolvm requires an integer count. |
 | `maxOutputBytes` | `65536` | Max retained stdout/stderr per execution. |
 | `maxSourceBytes` | `67108864` | Max total source size in a snapshot. |
 | `maxChangedBytes` | `262144` | Max total changed bytes across all edits in a proposal. |
@@ -611,7 +693,7 @@ For each iteration:
 3. **Create candidate** by applying edits to a COPY of the baseline snapshot.
    Edits are validated for path boundaries, bounded changed bytes, duplicate
    prevention, and protected-code rejection.
-4. **Evaluate** in a fresh, network-none, read-only Docker container. Expected
+4. **Evaluate** in a fresh, offline worker with a read-only source snapshot. Expected
    answers stay in the controller — never in the candidate or model input. The
    evaluation alternates baseline/candidate order across repeats to avoid
    warm-cache bias. Wilson 95% intervals count distinct fixtures, not repeat
@@ -682,7 +764,7 @@ The promotion assessment is a pure decision over retained results. The evolution
 runner executes candidate code separately under this worker contract:
 
 - sealed input artifact and explicit command;
-- fresh Docker container;
+- fresh Docker container or local smolvm guest;
 - no engagement credentials;
 - no production target egress;
 - bounded CPU, wall-clock, disk, and model budget;
@@ -831,10 +913,33 @@ node scripts/smoke-codebase-learning.mjs
 node scripts/smoke-source-citation.mjs
 ```
 
-The source check requires a non-root account with Docker access and the
+By default, the source check requires a non-root account with Docker access and the
 `node:22-alpine` image. It exercises generated source, independent evaluation,
 approval, canaries, deployment, existing-reader pinning, and rollback using a
 small credential-detector benchmark. It does not measure general scanner quality.
+
+To exercise that same source lifecycle with smolvm, use `env` (the setting names
+start with a digit and therefore are not POSIX shell variable identifiers):
+
+```bash
+env 0SEC_EVOLUTION_BACKEND=smolvm \
+  0SEC_SMOLVM_IMAGE_ARCHIVE=/absolute/path/to/node.tar \
+  node scripts/smoke-source-evolution.mjs
+```
+
+The provider-free runtime qualification is separate:
+
+```bash
+node scripts/smoke-smolvm.mjs /absolute/path/to/node.tar
+```
+
+It checks real guest stdin/argv, nonzero exits, stream separation, source
+protection, fresh workspaces, credentials, ambient configuration, host loopback
+denial, storage exhaustion, identity mismatch, absent runtimes, cancellation,
+deadlines, output floods, and process teardown. It does not skip missing runtime
+prerequisites. `pnpm test:smolvm:e2e` runs it when
+`0SEC_SMOLVM_IMAGE_ARCHIVE` is set in the process environment.
+
 The lens check exercises synthesis, labelled positive/held-out/clean fixtures,
 promotion, next-reader reload, and retirement. Both consume real provider usage,
 disable cross-run hunt memory, and fail rather than reporting skipped work as success.

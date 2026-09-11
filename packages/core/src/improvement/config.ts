@@ -17,6 +17,8 @@ const schema = z.object({
   sourceRoot: z.string().min(1),
   storePath: z.string().min(1),
   image: z.string().min(1).max(512).regex(/^[a-zA-Z0-9][a-zA-Z0-9_./:@-]*$/),
+  backend: z.enum(["docker", "smolvm"]).optional(),
+  imageArchive: z.string().min(1).max(4096).refine((value) => !value.includes("\0")).optional(),
   sourcePaths: z.array(relativePath).min(1).max(256),
   editablePaths: z.array(relativePath).min(1).max(256),
   kind: z.enum(["source", "skill", "router", "lens"]).default("source"),
@@ -67,6 +69,13 @@ export function canonicalEvolutionJson(value: unknown): string {
 
 export function parseEvolutionConfig(raw: unknown, baseDir = process.cwd()): EvolutionConfig {
   const parsed = schema.parse(raw);
+  if (parsed.backend === "smolvm") {
+    if (!parsed.imageArchive) throw new Error("smolvm requires a local imageArchive");
+    if (!Number.isInteger(parsed.cpus)) throw new Error("smolvm cpus must be an integer");
+    parsed.imageArchive = resolve(baseDir, parsed.imageArchive);
+  } else if (parsed.imageArchive !== undefined) {
+    throw new Error("imageArchive is only valid with backend smolvm");
+  }
   if (parsed.cases.length * parsed.repeats * 4 * parsed.maxOutputBytes > 64 * 1024 * 1024) {
     throw new Error("evaluation stream retention exceeds 64 MiB; reduce cases, repeats or maxOutputBytes");
   }

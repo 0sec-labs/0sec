@@ -8,8 +8,8 @@ import type { EvolutionConfig } from "../improvement/types.js";
 
 const worker = vi.hoisted(() => ({ output: {} as unknown }));
 vi.mock("../improvement/sandbox.js", () => ({
-  resolveEvolutionImage: async (image: string) => image,
-  createDockerEvolutionSandbox: () => async () => ({
+  resolveEvolutionConfigImage: async (config: EvolutionConfig) => config.image,
+  createEvolutionSandbox: () => async () => ({
     exitCode: 0, stdout: JSON.stringify(worker.output), stderr: "", durationMs: 1, timedOut: false,
   }),
 }));
