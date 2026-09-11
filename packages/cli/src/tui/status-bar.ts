@@ -82,7 +82,7 @@ export interface StatusSegment {
    */
   colorRole: StatusColorRole;
   /**
-   * A small single-cell glyph shown before the pill's text, or "" for none.
+   * A leading glyph whose terminal-cell width matches its UTF-16 length, or "" for none.
    * Additive: it never appears in the plain `fitStatusSegments` string, only in
    * the pill renderer's per-segment cells (`fitStatusPills`).
    */
@@ -198,18 +198,18 @@ const ORDER: StatusSegmentKind[] = [
  * included in the status-row budget alongside the label.
  */
 const ICON: Record<StatusSegmentKind, string> = {
-  model: "◉",
-  effort: "◇",
-  mode: "●",
+  model: "🤖",
+  effort: "🧠",
+  mode: "🧭",
   evolution: "",
-  cwd: "⌂",
-  branch: "⎇",
+  cwd: "📂",
+  branch: "🔀",
   dirty: "±",
-  tokens: "↔",
-  cost: "$",
-  context: "◫",
-  meter: "◫",
-  plan: "☷",
+  tokens: "🔢",
+  cost: "💰",
+  context: "📊",
+  meter: "📊",
+  plan: "📋",
 };
 
 /** Semantic colour role per kind; the meter shares the plain percent's role. */

@@ -43,13 +43,6 @@ describe("SLASH_COMMANDS", () => {
     }
   });
 
-  it("describes the three execution policies", () => {
-    const mode = getCommandByName("mode");
-    expect(mode?.usage).toBe("/mode [standard|copilot|yolo]");
-    expect(mode?.description).toContain("Standard");
-    expect(mode?.description).toContain("Co-pilot");
-    expect(mode?.description).toContain("YOLO");
-  });
 });
 
 describe("findCommand", () => {

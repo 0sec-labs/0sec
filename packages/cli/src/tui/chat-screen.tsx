@@ -1190,7 +1190,7 @@ export function ChatScreen({
   const selectedSlashCommand = menuCommands[slashSelected];
   const scopeLabel = scopeRules.length > 0
     ? scopeRules.join(", ")
-    : mode === "yolo" ? "not configured" : "scope on demand";
+    : "scope on demand";
 
   useEffect(() => {
     setSlashSelected((current) => Math.min(current, Math.max(menuCommands.length - 1, 0)));
@@ -1862,7 +1862,6 @@ export function ChatScreen({
 
     pending.resolve(resolution);
     setScopeRules(resolution.scope.raw.in_scope ?? []);
-    appendEntry({ kind: "notice", text: `session scope approved: ${(resolution.scope.raw.in_scope ?? []).join(", ")}`, turn: turn.current });
   }, [appendEntry, pendingScope]);
 
   const resolveLocalScope = useCallback((approved: boolean) => {
@@ -2539,12 +2538,9 @@ export function ChatScreen({
             {
               id: "yolo",
               label: "YOLO",
-              meta: scopeRules.length === 0 ? "needs a scope" : "no prompts in scope",
-              detail: "No prompts, but only inside an already-configured scope.",
+              meta: "full autonomy",
+              detail: "No per-action prompts. Asks before accessing a new target.",
               current: mode === "yolo",
-              // Selecting YOLO without a scope cannot be honoured, so it is
-              // shown greyed rather than silently failing on commit.
-              disabled: scopeRules.length === 0,
             },
           ];
           setPicker({
@@ -3465,10 +3461,8 @@ export function ChatScreen({
     // the composer.
     //
     // The cycle delegates to `/mode` rather than calling `setAutonomyMode`
-    // directly, so it inherits that command's preconditions for free: refuse
-    // mid-turn, refuse without a runtime, and refuse YOLO without a scope. YOLO
-    // is skipped entirely when no scope is configured, so the cycle degrades to
-    // a two-state toggle instead of stopping on a mode it cannot enter.
+    // directly, so it uses the same live-mode transition and runtime readiness
+    // checks. All four modes are available without a preconfigured scope.
     if (key.name === "tab" && key.shift) {
       const cycle: ConsoleAutonomyMode[] = ["standard", "copilot", "yolo", "recon"];
       const at = cycle.indexOf(mode);
