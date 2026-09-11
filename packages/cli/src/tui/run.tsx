@@ -4050,7 +4050,7 @@ function FindingDetailRoute({
     let alive = true;
     void (async () => {
       try {
-        const focus = loadFindingFocus(findingId);
+        const focus = loadFindingFocus(findingId, { dbPath: chatOptions?.dbPath });
         if (alive) setResolved(focus.finding);
       } catch {
         // Leave unresolved; the screen shows its honest empty state.
@@ -4059,7 +4059,7 @@ function FindingDetailRoute({
     return () => {
       alive = false;
     };
-  }, [finding, findingId]);
+  }, [finding, findingId, chatOptions?.dbPath]);
 
   return (
     <FindingDetailScreen
@@ -4190,11 +4190,11 @@ function ConsoleApp({
       navigate({ type: "chat", options });
     },
     openLauncher: () => navigate({ type: "launcher" }),
-    openOps: () => navigate({ type: "ops", refreshMs: 4000 }),
+    openOps: () => navigate({ type: "ops", dbPath: chatOptionsRef.current?.dbPath, refreshMs: 4000 }),
     openDoctor: () => navigate({ type: "doctor" }),
-    openHistory: () => navigate({ type: "history", limit: 12 }),
-    openFindings: () => navigate({ type: "findings", options: { limit: 50 } }),
-    openReplay: (scanId) => navigate({ type: "replay", scanId }),
+    openHistory: () => navigate({ type: "history", dbPath: chatOptionsRef.current?.dbPath, limit: 12 }),
+    openFindings: () => navigate({ type: "findings", options: { dbPath: chatOptionsRef.current?.dbPath, limit: 50 } }),
+    openReplay: (scanId) => navigate({ type: "replay", dbPath: chatOptionsRef.current?.dbPath, scanId }),
     openSettings: () => navigate({ type: "settings" }),
     openModels: (chatOpts) => navigate({ type: "models", chatOptions: chatOpts ?? chatOptionsRef.current }),
     openResume: (chatOpts) => navigate({ type: "resume", chatOptions: chatOpts ?? chatOptionsRef.current }),

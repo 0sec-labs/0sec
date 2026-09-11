@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { createLocalConsoleSession } from "../console-session.js";
 
 import {
   ScopePolicy,
   createConsoleRuntime,
-  createConsoleSession,
   type AgentRole,
   type ConsoleAutonomyMode,
   type ConsoleLocalScopeRequest,
@@ -248,7 +248,7 @@ export class DesktopConsoleGateway {
   constructor(options: DesktopConsoleGatewayOptions = {}) {
     this.#now = options.now ?? (() => new Date());
     this.#createId = options.createId ?? randomUUID;
-    this.#createSession = options.createSession ?? ((input) => createConsoleSession({
+    this.#createSession = options.createSession ?? ((input) => createLocalConsoleSession({
       runtime: createConsoleRuntime(),
       scanId: input.scanId,
       target: input.target,

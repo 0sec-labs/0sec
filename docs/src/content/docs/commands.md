@@ -85,7 +85,7 @@ Guide: [Read the workflow](/console/).
 | `--scope <file>` | — | Initial authorization scope; required for the Node fallback (optional otherwise) |
 | `--finding <id>` | — | Focus the chat on one persisted finding |
 | `--finding-intent <intent>` | — | Finding workflow: investigate, verify, or draft_fix |
-| `--db-path <path>` | — | Database containing --finding |
+| `--db-path <path>` | — | Persistent findings database (defaults to 0SEC_DB_PATH or the local store) |
 | `-m, --model <id>` | — | Override the LLM model id (else provider default) |
 | `--role <role>` | — | Tool set to expose: audit\|review\|discovery\|attack\|verify (default audit = every tool) |
 | `--mode <mode>` | — | Autonomy mode to start in: standard\|recon\|copilot\|yolo (default standard). YOLO drops per-action prompts but stays target/scope-anchored; cycle live with Shift+Tab. |

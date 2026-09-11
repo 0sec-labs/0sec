@@ -2272,6 +2272,7 @@ export {
   MAX_OBJECTIVE_WORDS,
 } from "./console/index.js";
 export type {
+  ConsoleConversationHistory,
   ConsoleSession,
   ConsoleSessionConfig,
   ConsoleRenderCallbacks,

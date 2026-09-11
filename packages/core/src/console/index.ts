@@ -4,6 +4,7 @@ export {
   buildConsoleSystemPrompt,
 } from "./turn-engine.js";
 export type {
+  ConsoleConversationHistory,
   ConsoleSession,
   ConsoleSessionConfig,
   ConsoleRenderCallbacks,

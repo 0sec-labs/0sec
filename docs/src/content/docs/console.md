@@ -60,7 +60,7 @@ available, falling back to the readline console otherwise.
 | `--allow-scanners` | Expose scanner wrappers (sqlmap, nikto, …) | off |
 | `--finding <id>` | Focus the chat on one persisted finding | (none) |
 | `--finding-intent <intent>` | Finding workflow: `investigate`, `verify`, `draft_fix` | (none) |
-| `--db-path <path>` | Database path containing the finding | `~/.0sec/0sec.db` |
+| `--db-path <path>` | Persistent findings database, also used by history screens | `0SEC_DB_PATH` or `~/.0sec/0sec.db` |
 | `--resume [id]` | Reopen a saved session; omitting id opens a picker | (none) |
 | `--continue` | Reopen the most recent session, no picker | (none) |
 | `--print [prompt]` | One-shot non-interactive; reads from argument or piped stdin | (none) |
@@ -69,6 +69,25 @@ A [`--scope` file](/scope/) is required for the Node readline fallback. Under
 the Bun TUI it is optional — the TUI can request session-only scope extensions
 interactively. YOLO mode requires a configured scope with at least one
 `in_scope` entry regardless of runtime.
+
+### Review previous work
+
+The console connects to the same persistent findings database as `/history`
+and `/findings`. Ask it to review earlier findings; `query_findings` can search
+all sessions or a specific scan ID. `--db-path` works independently of
+`--finding`, including with `--print`.
+
+Saved conversations are a separate store, shared with `/resume`. The model can
+use `list_conversations` to discover them and `read_conversation` to retrieve
+their user/assistant text. Discovery defaults to the current working directory;
+ask for all projects to widen it, or narrow the results with search text.
+Transcript reads are paginated and size-limited, with explicit truncation and
+continuation metadata. Known credentials are redacted; hidden reasoning, raw
+provider payloads, and tool-result bodies are not returned.
+
+Both conversation tools are read-only and work in Recon mode without approval.
+Already-running consoles retain their loaded code: restart after updating to
+make these tools available.
 
 ### Roles
 

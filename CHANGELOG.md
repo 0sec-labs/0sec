@@ -14,6 +14,13 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Console history now connects to the persistent findings database across TUI,
+  readline, one-shot, and desktop sessions. `--db-path` also works without
+  `--finding` and follows history navigation. Read-only `list_conversations`
+  and `read_conversation` tools expose saved chats through the existing session
+  store, with project-local discovery, explicit cross-project search, bounded
+  transcript pages, and credential redaction. Raw provider payloads, hidden
+  reasoning, and tool-result bodies are excluded.
 - Independently buildable, non-root `toolbox` image target with Node 24 and
   the existing security/identity/Foxguard inventory. The default distribution
   target reuses it and adds the CLI. A real offline smolvm qualification checks

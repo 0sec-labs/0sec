@@ -5,7 +5,6 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import {
   createConsoleRuntime,
-  createConsoleSession,
   loadScope,
   parseMcpConfig,
   connectMcpServers,
@@ -33,6 +32,7 @@ import {
   resolveFindingChatIntent,
 } from "../finding-focus.js";
 
+import { createLocalConsoleSession } from "../console-session.js";
 interface ConsoleOptions {
   target?: string;
   scope?: string;
@@ -138,7 +138,7 @@ export function registerConsoleCommand(program: Command): void {
     .option("--scope <file>", "Initial authorization scope; required for the Node fallback (optional otherwise)")
     .option("--finding <id>", "Focus the chat on one persisted finding")
     .option("--finding-intent <intent>", "Finding workflow: investigate, verify, or draft_fix")
-    .option("--db-path <path>", "Database containing --finding")
+    .option("--db-path <path>", "Persistent findings database (defaults to 0SEC_DB_PATH or the local store)")
     .option("-m, --model <id>", "Override the LLM model id (else provider default)")
     .option("--role <role>", "Tool set to expose: audit|review|discovery|attack|verify (default audit = every tool)")
     .option("--mode <mode>", "Autonomy mode to start in: standard|recon|copilot|yolo (default standard). YOLO drops per-action prompts but stays target/scope-anchored; cycle live with Shift+Tab.")
@@ -216,8 +216,8 @@ export function registerConsoleCommand(program: Command): void {
           process.exitCode = 2;
           return;
         }
-      } else if (opts.findingIntent !== undefined || opts.dbPath !== undefined) {
-        console.error(chalk.red("--finding-intent and --db-path require --finding <id>."));
+      } else if (opts.findingIntent !== undefined) {
+        console.error(chalk.red("--finding-intent requires --finding <id>."));
         process.exitCode = 2;
         return;
       }
@@ -280,7 +280,7 @@ export function registerConsoleCommand(program: Command): void {
         let printSession: ConsoleSession;
         try {
           const runtime = createConsoleRuntime({ model: resumedModel ?? opts.model });
-          printSession = createConsoleSession({
+          printSession = createLocalConsoleSession({
             runtime,
             target: focusedTarget,
             role,
@@ -292,7 +292,7 @@ export function registerConsoleCommand(program: Command): void {
             // Headless: no operator to approve a scope extension or a copilot gate.
             requestScope: async () => null,
             approveTool: autonomyMode === "copilot" ? async () => false : undefined,
-          });
+          }, opts.dbPath);
         } catch (err) {
           console.error(chalk.red(err instanceof Error ? err.message : String(err)));
           console.error(chalk.dim("The console needs an LLM provider. Set ANTHROPIC_API_KEY (or another supported provider key) and retry."));
@@ -308,6 +308,8 @@ export function registerConsoleCommand(program: Command): void {
         } catch (err) {
           console.error(chalk.red(`\nturn failed: ${err instanceof Error ? err.message : String(err)}`));
           process.exitCode = 1;
+        } finally {
+          await printSession.cleanup();
         }
         return;
       }
@@ -330,6 +332,7 @@ export function registerConsoleCommand(program: Command): void {
         type TuiOpts = NonNullable<Parameters<typeof showOpenTuiConsole>[0]>;
         const baseOptions: TuiOpts = {
           target: focusedTarget,
+          dbPath: opts.dbPath,
           role,
           initialPrompt: findingPrompt,
           maxToolIterations,
@@ -361,7 +364,7 @@ export function registerConsoleCommand(program: Command): void {
         const runtime = createConsoleRuntime({ model: opts.model });
         // MCP host was connected once above (shared with the TUI path); the
         // session closes it on cleanup (rl close).
-        session = createConsoleSession({
+        session = createLocalConsoleSession({
           runtime,
           target: focusedTarget,
           role,
@@ -377,7 +380,7 @@ export function registerConsoleCommand(program: Command): void {
           // Readline has no approval surface, so session-only scope extensions are denied.
           requestScope: async () => null,
           approveTool: autonomyMode === "copilot" ? async () => false : undefined,
-        });
+        }, opts.dbPath);
       } catch (err) {
         console.error(chalk.red(err instanceof Error ? err.message : String(err)));
         console.error(

@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { createLocalConsoleSession } from "../console-session.js";
 import {
   useKeyboard,
   useRenderer,
@@ -14,7 +15,6 @@ import {
 import {
   ScopePolicy,
   createConsoleRuntime,
-  createConsoleSession,
   eventBus,
   type ConsoleAutonomyMode,
   type ConsoleScopeRequest,
@@ -453,6 +453,7 @@ function startupRecoveryText(detail: string): string {
 
 export interface ChatScreenOptions {
   target?: string;
+  dbPath?: string;
   scope?: ScopePolicy;
   model?: string;
   role?: "discovery" | "attack" | "verify" | "report" | "audit" | "review";
@@ -1236,7 +1237,7 @@ export function ChatScreen({
     const patch = credentialEnvPatch(loadCredentials(), process.env);
     for (const [key, value] of Object.entries(patch)) process.env[key] = value;
     const runtime = createConsoleRuntime({ model: opts.model ?? options?.model });
-    const created = createConsoleSession({
+    const created = createLocalConsoleSession({
       runtime,
       target: options?.target,
       scope: options?.scope,
@@ -1328,7 +1329,7 @@ export function ChatScreen({
         setPendingOperatorQuestion({ request, resolve: deferred.resolve });
         return deferred.promise;
       },
-    });
+    }, options?.dbPath);
     // resolvedModel() is the id the runtime actually settled on after
     // provider detection — not necessarily what was requested — so it is
     // the only value honest enough to display.
@@ -1384,7 +1385,7 @@ export function ChatScreen({
         return null;
       });
       setActiveSubagents({});
-      void created?.cleanup();
+      void (sessionRef.current ?? created)?.cleanup();
     };
   }, []);
 
