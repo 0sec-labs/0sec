@@ -1,6 +1,6 @@
 import type { Finding } from "@0sec/shared";
 
-export const FINDING_CHAT_INTENTS = ["investigate", "verify", "draft_fix"] as const;
+export const FINDING_CHAT_INTENTS = ["investigate", "verify", "draft_fix", "impact"] as const;
 export type FindingChatIntent = (typeof FINDING_CHAT_INTENTS)[number];
 
 export function resolveFindingChatIntent(value: string | undefined): FindingChatIntent {
@@ -18,8 +18,26 @@ function truncateEvidence(value: string, limit = 3_000): string {
   return `${value.slice(0, limit)}\n… ${value.length - limit} additional characters omitted`;
 }
 
+function boundedStructuredEvidence(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) return undefined;
+  if (serialized.length <= 3_000) return value;
+  return { truncated: true, excerpt: truncateEvidence(serialized) };
+}
+
 function intentInstructions(intent: FindingChatIntent): string {
   switch (intent) {
+    case "impact":
+      return [
+        "Explain the business impact using the supplied evidence and any business context already established in this session.",
+        "Separate observed effects, reported assessments, and missing context. State who or what could be affected and the prerequisites.",
+        "Report available CVSS score (0–10) and vector as technical severity, separately from business risk; never substitute the internal 0–100 ranking score or invent a score/vector.",
+        "Treat impactAssessment, confidence, finding status, and deploymentContext as reported assessments or classifications, not proof of business loss or production reachability; prod_reachable alone proves neither.",
+        "Describe potential exploit chains as conditional, identify each prerequisite and missing link, and cite the available evidence for each step. Only call a chain verified when execution receipts support the entire chain; a proposed PoC or one verified finding is insufficient.",
+        "Preserve failed or inconclusive verification results. Missing or truncated evidence is unknown, not successful verification. Do not invent financial losses, affected users, or execution results.",
+        "Finish with the most useful next step and its uncertainty. This is analysis only: do not execute tools or PoCs, modify files, or expand authorization.",
+      ].join(" ");
     case "verify":
       return "Independently assess the claimed impact and identify the minimum authorized reproduction needed. Do not modify source files.";
     case "draft_fix":
@@ -48,6 +66,18 @@ export function buildFindingChatPrompt(
       response: truncateEvidence(finding.evidence.response),
       analysis: finding.evidence.analysis ? truncateEvidence(finding.evidence.analysis) : undefined,
     },
+    ...(intent === "impact" ? {
+      cvssScore: finding.cvssScore,
+      cvssVector: finding.cvssVector,
+      confidence: finding.confidence,
+      impactAssessment: boundedStructuredEvidence(finding.impactAssessment),
+      deploymentContext: finding.deploymentContext,
+      pocSteps: boundedStructuredEvidence(finding.pocSteps),
+      pocExecution: boundedStructuredEvidence(finding.pocExecution),
+      verification_result: boundedStructuredEvidence(finding.verification_result),
+      inlineValidation: boundedStructuredEvidence(finding.inlineValidation),
+      relatedFindingId: finding.relatedFindingId,
+    } : {}),
   };
 
   return [

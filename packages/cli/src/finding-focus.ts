@@ -68,6 +68,7 @@ function findingFromRow(
       analysis: typeof row.evidenceAnalysis === "string" ? row.evidenceAnalysis || undefined : undefined,
     },
     layerVerdicts: parseJson(row.layerVerdicts),
+    impactAssessment: parseJson(row.impactAssessment),
     remediation: parseJson(row.remediation),
     pocSteps: parseJson(row.pocSteps),
     verificationSpec: parseJson(row.verificationSpec),
