@@ -191,10 +191,17 @@ async function runBalance(opts: { json?: boolean }): Promise<void> {
       consolePresentationOutput.stdout(JSON.stringify(acct, null, 2), "hosted.balance-json");
     } else {
       const percent = acct.credits?.remainingPercent;
+      const percentLabel = percent === null || percent === undefined
+        ? undefined
+        : percent > 0 && percent < 0.1
+          ? "<0.1"
+          : percent > 99.9 && percent < 100
+            ? ">99.9"
+            : String(Number(percent.toFixed(1)));
       consolePresentationOutput.stdout(
-        percent === null || percent === undefined
+        percentLabel === undefined
           ? "  Cloud: usage percentage unavailable"
-          : `  Cloud: ${chalk.bold(`${Number(percent.toFixed(1))}%`)} credits remaining`,
+          : `  Cloud: ${chalk.bold(`${percentLabel}%`)} credits remaining`,
         "hosted.balance",
       );
       if (acct.credits?.nextResetAt !== null && acct.credits?.nextResetAt !== undefined) {
