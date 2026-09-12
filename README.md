@@ -47,15 +47,6 @@ export PATH="$HOME/.0sec/bin:$PATH"
 Add the `export` line to your shell profile. Run `0` to open the interactive
 console, or `0 --help` for commands. Only test systems you own or have permission to assess.
 
-### Choose a model connection
-
-- **0sec Cloud:** optional hosted models, still deployment-gated and not production-qualified.
-  Login alone does not fund an account or grant model access.
-  Managed testing and CI review have separate access and billing.
-- **Your own provider:** use an API key, local model or supported provider subscription.
-  No 0sec Cloud account is required; your provider handles authentication and billing.
-  See [provider setup](https://docs.0.security/api-keys/).
-
 ## Documentation
 
 - [Getting started](https://docs.0.security/getting-started/): installation, source builds and your first scan.
