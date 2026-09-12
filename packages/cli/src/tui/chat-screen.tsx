@@ -8,6 +8,9 @@ import React, {
 } from "react";
 import { createLocalConsoleSession } from "../console-session.js";
 import { HarnessPresentation, useHarness } from "./harness-context.js";
+import { loadFindingFocus, buildFindingChatPrompt } from "../finding-focus.js";
+import { exportChatConversation } from "./chat-export.js";
+import { hostedBalanceState, formatHostedBalance, type HostedBalanceState } from "./hosted-balance.js";
 import {
   useKeyboard,
   usePaste,
@@ -17,6 +20,8 @@ import {
 import { DEFAULT_AUTONOMY_MODE } from "@0sec/shared";
 import {
   ScopePolicy,
+  CloudClient,
+  loadCloudCredentials,
   createConsoleRuntime,
   eventBus,
   type ConsoleAutonomyMode,
@@ -770,6 +775,8 @@ export function ChatScreen({
   }, []);
   useEffect(() => discardStreamPatches, [discardStreamPatches]);
   const [session, setSession] = useState<ConsoleSession | null>(null);
+  const cloudSource = useRef<{ owner: ConsoleSession; isHosted: () => boolean; env: NodeJS.ProcessEnv } | null>(null);
+  const [cloudBalance, setCloudBalance] = useState<{ owner: ConsoleSession; state: HostedBalanceState } | null>(null);
   const initialPromptRef = useRef(options?.initialPrompt?.trim() || null);
   const presentationEmitterRef = useRef<PresentationEmitter | null>(null);
   if (!presentationEmitterRef.current) {
@@ -1192,9 +1199,12 @@ export function ChatScreen({
   const menuCommands = filteredSlashCommands;
   const visibleCommandRows = Math.min(menuCommands.length, commandMenuLimit);
   const selectedSlashCommand = menuCommands[slashSelected];
-  const scopeLabel = scopeRules.length > 0
-    ? scopeRules.join(", ")
-    : "scope on demand";
+  const displayedScope = session ? session.scope : options?.scope;
+  const scopeIncludes = displayedScope?.raw.in_scope ?? [];
+  const scopeExcludes = displayedScope?.raw.out_of_scope ?? [];
+  const scopeLabel = displayedScope === undefined
+    ? "not configured"
+    : `${scopeIncludes.length ? scopeIncludes.join(", ") : "empty · deny all"}${scopeExcludes.length ? `; excludes ${scopeExcludes.join(", ")}` : ""}`;
 
   useEffect(() => {
     setSlashSelected((current) => Math.min(current, Math.max(menuCommands.length - 1, 0)));
@@ -1484,6 +1494,7 @@ export function ChatScreen({
     created.cleanup = async () => {
       try { await cleanup(); } finally { pluginLease?.release(); }
     };
+    cloudSource.current = { owner: created, isHosted: () => runtime.getConfigurationDiagnostics().provider === "hosted", env };
     // resolvedModel() is the id the runtime actually settled on after
     // provider detection — not necessarily what was requested — so it is
     // the only value honest enough to display.
@@ -1543,6 +1554,40 @@ export function ChatScreen({
       void (sessionRef.current ?? created)?.cleanup();
     };
   }, []);
+  useEffect(() => {
+    const source = cloudSource.current;
+    if (!session || source?.owner !== session || !source.isHosted()) {
+      setCloudBalance(null);
+      return;
+    }
+    let active = true;
+    let pending = false;
+    const refresh = async () => {
+      if (pending || !active) return;
+      if (!source.isHosted()) { setCloudBalance(null); return; }
+      pending = true;
+      setCloudBalance({ owner: session, state: { status: "loading" } });
+      try {
+        const credentials = loadCloudCredentials({ env: source.env, warn: () => {} });
+        const account = await new CloudClient({ host: credentials.host, token: credentials.token }).getInferenceAccount();
+        if (!active || cloudSource.current !== source) return;
+        const current = loadCloudCredentials({ env: source.env, warn: () => {} });
+        if (!source.isHosted()) { setCloudBalance(null); return; }
+        setCloudBalance({
+          owner: session,
+          state: current.host === credentials.host && current.token === credentials.token
+            ? hostedBalanceState(account) : { status: "unavailable" },
+        });
+      } catch {
+        if (active && cloudSource.current === source) {
+          setCloudBalance(source.isHosted() ? { owner: session, state: { status: "unavailable" } } : null);
+        }
+      } finally { pending = false; }
+    };
+    void refresh();
+    const interval = setInterval(() => { void refresh(); }, 30_000);
+    return () => { active = false; clearInterval(interval); };
+  }, [session, busy]);
 
   // Marketplace changes never replace this session's runtime or live harness.
   // Its leased host remains usable until cleanup; new chats acquire the new set.
@@ -2300,8 +2345,9 @@ export function ChatScreen({
           kind: "panel",
           text: "scope",
           panel: buildScopePanel({
-            target: target || undefined,
-            scopeRules,
+            scopeRules: scopeIncludes,
+            outOfScope: scopeExcludes,
+            scopeConfigured: displayedScope !== undefined,
             mode: modeLabel(mode),
           }),
           turn: turn.current,
@@ -2509,6 +2555,61 @@ export function ChatScreen({
             : written.error,
           turn: turn.current,
         });
+        return true;
+      }
+      case "copy": {
+        if (!session || busy) {
+          showToast(busy ? "Wait for the active turn before exporting the complete conversation." : "No conversation is available to export.");
+          return true;
+        }
+        try {
+          const exported = exportChatConversation(session.messages);
+          void copySelection(exported.text, { spawn: defaultSpawn, which: defaultWhich }).then((result) => {
+            appendEntry({
+              kind: result.ok ? "notice" : "error",
+              text: result.ok
+                ? result.method === "osc52" ? "Conversation sent to terminal clipboard; clipboard contents are not verified." : "Conversation copied."
+                : "Clipboard unavailable; conversation JSON was saved.",
+              detail: `Private JSON: ${exported.path}`,
+              turn: turn.current,
+            });
+          }).catch(() => {
+            appendEntry({ kind: "error", text: "Clipboard failed; conversation JSON was saved.", detail: exported.path, turn: turn.current });
+          });
+        } catch (error) {
+          appendEntry({ kind: "error", text: "Could not export the conversation.", detail: error instanceof Error ? error.message : String(error), turn: turn.current });
+        }
+        return true;
+      }
+      case "impact": {
+        if (!session || busy) {
+          showToast(busy ? "Wait for the active turn before requesting an impact analysis." : "Connect a provider before requesting an impact analysis.");
+          return true;
+        }
+        const explainImpact = (id: string) => {
+          try {
+            const focus = loadFindingFocus(id, { dbPath: options?.dbPath });
+            void submitRef.current?.(buildFindingChatPrompt(focus, "impact"));
+          } catch (error) {
+            appendEntry({ kind: "error", text: "Could not load that finding.", detail: error instanceof Error ? error.message : String(error), turn: turn.current });
+          }
+        };
+        if (args.trim()) {
+          explainImpact(args.trim());
+        } else {
+          const findings = runFindingsFromEntries(entries).filter((finding) => finding.id);
+          if (!findings.length) {
+            appendEntry({ kind: "notice", text: "No saved findings in this conversation.", detail: "Use /impact <finding-id> for a saved finding, or /findings to choose one.", turn: turn.current });
+          } else {
+            setPicker({
+              state: createSelectorState("Explain finding impact", findings.map((finding) => ({
+                id: finding.id!, label: finding.title, detail: finding.severity,
+              }))),
+              commit: explainImpact,
+              onCancel: restorePaletteDraft,
+            });
+          }
+        }
         return true;
       }
       case "explain": {
@@ -2787,6 +2888,11 @@ export function ChatScreen({
     pendingFeedback,
     scopeLabel,
     scopeRules,
+    displayedScope,
+    scopeIncludes,
+    scopeExcludes,
+    copySelection,
+    options?.dbPath,
     selectModel,
     session,
     sessionTokens,
@@ -3690,7 +3796,8 @@ export function ChatScreen({
             setAgentNavIndex(-1);
           } else {
             const res = deliverToSubagent(focusAgentId, input);
-            setSubagentTranscripts((prev) => ({ ...prev, [focusAgentId]: [...(prev[focusAgentId] ?? []), { id: `${focusAgentId}-operator-${Date.now()}`, kind: res.ok ? "user" : "error", text: res.ok ? input : res.reason ?? "Message could not be delivered", turn: worker?.turn ?? 0, at: Date.now() }] }));
+            setSubagentTranscripts((prev) => ({ ...prev, [focusAgentId]: [...(prev[focusAgentId] ?? []), { id: `${focusAgentId}-operator-${Date.now()}`, kind: res.ok ? "user" : "error", text: res.ok ? input : `${res.reason ?? "Message could not be delivered"}. Your draft is retained; Escape returns to Main.`, turn: worker?.turn ?? 0, at: Date.now() }] }));
+            if (!res.ok) return;
           }
           historyRef.current = pushHistory(historyRef.current, input);
           composingRef.current = false;
@@ -3832,6 +3939,8 @@ export function ChatScreen({
     modelDisplay: settings.modelDisplay,
     showContextMeter: settings.showContextMeter,
     showCost: settings.showCost,
+    hostedBalance: !focusAgentId && cloudBalance?.owner === session && cloudSource.current?.isHosted()
+      ? formatHostedBalance(cloudBalance.state) : undefined,
   });
   const runningWorkers = Object.values(herdAgents).filter((agent) => agent.status === "running" || agent.status === "queued").length;
   // The OMP-style pill row: the SAME segments, kept/dropped at the bar's real
@@ -3935,14 +4044,15 @@ export function ChatScreen({
   // "0sec" is 4 cells. The optional objective sits at the top-right; target,
   // scope, and readiness take the remaining header cells. Autonomy mode lives
   // in the bottom status bar rather than competing with engagement posture.
+  const sidebarControlWidth = contentWidth >= 64 ? 24 : 8;
   const headerObjective = !compact && settings.showObjective ? objective.trim() : "";
   const headerObjectiveWidth = headerObjective
-    ? Math.max(0, Math.min(headerObjective.length, Math.floor((contentWidth - 4) * 0.45)))
+    ? Math.max(0, Math.min(headerObjective.length, Math.floor((contentWidth - 4 - sidebarControlWidth) * 0.35)))
     : 0;
   const headerGapCells = headerObjectiveWidth > 0 ? 2 : 1;
   const headerEngagementWidth = Math.max(
     1,
-    contentWidth - 4 - headerObjectiveWidth - headerGapCells,
+    contentWidth - 4 - headerObjectiveWidth - headerGapCells - sidebarControlWidth - 1,
   );
   // Relative ages need a clock, but the transcript must not repaint every
   // second just to age a label. Tick only while timestamps are enabled, and
@@ -4056,16 +4166,16 @@ export function ChatScreen({
   // reserved in the ledger via computeLedgerRows regardless of focus, so the
   // focus transcript makes room for it.
   const subagentEntries = settings.showSubagents ? workerRoster : [];
-  const rosterStart = Math.max(0, agentNavIndex - SUBAGENT_MAX_VISIBLE + 1);
-  const subagentVisible = subagentEntries.slice(rosterStart, rosterStart + SUBAGENT_MAX_VISIBLE);
+  const visibleRosterLimit = Math.max(1, Math.min(SUBAGENT_MAX_VISIBLE, Math.floor(height / 5)));
+  const rosterStart = Math.max(0, agentNavIndex - visibleRosterLimit + 1);
+  const subagentVisible = agentNavIndex >= 0
+    ? subagentEntries.slice(rosterStart, rosterStart + visibleRosterLimit)
+    : [];
   const subagentOverflow = subagentEntries.length - subagentVisible.length;
-  const subagentOverflowRow = subagentOverflow > 0 ? 1 : 0;
-  // Title + pinned Main row + child rows + optional overflow line. Zero when
-  // nothing is running (Main only joins the roster once there are agents to lead,
-  // so a solo session isn't cluttered with a lone Main row). Main is a pinned,
-  // non-navigable row, so it costs one row but never enters the nav list.
-  const subagentBlockRows = subagentVisible.length > 0
-    ? 1 + 1 + subagentVisible.length + subagentOverflowRow
+  const subagentOverflowRow = agentNavIndex >= 0 && subagentOverflow > 0 ? 1 : 0;
+  // One activity/shortcut row at rest; expand only the selected worker roster.
+  const subagentBlockRows = subagentEntries.length > 0
+    ? 1 + subagentVisible.length + subagentOverflowRow
     : 0;
   // Selection within the block while navigating into it. Clamped every render so
   // an index left dangling by a finished agent lands back on a live row.
@@ -4073,8 +4183,7 @@ export function ChatScreen({
     agentNavIndex >= 0 ? clampAgentSelection(subagentEntries.length, agentNavIndex) : -1;
   // The focused transcript already carries its own controls; reserve the
   // extra hint row only while navigating the roster.
-  const showAgentNavHint =
-    settings.showComposerHints && !empty && !focused && agentNavIndex >= 0;
+  const showAgentNavHint = false;
 
   // Every other region in the column is flexShrink={0}, so the transcript
   // absorbs all the pressure. Compute what it actually has left: a
@@ -4110,16 +4219,8 @@ export function ChatScreen({
     settings.showLogo && empty && ledgerRows >= LEDGER_MARK_ROWS && contentWidth >= TERMINAL_BLOCK_LOGO_WIDTH;
   const showEmptyStateTagline = empty && ledgerRows >= 3;
   const sessionState = startupError ? "unavailable" : busy ? "working" : session ? "ready" : "connecting";
-  // The header's engagement summary is assembled from opt-out segments so a
-  // hidden one leaves no dangling " · ": target and scope are each gated on
-  // their setting, and the session state (connecting/working/ready) always
-  // rides along — it is status, not scope, and stays visible even when both
-  // labels are off.
-  const targetSummary = target ? `target: ${target}` : "target: none";
-  const scopeSummary = `scope: ${scopeLabel}`;
   const headerSegments: string[] = [];
-  if (settings.showTarget) headerSegments.push(targetSummary);
-  if (settings.showScope) headerSegments.push(scopeSummary);
+  if (settings.showScope) headerSegments.push(`Scope: ${scopeLabel}`);
   headerSegments.push(sessionState);
   // Version rides at the far left of the top bar, like the startup masthead.
   const headerEngagement = [`v${VERSION}`, ...headerSegments].join(" · ");
@@ -4442,79 +4543,33 @@ export function ChatScreen({
 
   const subagentNode = subagentBlockRows > 0 ? (
     <box flexDirection="column" width="100%" minWidth={0} height={subagentBlockRows} flexShrink={0} marginTop={1}>
-      {(() => {
-        // The header carries the idle "↓ select" affordance inline (key white,
-        // label muted), so the down-into-agents hint no longer costs its own
-        // row. Shown only when idle (not already navigating) and hints are on,
-        // and only when the pair actually fits beside the title.
-        const subTitle = `AGENTS · ${subagentEntries.length + 1}`;
-        const showSelectHint =
-          settings.showComposerHints && agentNavIndex < 0 && !focused;
-        const selectPairs: KeyHint[] = [{ key: "↓", label: "select" }];
-        const fits =
-          subTitle.length + 3 + keyHintsLength(selectPairs, " · ") <= contentWidth;
-        return (
-          <box flexDirection="row" width={contentWidth} flexShrink={0} minWidth={0}>
-            <box flexShrink={0} minWidth={0}>
-              <text fg={MUTED}>{fitTuiText(subTitle, contentWidth)}</text>
-            </box>
-            {showSelectHint && fits ? (
-              <box flexDirection="row" flexShrink={0} minWidth={0} marginLeft={3}>
-                <KeyHints pairs={selectPairs} theme={theme} />
-              </box>
-            ) : null}
-          </box>
-        );
-      })()}
-      {(() => {
-        // Main is pinned as the first roster row (OMP: "Main is never parked"),
-        // in its own accent, non-selectable so it never enters the child nav list.
-        const mainView: AgentRowView = {
-          id: "Main",
-          name: "Main",
-          task: "operator session",
-          status: "running",
-          accent: agentAccentFor("Main", theme.CANVAS),
-        };
-        return (
-          <AgentTreeRow
-            key="agent-main"
-            view={mainView}
-            width={contentWidth}
-            theme={theme}
-            selected={false}
-            isLast={false}
-          />
-        );
-      })()}
+      <box width={contentWidth} flexShrink={0} onMouseDown={() => setAgentNavIndex(agentNavIndex >= 0 ? -1 : 0)}>
+        <text fg={MUTED}>{fitTuiText(
+          agentNavIndex >= 0
+            ? `AGENTS · ${subagentEntries.length} · ↑↓ select · enter open · esc back`
+            : `Agents: ${runningWorkers} running / ${subagentEntries.length} total · ↓ select`,
+          contentWidth,
+        )}</text>
+      </box>
       {subagentVisible.map((sa, index) => {
-        // A shared tree row (bold accent name : muted task, red glyph on
-        // failure), with the last row's connector closing the tree and the
-        // selected row wearing the highlight bar + accent marker.
+        const rec = herdAgents[sa.agent_id];
         const view: AgentRowView = {
           id: sa.agent_id,
           name: sa.name ?? shortAgentName(sa.agent_id),
           task: sa.task ?? "",
-          status: sa.status,
-          meta: `${sa.status === "completed" && sa.done === false ? "stopped" : sa.status}${sa.turns !== undefined ? ` · ${sa.turns} turns` : ""}`,
+          activity: rec?.tool ?? rec?.note,
+          status: sa.status === "completed" && sa.done === false ? "stopped" : sa.status,
+          meta: `${sa.status === "completed" && sa.done === false ? "stopped" : sa.status}`,
+          animationFrame: settings.reduceMotion ? undefined : animTick,
           accent: agentAccentFor(sa.agent_id, theme.CANVAS),
         };
-        const isLast = index === subagentVisible.length - 1 && subagentOverflowRow === 0;
-        return (
-          <AgentTreeRow
-            key={sa.agent_id}
-            view={view}
-            width={contentWidth}
-            theme={theme}
-            selected={index + rosterStart === agentNavSelected || sa.agent_id === focusAgentId}
-            isLast={isLast}
-          />
-        );
+        return <AgentTreeRow key={sa.agent_id} view={view} width={contentWidth} theme={theme}
+          selected={index + rosterStart === agentNavSelected || sa.agent_id === focusAgentId}
+          isLast={index === subagentVisible.length - 1}
+          onSelect={() => { setFocusAgentId(sa.agent_id); setAgentNavIndex(-1); }} />;
       })}
       {subagentOverflowRow > 0 ? (
-        <box width={contentWidth} flexShrink={0} minWidth={0}>
-          <text fg={MUTED}>{fitTuiText(`  ${rosterStart + 1}–${rosterStart + subagentVisible.length}/${subagentEntries.length} · ↑/↓ browse all`, contentWidth)}</text>
-        </box>
+        <text fg={MUTED}>{fitTuiText(`${rosterStart + 1}–${rosterStart + subagentVisible.length}/${subagentEntries.length} · ↑↓ browse all`, contentWidth)}</text>
       ) : null}
     </box>
   ) : null;
@@ -4597,7 +4652,9 @@ export function ChatScreen({
               id: rec.agentId,
               name: rec.name ?? shortAgentName(rec.agentId),
               task: rec.task || rec.agentId,
-              status: rec.status,
+              activity: rec.tool ?? rec.note,
+              status: rec.status === "completed" && workerOutcomes[rec.agentId]?.done === false ? "stopped" : rec.status,
+              animationFrame: settings.reduceMotion ? undefined : animTick,
               meta: meta.length > 0 ? meta.join(" · ") : undefined,
               accent: agentAccentFor(rec.agentId, theme.CANVAS),
             };
@@ -4607,7 +4664,8 @@ export function ChatScreen({
                 view={view}
                 width={rightInner}
                 theme={theme}
-                selected={false}
+                selected={workerRoster[agentNavIndex]?.agent_id === rec.agentId}
+                onSelect={() => { setFocusAgentId(rec.agentId); setAgentNavIndex(-1); }}
               />
             );
           })
@@ -4628,8 +4686,8 @@ export function ChatScreen({
           <TodosSidebar payload={todos!} width={rightInner} rows={rightPlanBudget} theme={theme} />
         ) : null}
         <box flexGrow={1} minHeight={0} flexShrink={1} />
-        <box width={rightInner} flexShrink={0} minWidth={0}>
-          <text fg={MUTED}>{fitTuiText("ctrl+l hide", rightInner)}</text>
+        <box width={rightInner} flexShrink={0} minWidth={0} onMouseDown={() => updateSetting("showRightSidebar", false)}>
+          <text fg={MUTED}>{fitTuiText("Hide agents · ctrl+l", rightInner)}</text>
         </box>
       </box>
     </box>
@@ -4992,6 +5050,14 @@ export function ChatScreen({
             <text fg={BRAND}>{fitTuiText(headerObjective, headerObjectiveWidth, { mode: "end" })}</text>
           </box>
         ) : null}
+        <box width={sidebarControlWidth} flexDirection="row" flexShrink={0} gap={1}>
+          <box width={Math.floor((sidebarControlWidth - 1) / 2)} flexShrink={0} onMouseDown={() => updateSetting("showLeftSidebar", !settingsRef.current.showLeftSidebar)}>
+            <text fg={settings.showLeftSidebar ? ACCENT : MUTED}>{sidebarControlWidth > 8 ? `${settings.showLeftSidebar ? "▾" : "▸"} Sessions` : "◀"}</text>
+          </box>
+          <box width={Math.floor(sidebarControlWidth / 2)} flexShrink={0} onMouseDown={() => updateSetting("showRightSidebar", !settingsRef.current.showRightSidebar)}>
+            <text fg={settings.showRightSidebar ? ACCENT : MUTED}>{sidebarControlWidth > 8 ? `${settings.showRightSidebar ? "▾" : "▸"} Agents` : "▶"}</text>
+          </box>
+        </box>
       </box>
 
       {empty && !reviewOpen ? (

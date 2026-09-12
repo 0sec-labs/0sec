@@ -172,13 +172,31 @@ When the TUI launches:
   centred on the screen.
 - **Status bar** — active model, mode, working directory, cost/token counters
   (when enabled).
-- **Header** — `0sec`, engagement target, optional objective.
+- **Header** — `0sec`, configured scope, optional objective and clickable sidebar controls.
+- **Conversation** — Messenger framing by default: your messages align right,
+  answers align left. Saved alternative styles remain effective.
+- **Agents sidebar** — visible by default on wide terminals, with worker
+  activity, plan and findings. Hide it without replacing the conversation.
 
 Type a message and press **Enter** to send it. The engine streams its response
 token-by-token. Tool calls appear as bordered cards showing the command or edit,
 output, and exit code (controlled by `richToolCards` setting). The transcript
 auto-scrolls to newest content. **PageUp** / **PageDown** (or **Ctrl+Up** /
 **Ctrl+Down**) scrolls through history.
+
+The context meter displays **unavailable** when the runtime does not report a
+usable context window; it is not a turn-budget percentage. Hosted sessions show
+the Cloud account's reported credit state separately from estimated model cost.
+
+Use `/copy` (aliases `/export` and `/dump`) while idle to export the complete
+public conversation, not just visible transcript rows. It saves private local
+JSON even when copying fails. An OSC52 notice means the content was sent to the
+terminal clipboard; it does not verify clipboard contents.
+
+Use `/impact <finding-id>` to discuss a persisted finding in the current chat.
+Without an ID, select a finding from the conversation. The analysis distinguishes
+observed impact from conditional chains and missing evidence; it does not
+execute tools or expand authorization.
 
 ## Screens
 
@@ -221,6 +239,8 @@ the command menu. The readline console supports a subset (noted below).
 | `/transcript` | `/review` | session | — |
 | `/findings` | `/finds` | session | — |
 | `/finding` | `/finding-detail` | session | — |
+| `/impact` | — | session | — |
+| `/copy` | `/export`, `/dump` | session | — |
 | `/replay` | — | session | — |
 | `/resume` | `/sessions` | session | — |
 | `/explain` | `/eli5` | session | — |

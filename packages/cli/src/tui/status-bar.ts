@@ -40,6 +40,7 @@ export type StatusSegmentKind =
   | "dirty"
   | "tokens"
   | "cost"
+  | "cloud"
   | "context"
   | "meter"
   | "plan";
@@ -138,6 +139,8 @@ export interface StatusBarInput {
    * not billed — the same "never invent a number" rule the context percent obeys.
    */
   showCost?: boolean;
+  /** Already formatted authoritative Cloud account state, never a quota estimate. */
+  hostedBalance?: string;
 }
 
 /**
@@ -174,6 +177,7 @@ const PRIORITY: Record<StatusSegmentKind, number> = {
   branch: 7,
   mode: 8,
   evolution: 8,
+  cloud: 9,
   model: 0,
 };
 
@@ -182,6 +186,7 @@ const ORDER: StatusSegmentKind[] = [
   "model",
   "effort",
   "mode",
+  "cloud",
   "evolution",
   "cwd",
   "branch",
@@ -207,6 +212,7 @@ const ICON: Record<StatusSegmentKind, string> = {
   dirty: "±",
   tokens: "\ue26b",
   cost: "\uf155",
+  cloud: "",
   context: "\ue70f",
   meter: "\ue70f",
   plan: "\uf2d2",
@@ -223,6 +229,7 @@ const COLOR_ROLE: Record<StatusSegmentKind, StatusColorRole> = {
   dirty: "dirty",
   tokens: "tokens",
   cost: "cost",
+  cloud: "cost",
   context: "context",
   meter: "context",
   plan: "plan",
@@ -380,6 +387,7 @@ function dirtyText(modified: number, untracked: number): string {
  */
 export function buildStatusSegments(input: StatusBarInput): StatusSegment[] {
   const texts = new Map<StatusSegmentKind, string>();
+  if (input.hostedBalance) texts.set("cloud", input.hostedBalance);
 
   // The model is kept for pricing regardless of where it is displayed, but it
   // only occupies a bar segment when `modelDisplay` is "statusbar" (or is
@@ -449,10 +457,12 @@ export function buildStatusSegments(input: StatusBarInput): StatusSegment[] {
     const used = Math.max(0, input.contextUsed as number);
     const percent = roundForDisplay((used / contextWindow) * 100);
     if (input.showContextMeter) {
-      texts.set("meter", contextMeter(percent, contextWindow));
+      texts.set("meter", `Context: ${contextMeter(percent, contextWindow)}`);
     } else {
       texts.set("context", `${percent}%/${formatTokenCount(contextWindow)}`);
     }
+  } else if (input.showContextMeter) {
+    texts.set("meter", "Context: unavailable");
   }
 
   const plan = label(input.plan);

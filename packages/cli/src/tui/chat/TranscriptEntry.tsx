@@ -217,14 +217,13 @@ export function renderEntry(
 
   if (entry.kind === "user" || entry.kind === "assistant") {
     const isUser = entry.kind === "user";
-    // Frame accents (a bubble border, the inline label gap) stay in the
-    // speaker's own tone. The LABEL, however, carries the brand: the assistant
-    // "0sec" label renders in the brand purple (theme.BRAND); the operator label
-    // stays the neutral accent. Body text is never tinted by this — it keeps
-    // TEXT / PRIMARY via renderMarkdownBlocks below.
+    // Keep speaker labels distinct without tinting the message body.
     const tone = isUser ? ACCENT : PRIMARY;
     const labelTone = isUser ? ACCENT : BRAND;
-    const frame = speechFrame(transcriptStyle, entry.kind, maxWidth);
+    const messageWidth = transcriptStyle === "messenger" && isUser && maxWidth >= 32
+      ? Math.floor(maxWidth * 0.85)
+      : maxWidth;
+    const frame = speechFrame(transcriptStyle, entry.kind, messageWidth);
     const marginTop = display.spacing + frame.extraMarginTop;
     const age = display.showTimestamps ? relativeAge(entry.at, display.now) : "";
     const label = roleLabelText(isUser ? "user" : "assistant", roleLabelStyle, age);
@@ -243,6 +242,18 @@ export function renderEntry(
     const body = isUser
       ? <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
       : renderMarkdownBlocks(renderMarkdown(entry.text, bodyWidth), entry.id, theme);
+    const footerParts: string[] = [];
+    if (!isUser) {
+      if (display.modelInFooter && display.model) footerParts.push(display.model);
+      if (display.showTokenUsage && entry.usageInput !== undefined) {
+        footerParts.push(`${entry.usageInput}→${entry.usageOutput ?? 0} tok`);
+      }
+      if (display.showCost && entry.usageInput !== undefined) {
+        footerParts.push(formatTurnCost(display.model, entry.usageInput, entry.usageOutput ?? 0));
+      }
+      if (entry.durationMs) footerParts.push(formatElapsed(entry.durationMs));
+    }
+    const restFitted = footerParts.length ? fitTuiText(footerParts.join(" · "), bodyWidth) : "";
 
     if (frame.bordered) {
       // The grouped style: a subtle surface plus a border frames the turn,
@@ -251,9 +262,12 @@ export function renderEntry(
       // column pressure the box collapses and paints its own border through the
       // message (PRIMITIVES.md).
       return (
-        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={tone} backgroundColor={PANEL_ALT} paddingX={1}>
-          {label ? <text fg={labelTone}>{label}</text> : null}
-          {body}
+        <box key={entry.id} width={maxWidth} flexDirection="row" justifyContent={isUser ? "flex-end" : "flex-start"} flexShrink={0} minWidth={0} marginTop={marginTop}>
+          <box flexDirection="column" width={messageWidth} flexShrink={0} minWidth={0} border borderColor={tone} backgroundColor={isUser ? PANEL_ALT : undefined} paddingX={1}>
+            {label ? <text fg={labelTone}>{label}</text> : null}
+            {body}
+            {restFitted ? <text fg={MUTED}>{restFitted}</text> : null}
+          </box>
         </box>
       );
     }
@@ -283,21 +297,6 @@ export function renderEntry(
       // cost under `showCost`, and the elapsed. The AUTONOMY MODE is NOT repeated
       // here — it is session-wide state already shown in the masthead and status
       // bar, so tagging every answer with "YOLO"/"Co-pilot" was redundant noise.
-      let restFitted = "";
-      if (!isUser) {
-        const footerParts: string[] = [];
-        if (display.modelInFooter && display.model) footerParts.push(display.model);
-        if (display.showTokenUsage && entry.usageInput !== undefined) {
-          footerParts.push(`${entry.usageInput}→${entry.usageOutput ?? 0} tok`);
-        }
-        if (display.showCost && entry.usageInput !== undefined) {
-          footerParts.push(formatTurnCost(display.model, entry.usageInput, entry.usageOutput ?? 0));
-        }
-        const elapsed = entry.durationMs ? formatElapsed(entry.durationMs) : "";
-        if (elapsed) footerParts.push(elapsed);
-        const footerBudget = Math.max(1, maxWidth - RAIL_CHROME);
-        restFitted = footerParts.length ? fitTuiText(footerParts.join(" · "), footerBudget) : "";
-      }
       return (
         <box key={entry.id} flexDirection="row" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop}>
           <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={spine} />
@@ -669,7 +668,7 @@ export function renderEntry(
   if (entry.kind === "error") {
     // Failures get the same rail treatment as speech, in the error tone: an
     // operator must be able to see at a glance that the turn did not produce an
-    // answer, and why. `bubble` frames it as a bordered ERROR block instead.
+    // answer, and why. Messenger frames it as a bordered ERROR block instead.
     const frame = speechFrame(transcriptStyle, "error", maxWidth);
     const marginTop = display.spacing + frame.extraMarginTop;
     if (frame.bordered) {
@@ -841,7 +840,7 @@ export function renderFold(
   // (its turn is not `activeTurn`) stays static muted, exactly as before. Gated
   // on BOTH the turn match and a numeric `shimmerFrame`, so reduceMotion /
   // settled turns keep the flat summary.
-  const summaryFitted = fitTuiText(summary, Math.max(1, maxWidth - 2));
+  const summaryFitted = fitTuiText(`${summary} · ${interaction?.onToggle ? "click or " : ""}ctrl+r to expand`, Math.max(1, maxWidth - 2));
   const shimmerFold =
     item.turn === display.activeTurn && typeof display.shimmerFrame === "number";
   // A collapsed fold is clickable: mousing down toggles its turn into the

@@ -81,8 +81,6 @@ export interface TuiSettings {
    * from the session's first message (chat-screen gates the pill on this).
    */
   showObjective: boolean;
-  /** Header "target: …" segment (chat-screen gates the header target on this). */
-  showTarget: boolean;
   /** Header "scope: …" segment (chat-screen gates the header scope on this). */
   showScope: boolean;
   /** Density of the transcript: "comfortable" adds blank lines. */
@@ -94,7 +92,7 @@ export interface TuiSettings {
   /** Let a subagent send a message to the operator's transcript (child→operator). */
   allowSubagentOperatorMessaging: boolean;
   /** How a conversation turn is framed. */
-  transcriptStyle: "rail" | "bubble" | "plain" | "compact" | "document";
+  transcriptStyle: "messenger" | "rail" | "plain" | "compact" | "document";
   /** How the speaker label is drawn. */
   roleLabelStyle: "full" | "short" | "glyph" | "off";
   /** How a tool/subagent call is drawn (failures always show). */
@@ -313,9 +311,9 @@ const DEFS: readonly TuiSettingDef[] = [
     key: "showRightSidebar",
     label: "Right sidebar",
     description:
-      "Right sidebar in the chat view: live agents (task, status, turns, findings) plus a context strip. Hidden on narrow terminals.",
+      "Right sidebar: live agents, their activity, the current plan and findings. Hidden on narrow terminals.",
     kind: "boolean",
-    default: false,
+    default: true,
     group: "Display",
   },
   {
@@ -336,17 +334,9 @@ const DEFS: readonly TuiSettingDef[] = [
     group: "Display",
   },
   {
-    key: "showTarget",
-    label: "Target",
-    description: 'Header "target: …" segment naming the host or app under assessment.',
-    kind: "boolean",
-    default: true,
-    group: "Display",
-  },
-  {
     key: "showScope",
     label: "Scope",
-    description: 'Header "scope: …" segment showing the boundary the run is confined to.',
+    description: "Show the configured multi-host scope and exclusions. An absent scope is distinct from an explicit empty scope.",
     kind: "boolean",
     default: true,
     group: "Display",
@@ -390,10 +380,10 @@ const DEFS: readonly TuiSettingDef[] = [
   {
     key: "transcriptStyle",
     label: "Transcript style",
-    description: "How a conversation turn is framed: rail, bubble, plain, compact or document.",
+    description: "Messenger right-aligns your messages. Rail, plain, compact and document offer alternative transcript layouts.",
     kind: "enum",
-    default: "rail",
-    choices: ["rail", "bubble", "plain", "compact", "document"],
+    default: "messenger",
+    choices: ["messenger", "rail", "plain", "compact", "document"],
     group: "Display",
   },
   {
@@ -475,7 +465,7 @@ const DEFS: readonly TuiSettingDef[] = [
     label: "Token usage",
     description: 'Per-turn "in→out tok" line under each answer.',
     kind: "boolean",
-    default: false,
+    default: true,
     group: "Telemetry",
   },
   {
@@ -483,7 +473,7 @@ const DEFS: readonly TuiSettingDef[] = [
     label: "Cost",
     description: "Estimated dollar cost, per turn and in the status bar.",
     kind: "boolean",
-    default: false,
+    default: true,
     group: "Telemetry",
   },
   {
@@ -491,7 +481,7 @@ const DEFS: readonly TuiSettingDef[] = [
     label: "Context meter",
     description: "Visual context-usage bar in the status bar.",
     kind: "boolean",
-    default: false,
+    default: true,
     group: "Telemetry",
   },
   {
@@ -569,16 +559,15 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showTurnSummary: false,
   showSubagents: true,
   showLeftSidebar: false,
-  showRightSidebar: false,
+  showRightSidebar: true,
   showTimestamps: false,
   showObjective: true,
-  showTarget: true,
   showScope: true,
   density: "comfortable",
   composerStyle: "border",
   allowSubagentPeerMessaging: true,
   allowSubagentOperatorMessaging: true,
-  transcriptStyle: "rail",
+  transcriptStyle: "messenger",
   roleLabelStyle: "full",
   toolCardStyle: "compact",
   richToolCards: true,
@@ -587,9 +576,9 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   allowModelSelfExtension: DEFAULT_ALLOW_MODEL_SELF_EXTENSION,
   autoEvolveFinderLenses: false,
   autoPromoteFinderLenses: false,
-  showTokenUsage: false,
-  showCost: false,
-  showContextMeter: false,
+  showTokenUsage: true,
+  showCost: true,
+  showContextMeter: true,
   modelDisplay: "statusbar",
   logoAnimation: "glitch",
   reduceMotion: false,
@@ -743,7 +732,9 @@ function rawValue(raw: unknown, key: string): unknown {
   // treating them as an empty bag is exactly the "fall back to defaults"
   // behaviour we want rather than a special case.
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-  return (raw as Record<string, unknown>)[key];
+  const value = (raw as Record<string, unknown>)[key];
+  // Migrate persisted pre-Messenger choices without retaining a second style.
+  return key === "transcriptStyle" && value === "bubble" ? "messenger" : value;
 }
 
 function booleanAt(raw: unknown, key: BooleanKey): boolean {
@@ -809,7 +800,6 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     showRightSidebar: booleanWithLegacy(raw, "showRightSidebar", "showAgentRail"),
     showTimestamps: booleanAt(raw, "showTimestamps"),
     showObjective: booleanAt(raw, "showObjective"),
-    showTarget: booleanAt(raw, "showTarget"),
     showScope: booleanAt(raw, "showScope"),
     density: enumAt(raw, "density"),
     composerStyle: enumAt(raw, "composerStyle"),

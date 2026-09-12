@@ -14,6 +14,16 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Messenger conversation framing and the Agents sidebar default on while saved
+  alternatives and explicit opt-outs remain effective. Clickable sidebar controls,
+  compact worker activity and a single configured-scope display preserve chat state.
+- `/copy` (`/export`, `/dump`) saves the complete public conversation as private
+  local JSON and attempts clipboard delivery. OSC52 delivery remains unverified.
+  `/impact` loads a saved finding into the current chat for evidence-qualified analysis.
+- Finding detail prioritizes title, severity and CVSS, with distinct evidence
+  sections. Endpoint metadata uses the same redacted request as the evidence body.
+- Context meters report unavailable when runtime window data is missing. Hosted
+  Cloud credit state remains separate from estimated model cost.
 - Cloud sign-in, BYOK credentials, and provider subscriptions are separate
   connection choices. Cancelling sign-in returns to the current conversation;
   changing the provider or model applies to the next chat. Login alone does not

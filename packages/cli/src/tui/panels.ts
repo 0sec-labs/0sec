@@ -324,9 +324,27 @@ export interface ScopePanelInput {
   target?: string;
   scopeRules: readonly string[];
   mode: string;
+  /** Supplied by live-console callers; omitted callers retain their existing presentation. */
+  scopeConfigured?: boolean;
+  outOfScope?: readonly string[];
 }
 
 export function buildScopePanel(input: ScopePanelInput): PanelData {
+  if (input.scopeConfigured !== undefined) {
+    const rows: PanelRow[] = [{ label: "mode", value: input.mode?.trim() || NOT_SET }];
+    if (!input.scopeConfigured) {
+      rows.push({ value: "No configured scope restrictions." });
+      rows.push({ value: "This display is not a grant of authorization. The current mode and tool policies still apply." });
+    } else {
+      rows.push({ value: "Include", heading: true });
+      if (input.scopeRules.length === 0) rows.push({ value: "Empty configured scope — deny all." });
+      for (const rule of input.scopeRules) rows.push({ value: rule });
+      rows.push({ value: "Exclude", heading: true });
+      for (const rule of input.outOfScope ?? []) rows.push({ value: rule });
+      if (!input.outOfScope?.length) rows.push({ value: "No exclusions configured." });
+    }
+    return { title: "Scope", rows };
+  }
   const rows: PanelRow[] = [
     { label: "target", value: input.target?.trim() ? input.target.trim() : NOT_SET },
     { label: "mode", value: input.mode?.trim() ? input.mode.trim() : NOT_SET },

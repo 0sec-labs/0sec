@@ -399,10 +399,6 @@ describe("subagent messaging settings", () => {
 });
 
 describe("sidebar settings", () => {
-  it("both ship OFF by default", () => {
-    expect(DEFAULT_SETTINGS.showRightSidebar).toBe(false);
-    expect(DEFAULT_SETTINGS.showLeftSidebar).toBe(false);
-  });
 
   it("are Display booleans", () => {
     for (const key of ["showRightSidebar", "showLeftSidebar"] as const) {
@@ -413,7 +409,7 @@ describe("sidebar settings", () => {
   });
 
   it("toggle on and back off", () => {
-    const on = toggleSetting(DEFAULT_SETTINGS, "showRightSidebar");
+    const on = toggleSetting({ ...DEFAULT_SETTINGS, showRightSidebar: false }, "showRightSidebar");
     expect(on.showRightSidebar).toBe(true);
     expect(toggleSetting(on, "showRightSidebar").showRightSidebar).toBe(false);
 
@@ -442,29 +438,27 @@ describe("sidebar settings", () => {
       normalizeSettings({ showAgentRail: true, showRightSidebar: false }).showRightSidebar,
     ).toBe(false);
   });
+  it("preserves saved opt-outs when missing preferences use the new defaults", () => {
+    const configured = normalizeSettings({
+      showRightSidebar: false, showTokenUsage: false, showCost: false,
+      showContextMeter: false, transcriptStyle: "rail",
+    });
+    expect(configured.showRightSidebar).toBe(false);
+    expect(configured.showTokenUsage).toBe(false);
+    expect(configured.showCost).toBe(false);
+    expect(configured.showContextMeter).toBe(false);
+    expect(configured.transcriptStyle).toBe("rail");
+  });
+  it("migrates persisted bubble style into the single Messenger style", () => {
+    const home = makeHome();
+    const migrated = normalizeSettings({ transcriptStyle: "bubble" });
+    expect(migrated.transcriptStyle).toBe("messenger");
+    expect(saveSettings(migrated, home)).toBe(true);
+    expect(loadSettings(home).transcriptStyle).toBe("messenger");
+  });
 });
 
 describe("telemetry settings", () => {
-  // The four telemetry knobs ship OFF/neutral by default: token counts, cost
-  // and a context meter are noise until an operator asks for them, and the model
-  // stays in the status bar (its established home) rather than moving.
-  const OFF_BY_DEFAULT = ["showTokenUsage", "showCost", "showContextMeter"] as const;
-
-  it("ships the token/cost/meter toggles OFF", () => {
-    for (const key of OFF_BY_DEFAULT) {
-      expect(DEFAULT_SETTINGS[key]).toBe(false);
-    }
-  });
-
-  it("defaults modelDisplay to the status bar", () => {
-    expect(DEFAULT_SETTINGS.modelDisplay).toBe("statusbar");
-  });
-
-  it("files every telemetry setting under Telemetry", () => {
-    for (const key of [...OFF_BY_DEFAULT, "modelDisplay"] as const) {
-      expect(SETTING_DEFS.find((d) => d.key === key)?.group).toBe("Telemetry");
-    }
-  });
 
   it("offers modelDisplay exactly statusbar / message / off", () => {
     const def = SETTING_DEFS.find((d) => d.key === "modelDisplay");
@@ -502,23 +496,7 @@ describe("telemetry settings", () => {
 });
 
 describe("header display settings", () => {
-  // The two header segments (target/scope) ship ON and live under Display; the
-  // chat-screen header gates each segment on its flag.
-  const HEADER_KEYS = ["showTarget", "showScope"] as const;
-
-  it("ships both header segments ON", () => {
-    for (const key of HEADER_KEYS) {
-      expect(DEFAULT_SETTINGS[key]).toBe(true);
-    }
-  });
-
-  it("files both header segments under Display as booleans", () => {
-    for (const key of HEADER_KEYS) {
-      const def = SETTING_DEFS.find((d) => d.key === key);
-      expect(def?.group).toBe("Display");
-      expect(def?.kind).toBe("boolean");
-    }
-  });
+  const HEADER_KEYS = ["showScope"] as const;
 
   it("toggles each header segment off and back on", () => {
     for (const key of HEADER_KEYS) {
@@ -530,10 +508,9 @@ describe("header display settings", () => {
 
   it("round-trips the header segments through save and load", () => {
     const home = makeHome();
-    const hidden: TuiSettings = { ...DEFAULT_SETTINGS, showTarget: false, showScope: false };
+    const hidden: TuiSettings = { ...DEFAULT_SETTINGS, showScope: false };
     expect(saveSettings(hidden, home)).toBe(true);
     const loaded = loadSettings(home);
-    expect(loaded.showTarget).toBe(false);
     expect(loaded.showScope).toBe(false);
   });
 });

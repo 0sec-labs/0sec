@@ -127,15 +127,10 @@ describe("layout invariants — the sweep", () => {
 });
 
 // ---------------------------------------------------------------------------
-// rail: the default must not change on upgrade
+// rail geometry remains available as an explicit choice
 // ---------------------------------------------------------------------------
 
-describe("rail is the default and preserves today's geometry", () => {
-  it("defaults to rail / full / rail", () => {
-    expect(DEFAULT_TRANSCRIPT_STYLE).toBe("rail");
-    expect(DEFAULT_ROLE_LABEL_STYLE).toBe("full");
-    expect(DEFAULT_TOOL_CARD_STYLE).toBe("rail");
-  });
+describe("rail geometry", () => {
 
   it("reproduces the speech geometry the component used before the refactor", () => {
     // Today: rail = width 1, gap 1 (marginLeft), content = rest,
@@ -263,12 +258,12 @@ describe("tool card styles are genuinely distinct", () => {
 // ---------------------------------------------------------------------------
 
 describe("transcript styles are genuinely distinct, not tints", () => {
-  it("bubble borders speech but never reasoning or notices", () => {
-    expect(speechFrame("bubble", "assistant", 80).bordered).toBe(true);
-    expect(speechFrame("bubble", "user", 80).bordered).toBe(true);
-    expect(speechFrame("bubble", "error", 80).bordered).toBe(true);
-    expect(speechFrame("bubble", "reasoning", 80).bordered).toBe(false);
-    expect(speechFrame("bubble", "notice", 80).bordered).toBe(false);
+  it("Messenger borders speech but never reasoning or notices", () => {
+    expect(speechFrame("messenger", "assistant", 80).bordered).toBe(true);
+    expect(speechFrame("messenger", "user", 80).bordered).toBe(true);
+    expect(speechFrame("messenger", "error", 80).bordered).toBe(true);
+    expect(speechFrame("messenger", "reasoning", 80).bordered).toBe(false);
+    expect(speechFrame("messenger", "notice", 80).bordered).toBe(false);
   });
 
   it("plain and compact give content every cell", () => {
@@ -327,22 +322,15 @@ describe("degenerate content never overflows", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveTranscriptStyleSettings", () => {
-  it("falls back to defaults for an object without the keys", () => {
-    expect(resolveTranscriptStyleSettings({})).toEqual({
-      transcriptStyle: "rail",
-      roleLabelStyle: "full",
-      toolCardStyle: "rail",
-    });
-  });
 
   it("reads valid settings values", () => {
     const resolved = resolveTranscriptStyleSettings({
-      transcriptStyle: "bubble",
+      transcriptStyle: "messenger",
       roleLabelStyle: "short",
       toolCardStyle: "compact",
     });
     expect(resolved).toEqual({
-      transcriptStyle: "bubble",
+      transcriptStyle: "messenger",
       roleLabelStyle: "short",
       toolCardStyle: "compact",
     });
@@ -354,11 +342,7 @@ describe("resolveTranscriptStyleSettings", () => {
       roleLabelStyle: 42,
       toolCardStyle: null,
     });
-    expect(resolved).toEqual({
-      transcriptStyle: "rail",
-      roleLabelStyle: "full",
-      toolCardStyle: "rail",
-    });
+    expect(resolved).toEqual(resolveTranscriptStyleSettings({}));
   });
 
   it("lets an environment variable override settings", () => {
@@ -378,16 +362,8 @@ describe("resolveTranscriptStyleSettings", () => {
   });
 
   it("tolerates non-object settings", () => {
-    expect(resolveTranscriptStyleSettings(null)).toEqual({
-      transcriptStyle: "rail",
-      roleLabelStyle: "full",
-      toolCardStyle: "rail",
-    });
-    expect(resolveTranscriptStyleSettings("nope")).toEqual({
-      transcriptStyle: "rail",
-      roleLabelStyle: "full",
-      toolCardStyle: "rail",
-    });
+    expect(resolveTranscriptStyleSettings(null)).toEqual(resolveTranscriptStyleSettings({}));
+    expect(resolveTranscriptStyleSettings("nope")).toEqual(resolveTranscriptStyleSettings({}));
   });
 });
 

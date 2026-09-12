@@ -229,7 +229,10 @@ function speechTurnBlock(
   roleStyle: TuiSettings["roleLabelStyle"],
   width: number,
 ): PreviewBlock {
-  const frame = speechFrame(style, kind, width);
+  const messageWidth = style === "messenger" && kind === "user" && width >= 32
+    ? Math.floor(width * 0.85)
+    : width;
+  const frame = speechFrame(style, kind, messageWidth);
   const label = roleLabelText(kind, roleStyle);
   const body = kind === "user" ? OPERATOR_LINE : ASSISTANT_LINE;
   const toneOf = (t: Theme) => (kind === "user" ? t.ACCENT : t.PRIMARY);
@@ -240,9 +243,10 @@ function speechTurnBlock(
       key,
       rows,
       render: (theme) => (
+        <box width={width} flexDirection="row" justifyContent={kind === "user" ? "flex-end" : "flex-start"} flexShrink={0}>
         <box
           flexDirection="column"
-          width={width}
+          width={messageWidth}
           flexShrink={0}
           minWidth={0}
           border
@@ -257,6 +261,7 @@ function speechTurnBlock(
           <Cells width={frame.contentWidth} fg={theme.TEXT}>
             {body}
           </Cells>
+        </box>
         </box>
       ),
     };

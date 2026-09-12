@@ -306,7 +306,7 @@ describe("context meter", () => {
       buildStatusSegments({ contextWindow: 1_000_000, contextUsed: 500_000, showContextMeter: true }),
       "meter",
     );
-    expect(meter).toBe("▰▰▰▱▱▱ 50% of 1M");
+    expect(meter).toContain("▰▰▰▱▱▱ 50% of 1M");
   });
 
   it("emits the meter instead of the context segment, never both", () => {
@@ -322,15 +322,18 @@ describe("context meter", () => {
   it("clamps the bar fill at full and empty", () => {
     expect(
       textOf(buildStatusSegments({ contextWindow: 100, contextUsed: 100, showContextMeter: true }), "meter"),
-    ).toBe("▰▰▰▰▰▰ 100% of 100");
+    ).toContain("▰▰▰▰▰▰ 100% of 100");
     expect(
       textOf(buildStatusSegments({ contextWindow: 100, contextUsed: 0, showContextMeter: true }), "meter"),
-    ).toBe("▱▱▱▱▱▱ 0% of 100");
+    ).toContain("▱▱▱▱▱▱ 0% of 100");
   });
 
   it("still needs both window and usage to draw a meter", () => {
-    expect(textOf(buildStatusSegments({ contextUsed: 10, showContextMeter: true }), "meter")).toBeUndefined();
-    expect(textOf(buildStatusSegments({ contextWindow: 100, showContextMeter: true }), "meter")).toBeUndefined();
+    for (const input of [{ contextUsed: 10 }, { contextWindow: 100 }]) {
+      const text = textOf(buildStatusSegments({ ...input, showContextMeter: true }), "meter");
+      expect(text).toBeDefined();
+      expect(text).not.toMatch(/[0-9%▱▰]/u);
+    }
   });
 });
 

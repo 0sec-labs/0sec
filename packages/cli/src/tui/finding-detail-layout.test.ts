@@ -284,19 +284,31 @@ describe("buildFindingRows", () => {
       )
       .join("\n");
     expect(flat).toContain("Reflected XSS");
-    // Severity is carried by the header badge, not a key/value row.
+    // Severity is an explicit kv row near the top.
+    expect(flat).toContain("Severity:");
     expect(flat).toContain("HIGH");
+    // CVSS is near the top, before evidence.
+    const cvssIdx = flat.indexOf("CVSS");
+    const evIdx = flat.indexOf("Evidence");
+    expect(cvssIdx).toBeGreaterThan(0);
+    expect(evIdx).toBeGreaterThan(cvssIdx);
     expect(flat).toContain("src/search.ts:12-18");
-    expect(flat).toContain("CVSS");
     expect(flat).toContain("https://owasp.org/xss");
-    // The header badge is painted red for a high finding.
-    const headerRow = rows.find((r) => r.kind === "header");
-    expect(headerRow && headerRow.kind === "header" && headerRow.badgeTone).toBe("error");
-    expect(headerRow && headerRow.kind === "header" && headerRow.badge).toBe("HIGH");
+    // Endpoint extracted from evidence.request first line.
+    expect(flat).toContain("Endpoint:");
+    expect(flat).toContain("GET /search?q=");
+    // Severity row is painted red for a high finding.
+    const sevRow = rows.find((r) => r.kind === "kv" && r.label.includes("Severity"));
+    expect(sevRow && sevRow.kind === "kv" && sevRow.tone).toBe("error");
+    expect(sevRow && sevRow.kind === "kv" && sevRow.value).toBe("HIGH");
   });
 
-  it("routes raw evidence through the injected redactor", () => {
-    const rows = buildFindingRows(SAMPLE, 200, {
+  it("redacts raw evidence and metadata derived from its first line", () => {
+    const finding = {
+      ...SAMPLE,
+      evidence: { ...SAMPLE.evidence, request: "Authorization: Bearer abcdef123456\nGET /search HTTP/1.1" },
+    };
+    const rows = buildFindingRows(finding, 200, {
       redact: (t) => t.replace(/Bearer \S+/g, "Bearer <REDACTED>"),
     });
     const flat = rows.map((r) => (r.kind === "text" ? r.text : "")).join("\n");
@@ -355,23 +367,25 @@ describe("paneTitleColumns (finding-detail)", () => {
   });
 });
 
-describe("buildFindingRows — the strong header", () => {
-  it("leads with a header row carrying the title and a severity badge", () => {
+describe("buildFindingRows — the title and severity hierarchy", () => {
+  it("leads with a wrapped title row then a severity kv row", () => {
     const rows = buildFindingRows(SAMPLE, 60);
-    expect(rows[0].kind).toBe("header");
-    const header = rows[0];
-    if (header.kind !== "header") throw new Error("expected a header row");
-    expect(header.title).toContain("Reflected XSS");
-    expect(header.badge).toBe("HIGH");
-    expect(header.badgeTone).toBe("error"); // red reserved for critical/high
-    // Severity is no longer duplicated as a key/value row.
-    expect(rows.some((r) => r.kind === "kv" && r.label === "Severity")).toBe(false);
+    // First row: wrapped title as text
+    expect(rows[0].kind).toBe("text");
+    expect(rows[0].kind === "text" && rows[0].text).toContain("Reflected XSS");
+    // Second row: severity as a key/value row.
+    expect(rows[1].kind).toBe("kv");
+    const sev = rows[1];
+    if (sev.kind !== "kv") throw new Error("expected kv row");
+    expect(sev.label).toContain("Severity");
+    expect(sev.value).toBe("HIGH");
+    expect(sev.tone).toBe("error"); // red reserved for critical/high
   });
 
-  it("shows an em-dash badge for a finding with no severity", () => {
+  it("shows an em-dash for severity when the finding has none", () => {
     const rows = buildFindingRows({ id: "F-1", title: "No sev" } as Finding, 60);
-    const header = rows[0];
-    if (header.kind !== "header") throw new Error("expected a header row");
-    expect(header.badge).toBe("—");
+    const sev = rows.find((r) => r.kind === "kv" && r.label.includes("Severity"));
+    expect(sev).toBeDefined();
+    expect(sev && sev.kind === "kv" && sev.value).toBe("—");
   });
 });

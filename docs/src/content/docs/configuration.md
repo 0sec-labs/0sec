@@ -295,6 +295,8 @@ Settings are resolved per-key, highest-priority first:
 
 On load, settings are normalized against the schema: unknown keys are dropped
 and invalid values reset to defaults. Saving writes the normalized object.
+Persisted `bubble` framing migrates to `messenger`. Other saved styles and
+explicit off settings remain effective.
 
 ### Security-gated import
 
@@ -311,13 +313,12 @@ changes are printed so you know what was rejected.
 | `showComposerHints` | boolean | `true` | Keyboard-hint line under the input |
 | `showLogo` | boolean | `true` | Block `0SEC` mark on an empty transcript |
 | `showLeftSidebar` | boolean | `false` | Recent sessions and this run's findings; hidden on narrow terminals |
-| `showRightSidebar` | boolean | `false` | Live agents and context strip; hidden on narrow terminals |
-| `showObjective` | boolean | `true` | Bottom-bar objective derived from the first message |
-| `showTarget` | boolean | `true` | Header target segment |
-| `showScope` | boolean | `true` | Header scope segment |
+| `showRightSidebar` | boolean | `true` | Live agents, activity, plan and findings; hidden on narrow terminals |
+| `showObjective` | boolean | `true` | Header objective derived from the first message |
+| `showScope` | boolean | `true` | Header include/exclude scope; absent and explicitly empty scope remain distinct |
 | `density` | `comfortable`, `compact` | `comfortable` | Transcript spacing |
 | `composerStyle` | `border`, `rail`, `plain` | `border` | Input frame |
-| `transcriptStyle` | `rail`, `bubble`, `plain`, `compact`, `document` | `rail` | Conversation-turn framing |
+| `transcriptStyle` | `messenger`, `rail`, `plain`, `compact`, `document` | `messenger` | Right-aligned operator messages and left-aligned answers, with alternative layouts |
 | `roleLabelStyle` | `full`, `short`, `glyph`, `off` | `full` | Speaker label treatment |
 | `toolCardStyle` | `compact`, `rail`, `inline`, `hidden` | `compact` | Successful tool/subagent-card treatment; failures always show |
 | `richToolCards` | boolean | `true` | Render shell and edit results as rich cards |
@@ -330,9 +331,9 @@ changes are printed so you know what was rejected.
 | `allowSubagentOperatorMessaging` | boolean | `true` | Allow sanitized child-to-operator transcript messages |
 | `allowModelSelfExtension` | boolean | `true` | Enable sandboxed model self-extension for new sessions, subject to role and capability gates |
 | `theme` | built-in or installed theme ID | `midnight` | Colour palette; installed themes live in `~/.0sec/themes` |
-| `showTokenUsage` | boolean | `false` | Per-turn input/output token line |
-| `showCost` | boolean | `false` | Estimated dollar cost, per turn and in the status bar |
-| `showContextMeter` | boolean | `false` | Context-usage bar in the status bar |
+| `showTokenUsage` | boolean | `true` | Per-turn input/output token line |
+| `showCost` | boolean | `true` | Estimated dollar cost, per turn and in the status bar |
+| `showContextMeter` | boolean | `true` | Context-usage bar; missing context-window data displays unavailable |
 | `modelDisplay` | `statusbar`, `message`, `off` | `statusbar` | Where the model name appears |
 | `logoAnimation` | animation name or `off` | `glitch` | Intro or idle logo effect |
 | `reduceMotion` | boolean | `false` | Disable decorative animations |

@@ -158,6 +158,22 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     tuiOnly: true,
   },
   {
+    name: "impact",
+    aliases: [],
+    category: "session",
+    description: "Explain a finding's business impact and evidence-qualified potential chains",
+    usage: "/impact [finding-id]",
+    tuiOnly: true,
+  },
+  {
+    name: "copy",
+    aliases: ["export", "dump"],
+    category: "session",
+    description: "Copy the complete public conversation and save private local JSON",
+    usage: "/copy",
+    tuiOnly: true,
+  },
+  {
     name: "replay",
     aliases: [],
     category: "session",

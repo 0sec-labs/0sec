@@ -7,7 +7,7 @@
  * in the transcript instead of the single `density` knob. This module is the
  * answer: it turns three orthogonal choices —
  *
- *   - `transcriptStyle`  — how a *speaking turn* is framed (rail/bubble/…)
+ *   - `transcriptStyle`  — how a *speaking turn* is framed
  *   - `roleLabelStyle`   — how the "who said this" label is drawn
  *   - `toolCardStyle`    — how a tool/subagent call is drawn
  *
@@ -24,8 +24,8 @@
  * `flexShrink = (hasExplicitNumericWidth || hasExplicitNumericHeight) ? 0 : 1`,
  * and a percentage string is not a number, so a bordered box under column
  * pressure collapses and paints its own border through its content (the
- * `bubble` style is exactly that shape). The cure, proven for the header rows
- * in `chat-layout.ts`, is to compute every width as a pure function swept by a
+ * bordered Messenger style has exactly that shape). The cure is to compute
+ * every width as a pure function swept by a
  * test — "a row never claims more cells than its container" becomes a unit
  * test instead of a code review. `PRIMITIVES.md` is the long version.
  *
@@ -46,10 +46,8 @@ import { sanitizeTuiText } from "./text.js";
  * How a speaking turn (user / assistant / error / reasoning / notice) is
  * framed. These are genuinely different shapes, not tints:
  *
- *  - `rail`     — today's look, preserved byte-for-byte: a 1-cell coloured
- *                 rail down the left of each turn. The default, so no console
- *                 changes on upgrade.
- *  - `bubble`   — each turn in its own bordered block, a chat-client feel.
+ *  - `messenger` — right-aligned operator messages and left-aligned answers.
+ *  - `rail`     — a 1-cell coloured rail down the left of each turn.
  *  - `plain`    — no rails, no borders; the role is a short coloured prefix
  *                 and the content gets every remaining cell. Densest reading.
  *  - `compact`  — one row per turn wherever the content allows; the label is
@@ -57,7 +55,7 @@ import { sanitizeTuiText } from "./text.js";
  *  - `document` — generous whitespace and full-width markdown so a long
  *                 analysis reads like a document rather than a chat log.
  */
-export const TRANSCRIPT_STYLES = ["rail", "bubble", "plain", "compact", "document"] as const;
+export const TRANSCRIPT_STYLES = ["messenger", "rail", "plain", "compact", "document"] as const;
 export type TranscriptStyle = (typeof TRANSCRIPT_STYLES)[number];
 
 /**
@@ -83,7 +81,7 @@ export type RoleLabelStyle = (typeof ROLE_LABEL_STYLES)[number];
 export const TOOL_CARD_STYLES = ["rail", "inline", "compact", "hidden"] as const;
 export type ToolCardStyle = (typeof TOOL_CARD_STYLES)[number];
 
-export const DEFAULT_TRANSCRIPT_STYLE: TranscriptStyle = "rail";
+export const DEFAULT_TRANSCRIPT_STYLE: TranscriptStyle = "messenger";
 export const DEFAULT_ROLE_LABEL_STYLE: RoleLabelStyle = "full";
 export const DEFAULT_TOOL_CARD_STYLE: ToolCardStyle = "rail";
 
@@ -383,7 +381,7 @@ export function speechFrame(
   // A bordered block needs at least one inner cell; on a pane too narrow to
   // hold the border chrome it degrades to the plain framing rather than paint
   // a border with nothing inside it.
-  if (style === "bubble" && !isReasoning && !isNotice && width - BORDER_CHROME >= 1) {
+  if (style === "messenger" && !isReasoning && !isNotice && width - BORDER_CHROME >= 1) {
     // Inner content is width - (2 borders + 2 padding).
     const inner = clampWidth(width - BORDER_CHROME);
     return {
@@ -666,7 +664,7 @@ export function toolCompactLine(
 
 /**
  * Geometry for a bordered rich tool card (command or edit). Mirrors the
- * `bubble` speech-frame discipline: the card is a bordered box that spends
+ * Messenger speech-frame discipline: the card is a bordered box that spends
  * {@link BORDER_CHROME} cells on chrome (two borders + one pad each side), so
  * its INNER width is `maxWidth - 4`, floored at 0. Below the chrome cost the
  * card cannot render and degrades to the caller's fallback (the plain line).
