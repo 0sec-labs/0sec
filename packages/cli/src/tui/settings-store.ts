@@ -36,6 +36,7 @@
 import { useSyncExternalStore } from "react";
 
 import {
+  isOperatorSetting,
   loadLayeredSettings,
   normalizeSettings,
   projectSettingsExist,
@@ -173,7 +174,9 @@ export function updateSetting<K extends keyof TuiSettings>(
   value: TuiSettings[K],
   opts: { scope?: Exclude<SettingLayer, "default"> } = {},
 ): boolean {
-  const layer = opts.scope ?? defaultWriteLayer();
+  const operatorOnly = isOperatorSetting(key);
+  if (operatorOnly && opts.scope === "project") return false;
+  const layer = operatorOnly ? "global" : opts.scope ?? defaultWriteLayer();
 
   if (layer === "global") {
     return setSettings({ ...getSettings(), [key]: value });

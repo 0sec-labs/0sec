@@ -212,6 +212,7 @@ const publishPkg = {
   dependencies: {
     "drizzle-orm": rootPkg.dependencies["drizzle-orm"],
     "node-sqlite3-wasm": rootPkg.dependencies["node-sqlite3-wasm"],
+    "pdfkit": rootPkg.dependencies.pdfkit,
     "tree-sitter": rootPkg.dependencies["tree-sitter"],
     "tree-sitter-c": rootPkg.dependencies["tree-sitter-c"],
     "@opentui/core": cliPkg.dependencies["@opentui/core"],

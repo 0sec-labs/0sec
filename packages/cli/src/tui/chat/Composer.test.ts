@@ -53,6 +53,11 @@ describe("wrapComposerInput", () => {
     expect(concatEquals("nowhitespaceatallhere", 6)).toBe(true);
   });
 
+  it("wraps wide characters by terminal cells without splitting joined emoji", () => {
+    expect(wrapComposerInput("漢字👩‍💻ab", 4)).toEqual(["漢字", "👩‍💻ab"]);
+    expect(wrapComposerInput("e\u0301e\u0301e\u0301", 2)).toEqual(["e\u0301e\u0301", "e\u0301"]);
+  });
+
   it("is total on degenerate widths", () => {
     expect(wrapComposerInput("abc", 0)).toEqual(["a", "b", "c"]);
     expect(wrapComposerInput("", 10)).toEqual([""]);
@@ -63,6 +68,10 @@ describe("composerContentRows", () => {
   it("spills the cursor onto a fresh row when the last row is full", () => {
     const rows = composerContentRows("abcd", 4);
     expect(rows).toEqual(["abcd", ""]);
+  });
+
+  it("reserves the cursor cell after a full row of wide characters", () => {
+    expect(composerContentRows("漢字", 4)).toEqual(["漢字", ""]);
   });
 
   it("caps the visible rows at COMPOSER_MAX_ROWS, keeping the newest", () => {

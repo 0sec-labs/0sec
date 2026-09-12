@@ -82,7 +82,7 @@ export interface StatusSegment {
    */
   colorRole: StatusColorRole;
   /**
-   * A small single-cell glyph shown before the pill's text, or "" for none.
+   * A leading glyph whose terminal-cell width matches its UTF-16 length, or "" for none.
    * Additive: it never appears in the plain `fitStatusSegments` string, only in
    * the pill renderer's per-segment cells (`fitStatusPills`).
    */
@@ -108,6 +108,8 @@ export interface StatusBarInput {
   outputTokens?: number;
   /** Cumulative cached-input tokens, for a more accurate cost estimate. */
   cachedInputTokens?: number;
+  /** Show raw token totals; independent of the optional cost estimate. */
+  showTokenUsage?: boolean;
   /**
    * Total context window in tokens. When omitted, NO context segment is
    * produced — the percentage must never be invented.
@@ -192,24 +194,22 @@ const ORDER: StatusSegmentKind[] = [
 ];
 
 /**
- * The pill glyph for each segment, one cell each (measured as one column by
- * `fitTuiText`, which counts JS characters — the whole TUI's width model). "" is
- * a segment the renderer draws with no leading glyph. Kept beside `ORDER` so a
- * new kind is a compile error until it has both an icon and a colour role.
+ * OMP-style Nerd Font BMP glyphs. Their width is included in the status-row
+ * budget alongside the label.
  */
 const ICON: Record<StatusSegmentKind, string> = {
-  model: "◆",
-  effort: "◇",
-  mode: "●",
+  model: "\uec19",
+  effort: "\uee9c",
+  mode: "\uf14e",
   evolution: "",
-  cwd: "▸",
-  branch: "⎇",
+  cwd: "\uf115",
+  branch: "\uf126",
   dirty: "±",
-  tokens: "◈",
-  cost: "$",
-  context: "◔",
-  meter: "◔",
-  plan: "◦",
+  tokens: "\ue26b",
+  cost: "\uf155",
+  context: "\ue70f",
+  meter: "\ue70f",
+  plan: "\uf2d2",
 };
 
 /** Semantic colour role per kind; the meter shares the plain percent's role. */
@@ -410,7 +410,7 @@ export function buildStatusSegments(input: StatusBarInput): StatusSegment[] {
   // arrive as zero and both mean the same thing on screen: show nothing.
   const inputTokens = positiveCount(input.inputTokens);
   const outputTokens = positiveCount(input.outputTokens);
-  if (inputTokens + outputTokens > 0) {
+  if (input.showTokenUsage !== false && inputTokens + outputTokens > 0) {
     // "in/out", matching the counter the sidebar already renders.
     texts.set("tokens", `${formatTokenCount(inputTokens)}/${formatTokenCount(outputTokens)}`);
   }

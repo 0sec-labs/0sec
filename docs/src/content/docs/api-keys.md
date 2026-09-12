@@ -260,11 +260,11 @@ into `0SEC_CHATGPT_*` env vars if no token is present. A logged-in `codex`
 session takes priority over stale `AZURE_OPENAI_API_KEY` / `OPENAI_API_KEY`
 left in a dev shell.
 
-In OpenTUI chat, run `/providers` (or `/connect`) and choose **ChatGPT
-Codex**. 0sec runs the official `codex login --device-auth` lifecycle, streams
-the device instructions in the pane, and reloads `~/.codex/auth.json` only
-after success. It never asks for an OpenAI API key or a pasted OAuth token.
-Choose **OpenAI** separately when you want `OPENAI_API_KEY` direct API access.
+In the hosted-enabled CLI candidate, open `/connect` and select **ChatGPT
+Codex** under **Provider subscription**. 0sec runs `codex login --device-auth`,
+shows the device instructions, and reloads `~/.codex/auth.json` after success.
+Choose **OpenAI** under **Use my own API key** for `OPENAI_API_KEY` access.
+The separate **0sec Cloud → Sign in** choice authorizes a Cloud organization.
 
 Every `0sec` run loads that file into the environment before any subcommand
 runs, so a codex-login file is picked up everywhere — the console `/providers`
@@ -275,9 +275,9 @@ load (for example, embedded in a custom tool) shows "not configured".
 
 ## Console credential store
 
-Run `/providers` to select an API-key provider and enter its key. ChatGPT Codex
-uses device OAuth and its auth file. Each API-key row reports `configured via
-<VAR>` or `not configured` from the environment.
+In `/connect`, choose **Use my own API key**, select a provider and enter its
+key. ChatGPT Codex has a separate subscription sign-in. Local, BYOK and
+provider-subscription workflows need no Cloud account.
 
 Keys are written to `credentials.json` in the [state
 directory](/configuration/#state-directory) (`~/.0sec/` by default), re-tightened
@@ -294,6 +294,8 @@ The `/model` picker starts with curated models; **Tab** opens the full catalog.
 Check credentials and account access before use. The detail pane shows setup
 hints and credential sources; unknown prices appear as `—`.
 Use `/connect` to add credentials and `/providers` to inspect them.
+In the hosted-enabled CLI candidate, connection and model changes take effect
+with `/new-chat` when a runtime already exists; they leave the current chat intact.
 
 ## When to use OpenRouter
 

@@ -121,3 +121,33 @@ describe("CloudClient — token never leaks", () => {
     expect((caught as Error).message).toContain("[REDACTED]");
   });
 });
+
+describe("CloudClient credit availability", () => {
+  it("does not invent percentages from a legacy dollar balance or raw credit totals", async () => {
+    let response: Record<string, unknown> = { remainingUsd: 50, currency: "USD" };
+    const client = new CloudClient({ host: HOST, token: SECRET, fetchImpl: async () => jsonResponse(response) });
+    expect((await client.getInferenceAccount()).credits).toBeNull();
+    response = { ...response, credits: {
+      featureId: "inference_credits", granted: 100, remaining: 50, remainingPercent: null, nextResetAt: null,
+    } };
+    expect((await client.getInferenceAccount()).credits?.remainingPercent).toBeNull();
+  });
+
+  it("preserves exhaustion and rejects malformed service percentages instead of displaying them", async () => {
+    const credits: Record<string, unknown> = {
+      featureId: "inference_credits", granted: 100, remaining: 0, remainingPercent: 0, nextResetAt: null,
+    };
+    const client = new CloudClient({
+      host: HOST, token: SECRET,
+      fetchImpl: async () => jsonResponse({ remainingUsd: 0, currency: "USD", credits }),
+    });
+    expect((await client.getInferenceAccount()).credits?.remainingPercent).toBe(0);
+    credits.remainingPercent = "75";
+    expect((await client.getInferenceAccount()).credits?.remainingPercent).toBeNull();
+    credits.remainingPercent = 101;
+    expect((await client.getInferenceAccount()).credits?.remainingPercent).toBeNull();
+    credits.remainingPercent = 75;
+    credits.granted = 0;
+    expect((await client.getInferenceAccount()).credits?.remainingPercent).toBeNull();
+  });
+});

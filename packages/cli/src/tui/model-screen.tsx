@@ -359,18 +359,18 @@ export function ModelScreen({
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
       <Cells width={contentWidth} fg={theme.ACCENT}>
-        {`${showAll ? "All models" : "Curated models"} · ${items.length} of ${scopedCatalog.length} · Tab ${showAll ? "curated" : "all models"}${refreshing ? " · refreshing…" : ""}`}
+        {`\uec19 New chat model · ${showAll ? "All" : "Curated"} · ${items.length}/${scopedCatalog.length}${refreshing ? " ⟳" : ""}`}
       </Cells>
       <DialogSelectBody
         items={items}
         cursor={cursor}
         panel={panel}
         query={filter}
-        placeholder="Search by model or provider"
+        placeholder={"\uf002 Find a model or provider"}
         gutter
         isCurrent={(item) => item.current === true}
         renderDetail={renderDetail}
-        emptyText={showAll ? "No matches. Ctrl+U clears search." : "No matches. Tab searches all models; Ctrl+U clears."}
+        emptyText={showAll ? "\uf002 No matches — Ctrl+U clears" : "\uf002 No matches — Tab to browse all models"}
       />
       <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>
         <Cells width={contentWidth} fg={theme.MUTED}>

@@ -30,8 +30,8 @@
  * round-trip exercises the production persistence path.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Finding } from "@0sec/shared";
@@ -121,6 +121,19 @@ const { runPipeline } = await import("./unified-pipeline.js");
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const tempDirs: string[] = [];
+let schemaDirectory: string;
+let schemaPath: string;
+
+beforeAll(() => {
+  schemaDirectory = mkdtempSync(join(tmpdir(), "0sec-verify-resume-schema-"));
+  schemaPath = join(schemaDirectory, "empty.db");
+  const db = new osecDB(schemaPath);
+  db.close();
+});
+
+afterAll(() => {
+  if (schemaDirectory) rmSync(schemaDirectory, { recursive: true, force: true });
+});
 
 function freshTmpDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), `0sec-verify-resume-${prefix}-`));
@@ -129,7 +142,10 @@ function freshTmpDir(prefix: string): string {
 }
 
 function freshDbPath(): string {
-  return join(freshTmpDir("db"), "0sec.db");
+  const dbPath = join(freshTmpDir("db"), "0sec.db");
+  // Reuse only the empty schema; verdicts still cross real file close/reopens.
+  copyFileSync(schemaPath, dbPath);
+  return dbPath;
 }
 
 function fakeInstalledPackage(name: string, version: string) {
@@ -243,7 +259,7 @@ describe("runPipeline — verify resume (#416 Bug A + Bug B)", () => {
     // the verify wave, proving Bug A's saveFinding round-trip happened.
     // The pipeline doesn't bubble scanId out, so we enumerate via
     // listScans() and assert directly against the findings table.
-    const probe = new osecDB(dbPath);
+    const probe = new osecDB(dbPath, { readOnly: true });
     const scans = probe.listScans();
     const scanId = scans[0]!.id;
     const persistedRows = probe.getFindings(scanId);
@@ -312,7 +328,7 @@ describe("runPipeline — verify resume (#416 Bug A + Bug B)", () => {
       dbPath,
     });
 
-    const probe = new osecDB(dbPath);
+    const probe = new osecDB(dbPath, { readOnly: true });
     const scanId = probe.listScans()[0]!.id;
     probe.close();
 
@@ -372,7 +388,7 @@ describe("runPipeline — verify resume (#416 Bug A + Bug B)", () => {
       dbPath,
     });
 
-    const probe = new osecDB(dbPath);
+    const probe = new osecDB(dbPath, { readOnly: true });
     const scanId = probe.listScans()[0]!.id;
     const initialRows = probe.getFindings(scanId);
     probe.close();
@@ -398,7 +414,7 @@ describe("runPipeline — verify resume (#416 Bug A + Bug B)", () => {
     });
 
     // Re-fetch from disk; verdicts should be unchanged after the resume.
-    const probe2 = new osecDB(dbPath);
+    const probe2 = new osecDB(dbPath, { readOnly: true });
     const afterResumeRows = probe2.getFindings(scanId);
     probe2.close();
     expect(afterResumeRows).toHaveLength(2);

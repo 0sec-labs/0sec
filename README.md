@@ -1,27 +1,29 @@
 <p align="center">
   <a href="https://0.security/harness/">
-    <img src="assets/readme-cover.png" alt="Your self-improving cybersecurity team. An ivory paper sculpture with a crimson edge." width="100%">
+    <img src="https://raw.githubusercontent.com/0sec-labs/0sec/main/assets/readme-cover.png" alt="Your self-improving cybersecurity team. An ivory paper sculpture with a crimson edge." width="100%">
   </a>
 </p>
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/0sec-aperture-white.svg">
-    <img src="assets/0sec-aperture-ink.svg" alt="0sec" width="176">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/0sec-labs/0sec/main/assets/0sec-aperture-white.svg">
+    <img src="https://raw.githubusercontent.com/0sec-labs/0sec/main/assets/0sec-aperture-ink.svg" alt="0sec" width="176">
   </picture>
 </p>
 
 <p align="center">
-  The extensible, multi-model, unified cybersecurity harness.
+  <strong>Hack any software before attackers do.</strong><br/>
+  An open-source, multi-model cybersecurity harness for authorized security research.
 </p>
 
 <p align="center">
-  <sub>🇨🇭 Maintained by the Swiss Applied AI & Cybersecurity Research Lab · <a href="https://0.security">0.security</a></sub>
+  <sub>The Swiss Applied AI &amp; Cybersecurity Research Lab · <a href="https://0.security">0.security</a></sub>
 </p>
 
 <p align="center">
-  <a href="https://docs.0.security/"><img src="https://img.shields.io/badge/Documentation-DC2626?style=for-the-badge&amp;logo=gitbook&amp;logoColor=white" alt="Documentation" height="28"></a>
-  <a href="https://0.security/harness/"><img src="https://img.shields.io/badge/Website-1A1815?style=for-the-badge" alt="Website" height="28"></a>
+  <a href="https://0.security"><img src="https://img.shields.io/badge/site-0.security-DC2626?style=flat-square&amp;labelColor=1A1815" alt="0.security"></a>
+  <a href="https://docs.0.security/"><img src="https://img.shields.io/badge/docs-0.security-1A1815?style=flat-square&amp;labelColor=1A1815" alt="Documentation"></a>
+  <a href="https://github.com/0sec-labs/foxguard"><img src="https://img.shields.io/badge/scanner-Foxguard-1A1815?style=flat-square&amp;labelColor=1A1815" alt="Foxguard scanner"></a>
 </p>
 
 <p align="center">
@@ -31,8 +33,16 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo-intro.gif" alt="0sec interactive CLI demonstration" width="840">
+  <img src="https://raw.githubusercontent.com/0sec-labs/0sec/main/assets/demo-intro.gif" alt="0sec interactive CLI demonstration" width="840">
 </p>
+
+## What you can do
+
+- <img height="14" src="https://raw.githubusercontent.com/0sec-labs/.github/main/profile/assets/icons/zap.png" alt="">&nbsp; **Investigate in chat.** Work through an assessment with persistent conversations, tool output and model selection in the [terminal console](https://docs.0.security/console/).
+- <img height="14" src="https://raw.githubusercontent.com/0sec-labs/.github/main/profile/assets/icons/code.png" alt="">&nbsp; **Review code and packages.** Run repository reviews and package audits with [source and scan workflows](https://docs.0.security/scan-workflows/).
+- <img height="14" src="https://raw.githubusercontent.com/0sec-labs/.github/main/profile/assets/icons/shield-check.png" alt="">&nbsp; **Start with static analysis.** The installer includes [Foxguard](https://github.com/0sec-labs/foxguard), the separate scanner used by default for static analysis.
+- <img height="14" src="https://raw.githubusercontent.com/0sec-labs/.github/main/profile/assets/icons/verified.png" alt="">&nbsp; **Inspect the evidence.** Review reproduction results, verification failures and coverage limits before accepting a finding. See [verification](https://docs.0.security/blind-verification/).
+- <img height="14" src="https://raw.githubusercontent.com/0sec-labs/.github/main/profile/assets/icons/beaker.png" alt="">&nbsp; **Extend and evolve the agent.** Explore codebase learning, source evolution and versioned executable plugins in the [improvement plane](https://docs.0.security/improvement-plane/). These workflows are a Research Preview.
 
 ## Get started
 
@@ -42,12 +52,42 @@ export PATH="$HOME/.0sec/bin:$PATH"
 0 --help
 ```
 
-Add the `export` line to your shell profile. Configure a [model provider](https://docs.0.security/api-keys/),
-then run `0` to open the interactive console. Use `/run` to set up an engagement.
+Add the `export` line to your shell profile. Choose a model connection below,
+then follow the [console guide](https://docs.0.security/console/) for interactive
+work or [scan workflows](https://docs.0.security/scan-workflows/) for command-line runs.
 Only test systems you own or have permission to assess.
 
 See [Getting started](https://docs.0.security/getting-started/) for Docker,
 source builds, and your first scan.
+
+### Hosted models
+
+**0sec Cloud** is the optional account and hosted-model surface. Hosted inference
+is still deployment-gated; production inference has not been qualified.
+These commands require a compatible CLI and an approved hosted deployment:
+
+```bash
+0sec login
+0sec models
+0sec balance
+```
+
+Login uses browser approval and organization selection. It does not add funds
+or grant model access. Funding, purchasing and available aliases depend on the
+deployment. Provider keys stay on the service while CLI tools run locally.
+
+Configured BYOK providers retain precedence over automatic hosted selection.
+An explicitly selected hosted model must appear in the service catalog; the CLI
+does not silently substitute another model. Managed **0cloud** testing and
+**0review** CI review retain separate access and billing.
+
+### Use my own API key
+
+Local models, BYOK and supported provider-subscription connections require no
+0sec Cloud account. Your provider handles its own authentication and billing.
+Follow [provider setup](https://docs.0.security/api-keys/) for API keys, local
+endpoints or ChatGPT Codex sign-in. Provider sign-in is separate from a
+0sec Cloud login.
 
 ## Documentation
 
@@ -64,14 +104,25 @@ home for the CLI:
 Docs follow the source checkout; use `0sec --version` and command-specific
 `--help` when comparing an installed release with newly documented features.
 
-**0cloud and Desktop are not released.** Both are in development; their draft
-guides are not published as user documentation. See the [roadmap](https://docs.0.security/roadmap/).
+**Desktop remains an unpublished development build.** Hosted inference is
+deployment-gated; existing managed testing and PR review are separate services.
+See the [roadmap](https://docs.0.security/roadmap/).
 
 ## Research preview
 
 0sec is in active development. Coverage and verification depth vary by workflow;
 review the evidence before treating a reported issue as confirmed. Generated fixes
 need review and testing. See the [verification guide](https://docs.0.security/blind-verification/) for prerequisites and limits.
+
+Agents can retain revision-aware codebase notes, propose source changes and
+author versioned executable tools. Evaluation and version selection determine
+which changes subsequent work uses. Workspace-trusted plugins require a
+separate grant from ordinary self-extension.
+
+Live harness replacement and long-running recovery have distinct implementation
+and qualification limits. The [improvement-plane guide](https://docs.0.security/improvement-plane/)
+records those boundaries; no universal performance gain or unattended recovery
+guarantee is implied.
 
 ## Contributing
 

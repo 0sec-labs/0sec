@@ -84,8 +84,8 @@ export type ConsoleAutonomyResolution =
  *
  * Precedence: --mode > --yolo > --autonomy > default "yolo". A conflicting
  * `--mode <x> --yolo` (x !== yolo) is a clear error rather than a silent pick.
- * This only chooses the initial mode; the target/scope anchor and SSRF rail are
- * unchanged, and YOLO still requires a configured scope (enforced downstream).
+ * The interactive Bun console can ask for scope. Without that approval channel,
+ * YOLO still requires a configured scope; target and SSRF protections remain.
  */
 export function resolveConsoleAutonomyMode(opts: {
   mode?: string;
@@ -185,6 +185,7 @@ export function registerConsoleCommand(program: Command): void {
         return;
       }
       const autonomyMode: ConsoleAutonomyMode = autonomyResolution.mode;
+      const useOpenTui = opts.print === undefined && isBunRuntime() && canUseOpenTui();
 
       let scope;
       if (opts.scope) {
@@ -197,7 +198,7 @@ export function registerConsoleCommand(program: Command): void {
         }
       }
 
-      if (autonomyMode === "yolo" && !hasConfiguredScope(scope)) {
+      if (autonomyMode === "yolo" && !hasConfiguredScope(scope) && !useOpenTui) {
         console.error(chalk.red("YOLO mode requires --scope <file> with at least one in_scope entry."));
         process.exitCode = 2;
         return;
@@ -328,7 +329,7 @@ export function registerConsoleCommand(program: Command): void {
         console.log(chalk.dim(`MCP: connected ${mcpHost.serverIds().length} server(s) — ${mcpHost.registeredTools().length} tool(s)`));
       }
 
-      if (isBunRuntime() && canUseOpenTui()) {
+      if (useOpenTui) {
         // `run.tsx` imports Bun-only OpenTUI dependencies, so Node must not
         // resolve it before falling back to the readline console.
         const { showOpenTuiConsole, showOpenTuiResume } = await import("../tui/run.js");
@@ -337,6 +338,7 @@ export function registerConsoleCommand(program: Command): void {
           target: focusedTarget,
           scope,
           dbPath: opts.dbPath,
+          model: opts.model ?? resumedModel,
           role,
           initialPrompt: findingPrompt,
           maxToolIterations,

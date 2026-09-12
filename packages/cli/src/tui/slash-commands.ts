@@ -106,6 +106,21 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     tuiOnly: true,
   },
 
+  {
+    name: "harness",
+    aliases: [],
+    category: "navigation",
+    description: "Live harness: views, commands, settings, rollback and workspace trust",
+    tuiOnly: true,
+  },
+  {
+    name: "new-chat",
+    aliases: [],
+    category: "navigation",
+    description: "New chat using selected model, connection and self-extension preferences",
+    tuiOnly: true,
+  },
+
   // ── session ─────────────────────────────────────────────────────────────
   {
     name: "clear",
@@ -117,14 +132,14 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "history",
     aliases: [],
     category: "session",
-    description: "Review previous conversation turns",
+    description: "Browse previous scan runs and their results",
     tuiOnly: true,
   },
   {
     name: "transcript",
     aliases: ["review"],
     category: "session",
-    description: "Open the virtualized transcript review",
+    description: "Show this conversation, including tool details",
     tuiOnly: true,
   },
   {
@@ -155,21 +170,21 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "mode",
     aliases: [],
     category: "mode",
-    description: "Set Standard (automatic in scope), Co-pilot (approve non-read-only tools), or YOLO (configured scope only)",
-    usage: "/mode [standard|copilot|yolo]",
+    description: "Set Standard (approve actions), Co-pilot (autonomous in scope), YOLO (full autonomy; approve new targets), or Recon (passive)",
+    usage: "/mode [standard|copilot|yolo|recon]",
   },
   {
     name: "resume",
     aliases: ["sessions"],
     category: "session",
-    description: "List saved sessions and resume one, keeping its conversation",
+    description: "Find and resume saved conversations",
     usage: "/resume",
   },
   {
     name: "providers",
     aliases: [],
     category: "system",
-    description: "Open the chat-owned provider connection and OAuth pane",
+    description: "Connection: 0sec Cloud, API keys, or provider subscriptions",
     usage: "/providers",
     tuiOnly: true,
   },
@@ -191,7 +206,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "settings",
     aliases: ["config", "prefs"],
     category: "system",
-    description: "Toggle console display settings; changes persist between sessions",
+    description: "Open settings; changes persist between sessions",
     usage: "/settings",
   },
   {
@@ -206,7 +221,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "model",
     aliases: ["models"],
     category: "mode",
-    description: "Show the active model, or switch to another for this session",
+    description: "Show or select a model (TUI: applies to New chat)",
     usage: "/model [id]",
   },
 
@@ -215,7 +230,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "chat",
     aliases: [],
     category: "navigation",
-    description: "Return to the main chat view",
+    description: "Show the current conversation",
     tuiOnly: true,
   },
   {
@@ -250,7 +265,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "connect",
     aliases: ["login", "auth"],
     category: "navigation",
-    description: "Connect a model provider: add an API key or subscription sign-in",
+    description: "Connect to 0sec Cloud, or use your own API key or provider subscription",
     usage: "/connect",
     tuiOnly: true,
   },

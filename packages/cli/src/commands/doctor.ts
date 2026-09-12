@@ -16,7 +16,7 @@ export function registerDoctorCommand(program: Command): void {
 
       const { hasApiKey, availableRuntimes, apiRuntime } = await getRuntimeAvailability();
       const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
-      const hasSupportedNode = nodeMajor >= 20;
+      const hasSupportedNode = nodeMajor >= 24;
 
       console.log("");
       console.log(chalk.red.bold("  ◆ 0sec") + chalk.gray(" doctor"));
@@ -32,7 +32,7 @@ export function registerDoctorCommand(program: Command): void {
       console.log("");
 
       if (!hasSupportedNode) {
-        console.log(chalk.red("  Upgrade to Node 20+ before running 0sec."));
+        console.log(chalk.red("  Upgrade to Node 24+ before running 0sec."));
       } else if (apiRuntime.configured && !apiRuntime.valid && apiRuntime.error) {
         console.log(chalk.red("  API runtime is configured but unusable."));
         console.log(chalk.gray(`  ${apiRuntime.error.split("\n").join("\n  ")}`));

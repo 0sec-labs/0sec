@@ -15,9 +15,6 @@ import {
   connectDetailTitleMeta,
   connectFooterHint,
   connectInputMask,
-  connectListMeta,
-  connectListTitle,
-  connectListTitleLabel,
   connectStatusLine,
   firstSelectableIndex,
   hasAnyConnection,
@@ -270,16 +267,6 @@ describe("computeConnectTitleLayout — the header sweep", () => {
 describe("pane header labels and meta", () => {
   const rows = buildConnectRows({ states: LIT });
 
-  it("keeps a stable left label and a count/window meta for the list header", () => {
-    expect(connectListTitleLabel()).toBe("PROVIDERS");
-    const whole = computeConnectWindow({ rows, selected: 1, visible: rows.length });
-    expect(connectListMeta(whole)).toBe(String(rows.length));
-    // The label and meta recombine into the single-string title callers use.
-    expect(connectListTitle(whole)).toBe(`PROVIDERS ${rows.length}`);
-    const scrolled = computeConnectWindow({ rows, selected: 5, visible: 4, anchor: 3 });
-    expect(connectListMeta(scrolled)).toMatch(/^\d+-\d+\/\d+$/);
-    expect(connectListMeta(computeConnectWindow({ rows: [], selected: -1, visible: 4 }))).toBe("0");
-  });
 
   it("summarises the highlighted provider's connection state for the detail header", () => {
     expect(connectDetailTitleLabel()).toBe("PROVIDER");
@@ -296,34 +283,17 @@ describe("pane header labels and meta", () => {
 });
 
 describe("buildConnectRows", () => {
-  it("puts a Popular group first, then All providers, with disjoint membership", () => {
+  it("keeps Cloud first, BYOK second and subscription sign-in independent", () => {
     const rows = buildConnectRows({ states: EMPTY });
-    const headings = rows.filter(
-      (row): row is Extract<ConnectRow, { kind: "heading" }> => row.kind === "heading",
-    );
-    expect(headings.map((row) => row.group.id)).toEqual(["popular", "all"]);
-
-    const popular = rows
-      .filter((row) => row.kind === "provider" && row.group.id === "popular")
-      .map((row) => (row.kind === "provider" ? row.provider.id : ""));
-    const all = rows
-      .filter((row) => row.kind === "provider" && row.group.id === "all")
-      .map((row) => (row.kind === "provider" ? row.provider.id : ""));
-
-    expect(popular).toEqual(RECOMMENDED_IDS.filter((id) => PROVIDERS.some((p) => p.id === id)));
-    // Disjoint, and together they cover every provider exactly once.
-    expect(popular.filter((id) => all.includes(id))).toEqual([]);
-    expect(new Set([...popular, ...all])).toEqual(new Set(PROVIDERS.map((p) => p.id)));
-  });
-
-  it("leads the Popular group with the recommended device OAuth option", () => {
-    const rows = buildConnectRows({ states: EMPTY });
-    const firstProvider = rows.find((row) => row.kind === "provider");
-    expect(firstProvider?.kind).toBe("provider");
-    if (firstProvider?.kind === "provider") {
-      expect(firstProvider.provider.id).toBe(RECOMMENDED_IDS[0]);
-      expect(firstProvider.provider.auth).toBe("oauth");
-    }
+    expect(rows[firstSelectableIndex(rows)]?.kind).toBe("cloud");
+    const providers = rows.filter((row) => row.kind === "provider");
+    expect(providers[0]?.provider.auth).toBe("api-key");
+    expect(new Set(providers.map((row) => row.provider.id))).toEqual(new Set(PROVIDERS.map((provider) => provider.id)));
+    expect(providers.length).toBe(PROVIDERS.length);
+    const subscription = providers.filter((row) => row.group.id === "subscription");
+    expect(subscription.map((row) => row.provider.id)).toEqual(["chatgpt-codex"]);
+    expect(providers.filter((row) => row.group.id !== "subscription").every((row) => row.provider.auth === "api-key")).toBe(true);
+    expect(providers.every((row) => !row.provider.connected)).toBe(true);
   });
 
   it("emits a subtitle row under recommended providers that have one", () => {
@@ -393,15 +363,15 @@ describe("navigation", () => {
 
   it("never lands on a heading or a subtitle, up or down through the list twice", () => {
     let index = firstSelectableIndex(rows);
-    expect(rows[index]?.kind).toBe("provider");
+    expect(rows[index]?.kind).toBe("cloud");
     for (let step = 0; step < rows.length * 2; step++) {
       index = moveSelection(rows, index, 1);
-      expect(rows[index]?.kind, `down landed off a provider at step ${step}`).toBe("provider");
+      expect(["cloud", "provider"], `down landed on a non-action at step ${step}`).toContain(rows[index]?.kind);
     }
     index = lastSelectableIndex(rows);
     for (let step = 0; step < rows.length * 2; step++) {
       index = moveSelection(rows, index, -1);
-      expect(rows[index]?.kind, `up landed off a provider at step ${step}`).toBe("provider");
+      expect(["cloud", "provider"], `up landed on a non-action at step ${step}`).toContain(rows[index]?.kind);
     }
   });
 
@@ -418,9 +388,9 @@ describe("navigation", () => {
       expect(at, `${info.id} unreachable`).toBeGreaterThanOrEqual(0);
       expect(rows[at]?.kind).toBe("provider");
     }
-    expect(rows[clampSelection(rows, -50)]?.kind).toBe("provider");
+    expect(clampSelection(rows, -50)).toBe(0);
     expect(clampSelection(rows, 9999)).toBe(lastSelectableIndex(rows));
-    expect(rows[clampSelection(rows, Number.NaN)]?.kind).toBe("provider");
+    expect(clampSelection(rows, Number.NaN)).toBe(0);
     expect(indexOfProvider(rows, undefined)).toBe(-1);
   });
 
@@ -470,17 +440,6 @@ describe("computeConnectWindow", () => {
     }
   });
 
-  it("titles the pane with the window it is showing", () => {
-    expect(connectListTitle(computeConnectWindow({ rows, selected: 1, visible: rows.length }))).toBe(
-      `PROVIDERS ${rows.length}`,
-    );
-    expect(
-      connectListTitle(computeConnectWindow({ rows, selected: 5, visible: 4, anchor: 3 })),
-    ).toMatch(/^PROVIDERS \d+-\d+\/\d+$/);
-    expect(connectListTitle(computeConnectWindow({ rows: [], selected: -1, visible: 4 }))).toBe(
-      "PROVIDERS 0",
-    );
-  });
 });
 
 // ---------------------------------------------------------------------------

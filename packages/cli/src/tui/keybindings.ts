@@ -223,7 +223,7 @@ export const KEYBINDINGS: readonly Keybinding[] = [
     id: "autonomy.cycle-mode",
     keys: "Shift+Tab",
     description:
-      "Cycle the autonomy mode: Standard → Co-pilot → YOLO → Recon (YOLO is skipped when no scope is configured).",
+      "Cycle the autonomy mode: Standard → Co-pilot → YOLO → Recon; no preconfigured scope is required.",
     category: "Autonomy",
     handler: 'if (key.name === "tab" && key.shift) routeSlashCommand(`/mode ${next}`)',
   },

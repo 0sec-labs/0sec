@@ -662,11 +662,11 @@ export interface MarketDetailInput {
 export function stateTag(state: MarketState): string {
   switch (state) {
     case "installed":
-      return "installed";
+      return "◌ installed";
     case "enabled":
-      return "enabled";
+      return "● enabled";
     case "active":
-      return "active";
+      return "★ active";
     default:
       return "available";
   }
@@ -763,15 +763,15 @@ export function confirmPrompt(
 ): string {
   switch (action) {
     case "install":
-      return `Install ${name} (${kind})? y to confirm, n to cancel`;
+      return `? Install ${name} (${kind})? y confirm, n cancel`;
     case "enable": {
       const caps = capabilities.length > 0 ? capabilities.join(", ") : "no capabilities declared";
-      return `Enable ${name}? Approves — ${caps}. Records approval; runs nothing. y confirm, n cancel`;
+      return `? Enable ${name}? Approves — ${caps}. y confirm, n cancel`;
     }
     case "run":
-      return `Run ${name}? Loads its tools into the session. y to confirm, n to cancel`;
+      return `? Run ${name}? Loads its tools. y confirm, n cancel`;
     case "activate":
-      return `Apply theme ${name} as the console palette? y to confirm, n to cancel`;
+      return `? Apply theme ${name}? y confirm, n cancel`;
     default:
       return "";
   }
@@ -957,27 +957,31 @@ export { paneTitleColumns, type PaneTitleColumns } from "./pane-layout.js";
 export type MarketMode = "browse" | "filter" | "confirm";
 
 /**
- * The footer hint, per mode. These are the real bindings: browse gives every
- * printable character to the filter, install is confirmed (never silent), and
- * nothing on this screen enables a plugin.
+ * Contextual bindings: filtering never applies changes and effectful actions
+ * keep their explicit confirmation step.
  */
 export function marketFooterHint(
   mode: MarketMode,
   hasFilter = false,
   action: MarketAction = "install",
 ): string {
-  if (mode === "filter") return "type to filter · enter/esc done · backspace delete";
+  if (mode === "filter") return [
+    "type to filter",
+    action !== "none" ? `enter ${actionVerb(action)}` : "",
+    "esc clear filter",
+    "backspace delete",
+  ].filter(Boolean).join(" · ");
   if (mode === "confirm") {
     const verb = actionVerb(action) || "install";
     return `y ${verb} · n/esc cancel`;
   }
   return [
     "up/down move",
-    "enter act",
+    action !== "none" ? `enter ${actionVerb(action)}` : "",
     "/ filter",
     hasFilter ? "esc clear filter" : "esc back",
     "ctrl+c exit",
-  ].join(" · ");
+  ].filter(Boolean).join(" · ");
 }
 
 /** Every printable character starts a filter (there is no destructive key). */

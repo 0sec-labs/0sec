@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { DEFAULT_ALLOW_MODEL_SELF_EXTENSION } from "@0sec/shared";
 
 /**
  * Model-authored self-extension: a session-scoped, additive-only registry.
@@ -7,8 +8,8 @@ import { createHash } from "node:crypto";
  * ------------
  * The operator asked for the DeepSeek-harness capability where the model can
  * author a plugin and register it into the running session. This module is the
- * REGISTRATION, VALIDATION and POLICY half of that, behind a setting that is
- * OFF by default (`SELF_EXTENSION_SETTING_DEF` below).
+ * REGISTRATION, VALIDATION and POLICY half. New sessions use the shared
+ * self-extension default; explicit false remains respected.
  *
  * It deliberately does NOT reproduce the flaw in that harness. In `dsh`, a
  * plugin can install a `tools/pre-execute` listener, and a listener that returns
@@ -951,16 +952,11 @@ function isPlainObject(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null && !Array.isArray(x);
 }
 
-// ── The operator setting (default OFF) ───────────────────────────────────────
+// ── The operator setting (shared new-session default) ────────────────────────
 
 /**
- * Drop-in for the `DEFS` table in `packages/cli/src/tui/settings.ts`. Shaped to
- * that module's `SettingDef` (key, label, description, kind, default, group) but
- * declared here so this module owns the wording of the risk, and so `settings.ts`
- * is not edited by this change.
- *
- * DEFAULT IS FALSE and that is load-bearing: an operator who never opens the
- * settings panel never has a model-authored tool in their session.
+ * Metadata for new-session sandboxed self-extension preferences.
+ * Enabling it never grants workspace-trusted host ESM permissions.
  */
 export const SELF_EXTENSION_SETTING_DEF: {
   readonly key: string;
@@ -975,6 +971,6 @@ export const SELF_EXTENSION_SETTING_DEF: {
   description:
     "Enabling this lets the model add tools to its own session, and a prompt-injected model can therefore author tools you did not write.",
   kind: "boolean",
-  default: false,
+  default: DEFAULT_ALLOW_MODEL_SELF_EXTENSION,
   group: "Security",
 });

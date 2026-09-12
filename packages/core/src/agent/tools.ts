@@ -3,7 +3,6 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { isAbsolute, resolve, join } from "node:path";
-import { isIP } from "node:net";
 import type {
   Finding,
   AttackResult,
@@ -22,6 +21,7 @@ import type {
   OperatorQuestionOption,
   OperatorQuestionRequest,
 } from "./types.js";
+import type { NativeRuntime } from "../runtime/types.js";
 import type { LootKind } from "./loot.js";
 import { applyPlanAction, validatePlanArgs } from "./task-ledger.js";
 import type { OastHandle } from "../oast/types.js";
@@ -33,7 +33,7 @@ import {
   type OastVerdict,
 } from "../oast/index.js";
 import type { ScopePolicy } from "../scope/scope.js";
-import { extractUrls } from "../scope/scope.js";
+import { extractUrls, normalizeScopeHostname } from "../scope/scope.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import {
   classifyResponse,
@@ -45,7 +45,7 @@ import { detectScannerBinary } from "../scope/scanner-binaries.js";
 import { describeScopeGuards, scopeRequiredRefusal } from "../scope/scope-guard.js";
 import { isWafEvasionLadderEnabled } from "../scope/engagement-profile.js";
 import { applyAttribution, formatUserAgent } from "../scope/attribution.js";
-import { sendPrompt, extractResponseText } from "../http.js";
+import { sendPrompt, extractResponseText, fetchScoped, isPrivateAddress } from "../http.js";
 import { buildAuthHeaders } from "./prompts.js";
 import {
   authSecretValues,
@@ -232,6 +232,7 @@ import { TOOL_DISPATCH } from "./tools/dispatch.js";
 import { z } from "zod";
 import type { SelfExtensionRegistry } from "../plugins/self-extension.js";
 import type { GuardContext } from "../plugins/guards.js";
+import { parseHarnessGenerationSpec } from "../plugins/live-harness.js";
 
 export { sanitizedEnv } from "./sanitized-env.js";
 
@@ -261,6 +262,22 @@ const selfExtendArgsSchema = z.discriminatedUnion("action", [
     action: z.literal("evolve"), plugin_id: z.string().min(1),
     profile: z.string().min(1),
   }).strip(),
+  z.object({
+    action: z.literal("harness_submit"),
+    generation: z.unknown().transform((value, context) => {
+      try { return parseHarnessGenerationSpec(value); }
+      catch (error) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : String(error) });
+        return z.NEVER;
+      }
+    }),
+  }).strip(),
+  z.object({ action: z.literal("harness_list") }).strip(),
+  z.object({
+    action: z.literal("harness_rollback"),
+    generation_id: z.string().min(1).max(128).optional(),
+  }).strip(),
+  z.object({ action: z.literal("harness_disable") }).strip(),
 ]);
 
 export type SelfExtendArgs = z.infer<typeof selfExtendArgsSchema>;
@@ -274,7 +291,7 @@ export function validateSelfExtendArgs(
   raw: unknown,
 ): { ok: true; args: SelfExtendArgs } | { ok: false; error: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ok: false, error: "self_extend: arguments must be an object with a `manifest`" };
+    return { ok: false, error: "self_extend: arguments must be an object with a lifecycle action" };
   }
   const parsed = selfExtendArgsSchema.safeParse({
     ...raw, action: (raw as Record<string, unknown>).action ?? "submit",
@@ -1327,30 +1344,9 @@ function validateScopedCommand(tokens: string[], scopePath?: string): string[] {
   });
 }
 
-function normalizeLoopbackHost(hostname: string): string {
-  if (hostname === "::1") return "127.0.0.1";
-  return hostname.toLowerCase();
-}
-
-function isPrivateIpv4(hostname: string): boolean {
-  const normalized = normalizeLoopbackHost(hostname);
-  if (isIP(normalized) !== 4) return false;
-
-  const [a, b] = normalized.split(".").map((part) => Number(part));
-  return a === 10
-    || a === 127
-    || (a === 169 && b === 254)
-    || (a === 172 && b >= 16 && b <= 31)
-    || (a === 192 && b === 168);
-}
-
-function isPrivateIpv6(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  return normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe80:");
-}
 
 function isLocalHostname(hostname: string): boolean {
-  const normalized = normalizeLoopbackHost(hostname);
+  const normalized = normalizeScopeHostname(hostname);
   return normalized === "localhost" || normalized.endsWith(".localhost");
 }
 
@@ -1367,10 +1363,10 @@ function validateTargetUrl(
     throw new Error(`Unsupported protocol for http_request: ${candidate.protocol}`);
   }
 
-  const hostname = candidate.hostname.toLowerCase();
-  const baseHostname = base.hostname.toLowerCase();
-  const baseIsLocal = isLocalHostname(baseHostname) || isPrivateIpv4(baseHostname) || isPrivateIpv6(baseHostname);
-  const candidateIsLocal = isLocalHostname(hostname) || isPrivateIpv4(hostname) || isPrivateIpv6(hostname);
+  const hostname = normalizeScopeHostname(candidate.hostname);
+  const baseHostname = normalizeScopeHostname(base.hostname);
+  const baseIsLocal = isLocalHostname(baseHostname) || isPrivateAddress(baseHostname);
+  const candidateIsLocal = isLocalHostname(hostname) || isPrivateAddress(hostname);
 
   // Absolute private/internal-network guard (SSRF rail). This is the ONE
   // check scope can never lift: an approved scope must not become a path
@@ -2641,14 +2637,13 @@ export function buildSubagentMessage(
 }
 
 /**
- * The two lazily-imported dependencies a subagent needs. Dynamic import breaks
- * the tools ↔ native-loop circular dependency; resolving them ONCE (here, via
- * `loadSubagentDeps`) and sharing them across a `spawn_agents` batch also keeps
+ * The one lazily-imported dependency a subagent needs. Dynamic import breaks
+ * the tools ↔ native-loop circular dependency; resolving it ONCE (here, via
+ * `loadSubagentDeps`) and sharing it across a `spawn_agents` batch also keeps
  * every child off the concurrent-first-import path.
  */
 type SubagentDeps = {
   runNativeAgentLoop: typeof import("./native-loop.js")["runNativeAgentLoop"];
-  LlmApiRuntime: typeof import("../runtime/llm-api.js")["LlmApiRuntime"];
 };
 
 // ── Operator question tool (`ask_operator`) ─────────────────────────────────
@@ -2859,7 +2854,7 @@ export class ToolExecutor {
    * Async-local state also keeps nested/concurrent executable-agent calls
    * from borrowing another call's correlation id or cancellation signal.
    */
-  private readonly _executionContext = new AsyncLocalStorage<{ correlationId?: string; signal?: AbortSignal }>();
+  private readonly _executionContext = new AsyncLocalStorage<{ correlationId?: string; signal?: AbortSignal; assertAuthority?: () => void }>();
   private get _correlationId(): string | null {
     return this._executionContext.getStore()?.correlationId ?? null;
   }
@@ -2870,6 +2865,13 @@ export class ToolExecutor {
    * `randomUUID`. Mirrors the injectable-factory pattern the pure builders use.
    */
   private _idFactory: () => string;
+
+  /**
+   * Optional bound factory for creating independent child (subagent) runtimes.
+   * Received as the fourth constructor argument. Without this capability,
+   * child construction fails closed rather than rediscovering credentials.
+   */
+  private _childRuntimeFactory: ((timeoutMs: number) => Promise<NativeRuntime>) | undefined;
 
   /**
    * Tool-health recorder (0sec#tool-reliability). Uses the shared tracker on
@@ -2892,10 +2894,12 @@ export class ToolExecutor {
     ctx: ToolContext,
     db: osecDB | null = null,
     idFactory: () => string = () => randomUUID(),
+    childRuntimeFactory?: (timeoutMs: number) => Promise<NativeRuntime>,
   ) {
     this.ctx = ctx;
     this.db = db;
     this._idFactory = idFactory;
+    this._childRuntimeFactory = childRuntimeFactory;
     this._toolHealth =
       ctx.toolHealth ??
       new ToolHealthTracker({
@@ -3083,14 +3087,22 @@ export class ToolExecutor {
    * call persists. Restored (not just cleared) on exit so a nested dispatch
    * can't strand a stale id.
    */
-  async execute(call: ToolCall, opts?: { correlationId?: string; signal?: AbortSignal }): Promise<ToolResult> {
-    const signal = opts?.signal ?? this._executionContext.getStore()?.signal;
-    return this._executionContext.run({ correlationId: opts?.correlationId, signal }, async () => {
+  async execute(call: ToolCall, opts?: { correlationId?: string; signal?: AbortSignal; assertAuthority?: () => void }): Promise<ToolResult> {
+    const inherited = this._executionContext.getStore();
+    const signal = opts?.signal ?? inherited?.signal;
+    const ownAuthority = opts?.assertAuthority;
+    const inheritedAuthority = inherited?.assertAuthority;
+    const assertAuthority = ownAuthority && inheritedAuthority && ownAuthority !== inheritedAuthority
+      ? () => { inheritedAuthority(); ownAuthority(); }
+      : ownAuthority ?? inheritedAuthority;
+    return this._executionContext.run({ correlationId: opts?.correlationId, signal, assertAuthority }, async () => {
     try {
       signal?.throwIfAborted();
+      assertAuthority?.();
       const scopedAuditVerdict = await this._evaluateScopedAuditGate(call);
       if (scopedAuditVerdict) return scopedAuditVerdict;
       signal?.throwIfAborted();
+      assertAuthority?.();
 
       // Coverage-gate accounting (#audit-laziness). Counted BEFORE dispatch
       // so a tool that throws still contributes to the "total tool calls"
@@ -3266,6 +3278,22 @@ export class ToolExecutor {
     }
     const parsed = validateSelfExtendArgs(args);
     if (!parsed.ok) return { success: false, output: null, error: parsed.error };
+    const request = parsed.args;
+    if (request.action === "harness_submit" || request.action === "harness_list" ||
+      request.action === "harness_rollback" || request.action === "harness_disable") {
+      const harness = this.ctx.liveHarness;
+      if (!harness) return { success: false, output: null, error: "Live harness services are unavailable in this session." };
+      try {
+        const snapshot = await harness.control(
+          request.action === "harness_submit" ? { action: "submit", generation: request.generation } :
+          request.action === "harness_rollback" ? { action: "rollback", generationId: request.generation_id } :
+          request.action === "harness_disable" ? { action: "disable" } : { action: "list" },
+        );
+        return { success: true, output: snapshot };
+      } catch (error) {
+        return { success: false, output: null, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
     const manager = this.ctx.executablePlugins;
     if (!manager) {
       return {
@@ -3274,7 +3302,6 @@ export class ToolExecutor {
       };
     }
     await manager.ready;
-    const request = parsed.args;
     const context = this._executableContext("self_extend");
     if (request.action === "list") {
       return { success: true, output: { plugins: manager.list(), evolutionProfiles: Object.keys(this.ctx.executableEvolutionProfiles ?? {}) } };
@@ -3327,6 +3354,9 @@ export class ToolExecutor {
     return {
       ...bound,
       signal: execution?.signal ?? bound.signal,
+      ...(bound.invokeTool ? { invokeTool: (...args: Parameters<NonNullable<typeof bound.invokeTool>>) =>
+        this._executionContext.run(execution ?? {}, () => bound.invokeTool!(...args)),
+      } : {}),
       onEvent: (event: unknown) => {
         this._executionContext.run(execution ?? {}, () => {
           this.persistToolArtifact(toolName, { executable: event });
@@ -3373,6 +3403,31 @@ export class ToolExecutor {
       return { success: false, output: null, error: `Executable backend is unavailable for "${call.name}".` };
     }
     return manager.execute(call.name, call.arguments ?? {}, this._executableContext(call.name));
+  }
+
+  private fetchTarget(
+    url: string,
+    init: RequestInit,
+    beforeRequest?: (url: string) => void | Promise<void>,
+  ): Promise<Response> {
+    const execution = this._executionContext.getStore();
+    const signal = execution?.signal && init.signal
+      ? AbortSignal.any([execution.signal, init.signal])
+      : execution?.signal ?? init.signal;
+    return fetchScoped(url, { ...init, signal }, {
+      baseUrl: this.ctx.target,
+      scope: this.ctx.scope,
+      beforeRequest,
+      validateUrl: candidate => {
+        execution?.assertAuthority?.();
+        validateTargetUrl(this.ctx.target, candidate, this.ctx.scope);
+        const path = this.ctx.enforcement?.pathPolicy.match(candidate);
+        if (path && !path.allowed) {
+          this.ctx.enforcement?.noteOutOfScopeBlocked();
+          throw new Error(`Scope violation blocked: ${path.reason}`);
+        }
+      },
+    });
   }
 
   private async httpRequest(args: Record<string, unknown>): Promise<ToolResult> {
@@ -3426,7 +3481,7 @@ export class ToolExecutor {
         // variant before egress. Fetching the in-scope authorized target is
         // intended 0sec behaviour.
         // foxguard:ignore
-        const res = await fetch(safeUrl, fetchInit);
+        const res = await this.fetchTarget(safeUrl, fetchInit);
         if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(safeUrl, res);
         // Persist session state (0sec#564): capture Set-Cookie for the active
         // identity. No-op when no SessionEngine is wired. Runs for the baseline
@@ -3559,7 +3614,12 @@ export class ToolExecutor {
     const prompt = args.prompt as string;
 
     try {
-      const res = await sendPrompt(this.ctx.target, prompt, { timeout: 30_000 });
+      const res = await sendPrompt(this.ctx.target, prompt, {
+        timeout: 30_000,
+        baseUrl: this.ctx.target,
+        scope: this.ctx.scope,
+        signal: this._executionContext.getStore()?.signal,
+      });
       const text = extractResponseText(res.body);
 
       // Persist as run artifact
@@ -3851,7 +3911,7 @@ export class ToolExecutor {
           // cross-origin / out-of-scope / private-IP hops are refused. Crawling
           // the in-scope target is intended 0sec behaviour.
           // foxguard:ignore
-          res = await fetch(currentUrl, buildCrawlInit(currentUrl));
+          res = await this.fetchTarget(currentUrl, buildCrawlInit(currentUrl));
           if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(currentUrl, res);
           // Capture cookies on every hop so authenticated crawls persist
           // session state across pages (0sec#564).
@@ -4042,7 +4102,7 @@ export class ToolExecutor {
       // (same-origin + scope + private-IP/localhost block). Submitting forms to
       // the in-scope target is intended 0sec behaviour.
       // foxguard:ignore
-      const res = await fetch(fetchUrl, submitInit);
+      const res = await this.fetchTarget(fetchUrl, submitInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(fetchUrl, res);
       // Capture the session cookie a login form sets, so the very next
       // request is authenticated without manual `curl -c/-b` jars (0sec#564).
@@ -4133,7 +4193,7 @@ export class ToolExecutor {
       // block + path allowlist). The access-control probe replays requests to
       // the in-scope target as different identities — intended behaviour.
       // foxguard:ignore
-      const res = await fetch(url, fetchInit);
+      const res = await this.fetchTarget(url, fetchInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
       principal.capture(res);
       const text = await res.text();
@@ -4420,7 +4480,7 @@ export class ToolExecutor {
       if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
       // foxguard:ignore — `url` validated by validateTargetUrl above
       // (same-origin + scope + private-IP/localhost block + path allowlist).
-      const res = await fetch(url, fetchInit);
+      const res = await this.fetchTarget(url, fetchInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
       const text = await res.text();
       return { status: res.status, text };
@@ -4594,7 +4654,7 @@ export class ToolExecutor {
         )!;
         if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
         // foxguard:ignore — `url` validated by validateTargetUrl above.
-        const res = await fetch(url, fetchInit);
+        const res = await this.fetchTarget(url, fetchInit);
         if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
         const bodyText = await res.text();
         return {
@@ -4683,7 +4743,7 @@ export class ToolExecutor {
       )!;
       if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
       // foxguard:ignore — `url` validated by validateTargetUrl above.
-      const res = await fetch(url, fetchInit);
+      const res = await this.fetchTarget(url, fetchInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
       return res;
     }) as typeof fetch;
@@ -4753,7 +4813,7 @@ export class ToolExecutor {
       )!;
       if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
       // foxguard:ignore — `url` validated by validateTargetUrl above.
-      const res = await fetch(url, fetchInit);
+      const res = await this.fetchTarget(url, fetchInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
       return res;
     }) as typeof fetch;
@@ -4814,7 +4874,7 @@ export class ToolExecutor {
         )!;
         if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
         // foxguard:ignore — `url` validated by validateTargetUrl above.
-        const res = await fetch(url, fetchInit);
+        const res = await this.fetchTarget(url, fetchInit);
         if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
         const bodyText = await res.text();
         return { ok: res.ok, status: res.status, headers: res.headers, text: async () => bodyText };
@@ -4932,7 +4992,7 @@ export class ToolExecutor {
         )!;
         if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
         // foxguard:ignore — `url` validated by validateTargetUrl above.
-        const res = await fetch(url, fetchInit);
+        const res = await this.fetchTarget(url, fetchInit);
         if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
         const body = await res.text();
         return { status: res.status, body };
@@ -5000,7 +5060,7 @@ export class ToolExecutor {
           )!;
           if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
           // foxguard:ignore — `url` validated by validateTargetUrl above.
-          const res = await fetch(url, fetchInit);
+          const res = await this.fetchTarget(url, fetchInit);
           if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
           const bodyText = await res.text();
           return { ok: res.ok, status: res.status, headers: res.headers, text: async () => bodyText };
@@ -5827,8 +5887,7 @@ export class ToolExecutor {
   private async loadSubagentDeps(): Promise<SubagentDeps> {
     // Dynamic import to avoid the tools ↔ native-loop circular dependency.
     const { runNativeAgentLoop } = await import("./native-loop.js");
-    const { LlmApiRuntime } = await import("../runtime/llm-api.js");
-    return { runNativeAgentLoop, LlmApiRuntime };
+    return { runNativeAgentLoop };
   }
 
   private async runOneSubagent(
@@ -5840,12 +5899,13 @@ export class ToolExecutor {
   ): Promise<SubagentOutcome> {
     const startedAt = Date.now();
     try {
+      if (!this._childRuntimeFactory) throw new Error("Parent runtime does not support subagent inference");
       // Single-child path resolves deps here (inside the try, so an import
       // failure still emits `failed`); the concurrent batch pre-resolves once
       // and passes them in to stay off the per-child first-import path.
-      const { runNativeAgentLoop, LlmApiRuntime } = deps ?? (await this.loadSubagentDeps());
+      const { runNativeAgentLoop } = deps ?? (await this.loadSubagentDeps());
 
-      const rt = new LlmApiRuntime({ type: "api" as any, timeout: 60_000 });
+      const rt = await this._childRuntimeFactory(60_000);
       if (!(await rt.isAvailable())) {
         eventBus.emit("subagent_lifecycle", {
           ...base,
@@ -5945,11 +6005,12 @@ export class ToolExecutor {
           authConfig: this.ctx.authConfig,
           costLedger: this.ctx.costLedger,
           costCeilingUsd: this.ctx.costCeilingUsd,
-          costModel: this.ctx.costModel,
+          costModel: rt.resolvedModel?.() ?? this.ctx.costModel,
           scopePath: this.ctx.scopePath,
           autonomyMode: this.ctx.autonomyMode,
           allowModelSelfExtension: this.ctx.selfExtension?.isEnabled() ?? false,
           executablePlugins: this.ctx.executablePluginConfiguration,
+          workspaceRoot: this.ctx.workspaceRoot,
           executableEvolutionProfiles: this.ctx.executableEvolutionProfiles,
           enforcement: this.ctx.enforcement,
           rateLimiter: this.ctx.rateLimiter,
@@ -6057,8 +6118,9 @@ export class ToolExecutor {
     turnOffset = 0,
   ): Promise<SubagentRunReport> {
     const startedAt = Date.now();
-    const { runNativeAgentLoop, LlmApiRuntime } = await this.loadSubagentDeps();
-    const rt = new LlmApiRuntime({ type: "api" as any, timeout: 60_000 });
+    if (!this._childRuntimeFactory) throw new Error("Parent runtime does not support subagent inference");
+    const { runNativeAgentLoop } = await this.loadSubagentDeps();
+    const rt = await this._childRuntimeFactory(60_000);
     if (!(await rt.isAvailable())) throw new Error("No API key available for persistent agent");
 
     const subTools: ToolDefinition[] = ["bash", "save_finding", "done"]
@@ -6085,11 +6147,12 @@ export class ToolExecutor {
         authConfig: this.ctx.authConfig,
         costLedger: this.ctx.costLedger,
         costCeilingUsd: this.ctx.costCeilingUsd,
-        costModel: this.ctx.costModel,
+        costModel: rt.resolvedModel?.() ?? this.ctx.costModel,
         scopePath: this.ctx.scopePath,
         autonomyMode: this.ctx.autonomyMode,
         allowModelSelfExtension: this.ctx.selfExtension?.isEnabled() ?? false,
         executablePlugins: this.ctx.executablePluginConfiguration,
+        workspaceRoot: this.ctx.workspaceRoot,
         executableEvolutionProfiles: this.ctx.executableEvolutionProfiles,
         enforcement: this.ctx.enforcement,
         rateLimiter: this.ctx.rateLimiter,
@@ -7988,26 +8051,13 @@ export class ToolExecutor {
         attribution,
         scope,
       )!;
-      // #214: each plugin/version probe goes through the per-host bucket.
-      // wp_fingerprint can fan out to dozens of probes against a single
-      // host — exactly the workload the limiter exists to pace.
-      if (rateLimiter) await rateLimiter.acquire(url);
-      const res = await fetch(url, fetchInit);
-      // Post-redirect scope check (0sec#218 review). `fetch` follows
-      // redirects by default, so an in-scope WordPress endpoint that
-      // 302s to a foreign host would otherwise complete against the
-      // foreign target and the body would be returned to the caller.
-      // Re-validate the final `res.url` against scope and refuse if it
-      // drifted off-host.
-      if (scope && res.url && res.url !== url) {
-        const verdict = scope.match(res.url);
-        if (!verdict.allowed) {
-          throw new Error(
-            `wp_fingerprint refused: redirect to out-of-scope URL '${res.url}' (${verdict.reason})`,
-          );
-        }
-      }
-      if (rateLimiter) rateLimiter.noteResponse(url, res);
+      // Every hop is authorized and DNS-pinned before acquiring its socket.
+      const res = await this.fetchTarget(
+        url,
+        { ...fetchInit, redirect: "follow" },
+        rateLimiter ? hop => rateLimiter.acquire(hop) : undefined,
+      );
+      if (rateLimiter) rateLimiter.noteResponse(res.url, res);
       return {
         ok: res.ok,
         status: res.status,
@@ -8015,11 +8065,32 @@ export class ToolExecutor {
         json: () => res.json(),
       };
     };
+    const advisoryFetch: FetchLike = async (url, init) => {
+      const origin = new URL(url).origin;
+      if (origin !== "https://api.osv.dev" && origin !== "https://wpscan.com" &&
+          origin !== "https://www.wpvulnerability.net") {
+        throw new Error("Unknown WordPress advisory service");
+      }
+      const execution = this._executionContext.getStore();
+      // Advisory credentials belong only to their fixed service. Target auth,
+      // attribution and target allow rules never flow into this transport.
+      const response = await fetchScoped(url, {
+        ...init, signal: execution?.signal, redirect: "follow",
+      }, {
+        baseUrl: origin,
+        timeoutMs: 10_000,
+        validateUrl: () => execution?.assertAuthority?.(),
+        beforeRequest: rateLimiter ? hop => rateLimiter.acquire(hop) : undefined,
+      });
+      rateLimiter?.noteResponse(response.url, response);
+      return response;
+    };
 
     try {
       const result = await runWpFingerprint({
         target: base,
         fetchImpl: wrappedFetch,
+        advisoryFetchImpl: advisoryFetch,
         maxPluginProbes: (args.max_plugin_probes as number) ?? 40,
         maxVulnerablePluginProbes: (args.max_vulnerable_plugin_probes as number) ?? 40,
         skipOsv: (args.skip_osv as boolean) ?? false,

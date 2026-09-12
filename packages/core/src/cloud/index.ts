@@ -19,7 +19,15 @@ export {
   CloudForbiddenError,
   CloudNetworkError,
 } from "./client.js";
-export type { CloudClientOptions, CloudHealthResponse, FetchImpl } from "./client.js";
+export type {
+  CloudClientOptions,
+  CloudHealthResponse,
+  FetchImpl,
+  InferenceModel,
+  InferenceModelsResponse,
+  InferenceAccountResponse,
+  InferenceUsageResponse,
+} from "./client.js";
 
 export {
   WindowsEvidenceWorkerClient,

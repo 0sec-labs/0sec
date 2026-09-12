@@ -4,6 +4,7 @@ import {
   runJsRecon,
   enumerateJsChunkUrls,
   ScopePolicy,
+  fetchScoped,
   type JsReconResult,
   type FetchTextResult,
 } from "@0sec/core";
@@ -67,18 +68,14 @@ export function registerJsReconCommand(program: Command): void {
         return;
       }
 
-      const fetchText = async (target: string): Promise<FetchTextResult> => {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), timeout);
-        try {
-          const res = await fetch(target, { signal: ctrl.signal });
-          const body = await res.text();
-          return { status: res.status, body };
-        } catch {
-          return { status: 0, body: "" };
-        } finally {
-          clearTimeout(t);
-        }
+      const fetchText = async (target: string): Promise<FetchTextResult & { url: string }> => {
+        const res = await fetchScoped(
+          target,
+          { redirect: "follow" },
+          { baseUrl: url, scope, timeoutMs: timeout },
+        );
+        const body = await res.text();
+        return { status: res.status, body, url: res.url };
       };
 
       // Step 1: fetch the page and extract its <script src> bundle URLs. The
@@ -89,8 +86,15 @@ export function registerJsReconCommand(program: Command): void {
         process.exitCode = 2;
         return;
       }
-      const page = await fetchText(url);
-      const scriptUrls = page.status === 200 && page.body ? enumerateJsChunkUrls(page.body, url) : [];
+      let page: FetchTextResult & { url: string };
+      try {
+        page = await fetchText(url);
+      } catch (err) {
+        console.error(chalk.red(`Failed to fetch target page: ${err instanceof Error ? err.message : String(err)}`));
+        process.exitCode = 2;
+        return;
+      }
+      const scriptUrls = page.status === 200 && page.body ? enumerateJsChunkUrls(page.body, page.url) : [];
 
       // Step 2: mine the bundles. runJsRecon re-checks every URL against scope
       // before fetching, so scope is enforced at both the page and bundle leg.

@@ -61,7 +61,7 @@ export type { ScanEvent, ScanListener, ScanEventType } from "./scanner.js";
 export { agenticScan } from "./agentic-scanner.js";
 export type { AgenticScanOptions } from "./agentic-scanner.js";
 export { createScanContext, addFinding, addAttackResult, finalize } from "./context.js";
-export { sendPrompt, extractResponseText, isMcpTarget } from "./http.js";
+export { sendPrompt, extractResponseText, isMcpTarget, fetchScoped, type ScopedHttpPolicy } from "./http.js";
 export { createRuntime, ProcessRuntime, LlmApiRuntime, QuotaExhaustedError, OperatorAbortError, parseUsageLimitReached, OpenRouterRuntime, DEFAULT_ENSEMBLE_MODELS, RUNTIME_REGISTRY, pickRuntimeForStage, detectAvailableRuntimes, getRuntimeInfo } from "./runtime/index.js";
 export type { Runtime, RuntimeConfig, RuntimeContext, RuntimeResult, RuntimeType, NativeRuntime, NativeMessage, NativeContentBlock, NativeToolDef, NativeRuntimeResult, OpenRouterConfig, UsageLimitDetails } from "./runtime/index.js";
 export { buildDeepScanPrompt, buildMcpAuditPrompt, buildSourceAnalysisPrompt } from "./prompts.js";
@@ -1891,6 +1891,9 @@ export type {
   PluginVersionRecord,
   PluginListEntry,
 } from "./plugins/executable.js";
+export { LiveHarnessHost, parseHarnessGenerationSpec } from "./plugins/live-harness.js";
+export type { LiveHarnessOptions } from "./plugins/live-harness.js";
+export { getWorkspaceHarnessTrust, setWorkspaceHarnessTrust } from "./plugins/harness-trust.js";
 export type { ExecutablePluginConfiguration } from "./agent/executable-plugins.js";
 export type { InteractiveExecutionChannel } from "./runtime/interactive.js";
 // ── Third-party plugin lifecycle (install → enable → run → hot-swap) ──────────
@@ -2194,6 +2197,10 @@ export type {
   LoadCloudCredentialsOptions,
   CloudClientOptions,
   CloudHealthResponse,
+  InferenceModel,
+  InferenceModelsResponse,
+  InferenceAccountResponse,
+  InferenceUsageResponse,
   WindowsEvidenceStoredBlob,
   WindowsEvidenceSubmissionReceipt,
   WindowsEvidenceWorkerBlob,

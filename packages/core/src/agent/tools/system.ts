@@ -218,22 +218,42 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
   self_extend: {
     name: "self_extend",
     description:
-      "Create or update executable TypeScript tools, reusable skills, and agent programs in the configured sandbox. " +
-      "For submit, provide manifest, files, entry, and optionally kind (tool, skill, agent). " +
-      "The entry exports async run(toolName, args, sdk); compose behavior with sdk.callTool, sdk.callSkill, " +
-      "and sdk.callModel. Declare compute for guest-only computation, model-call for provider access, " +
-      "and applicable network/filesystem-read/filesystem-write/process-exec/findings-write capabilities. " +
-      "Code never executes in the host harness. Active versions persist for reuse; existing invocations remain pinned. " +
-      "Structural activation is not proof of semantic improvement. Use evolve with a controller-owned profile " +
-      "for evaluated improvement, list to discover reusable code/versions, or rollback to restore an earlier version.",
+      "Write and activate executable tools, skills, agent programs, and live harness services during this session. " +
+      "submit installs sandboxed TypeScript: provide manifest, files, entry, and optional kind (tool, skill, agent). " +
+      "Export async run(toolName, args, sdk); use sdk.callTool, sdk.callSkill, sdk.callModel with declared capabilities. " +
+      "Use evolve with a controller-owned profile for evaluated improvement, list for retained executable versions, " +
+      "or rollback for an executable version. Structural activation alone does not prove improvement. " +
+      "harness_submit queues a complete generation graph {label, providers:[{id,requires?,services,source}]}. " +
+      "Services are agent.driver (root request/decision behavior) and ui.view (views, commands, settings). " +
+      "Sandboxed source is {kind:'sandboxed',pluginId,versionId,toolName}, referencing a retained executable version; " +
+      "its run receives {phase:'activate'|'driver'|'view'|'dispose',state,input} and returns {state,output}. " +
+      "Trusted source is {kind:'trusted',entry,files,ui?:{tui?,web?}}; self-contained ESM exports activate(ctx,previousState), " +
+      "returning driver(request,executionContext), view(input), and/or dispose(). ctx owns state and scoped cleanup. " +
+      "Trusted host code requires a SEPARATE operator workspace grant; this tool cannot grant trust. " +
+      "UI entry modules default-export a React component factory; sandboxed UI output is data, never source. " +
+      "harness_list shows the current generation/catalog; harness_rollback restores a retained generation; " +
+      "harness_disable restores builtin behavior. Pending generations activate at a request boundary without " +
+      "restarting the conversation; state migrates and existing calls stay pinned. These live-session guarantees " +
+      "are not crash-safe campaign persistence. No authorization, credential, or evaluation-policy override is accepted.",
     parameters: {
-      action: { type: "string", enum: ["submit", "list", "evolve", "rollback"], description: "Lifecycle operation; defaults to submit." },
+      action: {
+        type: "string",
+        enum: ["submit", "list", "evolve", "rollback", "harness_submit", "harness_list", "harness_rollback", "harness_disable"],
+        description: "Executable or live harness lifecycle operation; defaults to submit.",
+      },
       files: { type: "object", description: "Relative source paths mapped to complete UTF-8 contents. Required for submit." },
       entry: { type: "string", description: "Relative TypeScript entry path exporting run(toolName, args, sdk). Required for submit." },
       kind: { type: "string", enum: ["tool", "skill", "agent"], description: "Executable contribution kind; defaults to tool." },
       plugin_id: { type: "string", description: "Plugin ID for evolve or rollback." },
       version_id: { type: "string", description: "Retained version to restore for rollback." },
       profile: { type: "string", description: "Controller-owned evaluation profile name for evolve." },
+      generation_id: { type: "string", description: "Retained harness generation for harness_rollback; omit to restore the previous generation." },
+      generation: {
+        type: "object",
+        description: "Complete graph for harness_submit: {label, providers:[{id, requires?:string[], services:('agent.driver'|'ui.view')[], source}]}. " +
+          "Sandbox source: {kind:'sandboxed', pluginId, versionId, toolName}. Trusted source: {kind:'trusted', entry, files:{relativePath:sourceText}, ui?:{tui,web}}. " +
+          "Trusted ESM requires a separate existing operator grant. No trust/configuration grant is accepted here.",
+      },
       manifest: {
         type: "object",
         description:

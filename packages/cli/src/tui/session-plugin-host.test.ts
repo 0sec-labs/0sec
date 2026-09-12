@@ -27,6 +27,7 @@ class FakeHost {
     private readonly opts: FakeHostOpts,
   ) {}
   async load(id: string): Promise<{ ok: boolean; pluginId: string; tools?: string[]; errors?: string[] }> {
+    if (this.shutdownCalled) throw new Error("Host is closed");
     if (this.opts.throwIds?.has(id)) throw new Error("boom");
     // The loader is the enablement authority: a non-enabled id never loads.
     if (!this.enabled.includes(id)) return { ok: false, pluginId: id, errors: ["not enabled"] };
@@ -169,6 +170,28 @@ describe("SessionPluginHostManager — refresh + reconstruction", () => {
     expect(changed).toHaveBeenCalledTimes(1);
     expect(changed.mock.calls[0][0] as unknown as FakeHost).toBe(built[1]);
     expect(mgr.current() as unknown as FakeHost).toBe(built[1]);
+  });
+
+  it("keeps a leased session usable through refresh and manager shutdown", async () => {
+    const onDisk = { ids: ["a.one"] };
+    const { factory } = makeHostFactory();
+    const mgr = await createSessionPluginHostManager({ core: makeCore(onDisk), hostFactory: factory });
+    const session = mgr.acquire();
+    onDisk.ids = ["b.two"];
+    await mgr.refresh();
+    const next = mgr.acquire();
+
+    expect((await session.host.load("a.one")).ok).toBe(true);
+    expect((await next.host.load("b.two")).ok).toBe(true);
+    expect((await session.host.load("b.two")).ok).toBe(false);
+    mgr.dispose();
+    expect((await session.host.load("a.one")).ok).toBe(true);
+    session.release();
+    session.release();
+    await expect(session.host.load("a.one")).rejects.toThrow("Host is closed");
+    expect((await next.host.load("b.two")).ok).toBe(true);
+    next.release();
+    await expect(next.host.load("b.two")).rejects.toThrow("Host is closed");
   });
 
   it("does NOT reconstruct when the enabled set is unchanged", async () => {

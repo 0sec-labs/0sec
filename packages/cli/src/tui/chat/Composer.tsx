@@ -1,12 +1,13 @@
 /** @jsxImportSource @opentui/react */
 import React from "react";
+import stringWidth from "string-width";
 import type { BorderSides } from "@opentui/core";
 import type { Theme } from "../theme-context.js";
 import type { TuiSettings } from "../settings.js";
 import { fitTuiText, sanitizeComposerText } from "../text.js";
 
-/** The composer rail draws a single LEFT border (OpenCode's look). */
-const RAIL_SIDES: BorderSides[] = ["left"];
+/** Horizontal rules frame input without turning it into another card. */
+const RAIL_SIDES: BorderSides[] = ["top", "bottom"];
 
 /**
  * A comfortable empty composer is a small card, not a single cramped line:
@@ -23,12 +24,7 @@ export const COMPOSER_MIN_ROWS = 3;
  */
 export const COMPOSER_MAX_ROWS = 8;
 
-/** Display width of a string in cells (code points), matching markdown.ts. */
-function cellCount(text: string): number {
-  let n = 0;
-  for (const _ of text) n += 1;
-  return n;
-}
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /**
  * The block-cursor glyph. Standard terminal behaviour: a FILLED block when the
@@ -69,22 +65,22 @@ export function wrapComposerInput(text: string, width: number): string[] {
       row = "";
       rowW = 0;
     };
-    for (let tok of tokens) {
-      let tw = cellCount(tok);
-      while (rowW + tw > w) {
-        if (rowW === 0) {
-          if (tw <= w) break; // fits on a fresh row on its own
-          // Longer than a whole row: hard-split at the width boundary.
-          const chars = Array.from(tok);
-          row = chars.slice(0, w).join("");
-          rowW = w;
-          tok = chars.slice(w).join("");
-          tw = cellCount(tok);
-        }
-        pushRow();
+    for (const tok of tokens) {
+      const tw = stringWidth(tok);
+      if (tw <= w) {
+        if (rowW + tw > w) pushRow();
+        row += tok;
+        rowW += tw;
+        continue;
       }
-      row += tok;
-      rowW += tw;
+      // Split long tokens only between graphemes. CJK and emoji occupy two
+      // cells; combining marks and joined emoji must stay with their base.
+      for (const { segment } of GRAPHEMES.segment(tok)) {
+        const cells = stringWidth(segment);
+        if (rowW + cells > w && row) pushRow();
+        row += segment;
+        rowW += cells;
+      }
     }
     pushRow();
   }
@@ -103,7 +99,7 @@ export function composerContentRows(text: string, width: number): string[] {
   const wrapped = wrapComposerInput(text, w);
   const rows = wrapped.length === 0 ? [""] : wrapped;
   const last = rows[rows.length - 1] ?? "";
-  if (cellCount(last) >= w) rows.push("");
+  if (stringWidth(last) >= w) rows.push("");
   return rows.length > COMPOSER_MAX_ROWS ? rows.slice(rows.length - COMPOSER_MAX_ROWS) : rows;
 }
 
@@ -151,21 +147,17 @@ export function ComposerInput({
 }) {
   const { TEXT, MUTED } = theme;
   if (composing) {
-    const rows = composerContentRows(text, textWidth);
+    const rows = composerContentRows(sanitizeComposerText(text).replace(/\t/g, "    "), textWidth);
     const cursor = composerCursorGlyph(active);
     return (
       <box flexDirection="column" minWidth={0}>
         {rows.map((line, i) => {
           const isLast = i === rows.length - 1;
-          // Preserve whitespace exactly (NOT fitTuiText, which collapses+trims):
-          // `wrapComposerInput` already bounds each row to `textWidth` and keeps
-          // every space, and `composerContentRows` guarantees the last row has a
-          // free cell, so a trailing space the operator just typed shows and the
-          // caret advances past it. Only control chars are stripped.
-          const shown = sanitizeComposerText(line);
+          // Sanitize before wrapping, and expand tabs for display only. The
+          // submitted draft retains its original whitespace.
           return (
             <text key={`composer-line-${i}`} fg={TEXT}>
-              {isLast ? `${shown}${cursor}` : shown}
+              {isLast ? `${line}${cursor}` : line}
             </text>
           );
         })}
@@ -201,7 +193,7 @@ export function ComposerFrame({
   padY?: number;
   children: React.ReactNode;
 }) {
-  const { PRIMARY, MUTED, BORDER, PANEL_ALT } = theme;
+  const { PRIMARY, BORDER, PANEL_ALT } = theme;
   if (style === "border") {
     return (
       <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} border borderColor={active ? PRIMARY : BORDER} backgroundColor={PANEL_ALT} paddingX={1} paddingTop={padY} paddingBottom={padY}>
@@ -210,13 +202,8 @@ export function ComposerFrame({
     );
   }
   if (style === "rail") {
-    // OpenCode's composer: a single LEFT-border rail — one connected accent
-    // rule, not a stack of `│` glyphs — over a subtle element background, with
-    // the input padded off the rail (paddingLeft) and a row of breathing room
-    // above and below (paddingTop/Bottom) so an EMPTY composer reads as a
-    // comfortable card instead of a top-anchored cavern. The bordered box grows
-    // with the wrapped input on its own, so there is no manual rail-row count to
-    // keep in sync. Rail accents to PRIMARY when focused, BORDER when not.
+    // Two border rows replace the old vertical padding, preserving the
+    // composer's height budget. Input keeps its existing four-cell inset.
     return (
       <box
         flexDirection="column"
@@ -225,16 +212,11 @@ export function ComposerFrame({
         flexShrink={0}
         border={RAIL_SIDES}
         borderColor={active ? PRIMARY : BORDER}
-        backgroundColor={PANEL_ALT}
-        // Chrome from the outer edge to the input text is border(1)+padLeft(1)+
-        // the "› " prefix(2) = 4 cells — exactly the old rail(1)+margin(1)+
-        // prefix(2) budget — so the existing composerTextWidth math still holds
-        // and the input can't overrun. No right padding: the input box is
-        // explicitly width-sized, so a right pad would only steal a column.
-        paddingLeft={1}
+        backgroundColor={theme.CANVAS}
+        paddingLeft={2}
         paddingRight={0}
-        paddingTop={1 + padY}
-        paddingBottom={1 + padY}
+        paddingTop={padY}
+        paddingBottom={padY}
       >
         {children}
       </box>

@@ -685,7 +685,7 @@ export function herdDetailLines(
   push(peer.id, "title");
   separate();
 
-  push(`Status: ${herdStatusLabel(status).toLowerCase()}`, statusTone(status));
+  push(`${herdRowMarker(status)} ${herdStatusLabel(status).toLowerCase()}`, statusTone(status));
   push(`Kind: ${peer.kind === "subagent" ? "subagent" : "session"}`, "muted");
   const pid = Number.isFinite(peer.pid) ? Math.trunc(peer.pid) : 0;
   push(`PID: ${pid}`, "muted");
@@ -1228,7 +1228,7 @@ export function focusHeaderLines(
   separate();
 
   if (record) {
-    push(`Status: ${subagentStatusLabel(record.status)}`, focusStatusTone(record.status));
+    push(`${herdRowMarker(statusPhase(record.status))} ${subagentStatusLabel(record.status)}`, focusStatusTone(record.status));
     // Show turn progress as a plain count, not `turn/maxTurns` — the budget cap
     // is an internal guardrail, and surfacing it here reads as an arbitrary
     // "limit" on the subagent rather than useful progress.
@@ -1253,7 +1253,7 @@ export function focusHeaderLines(
     }
   } else {
     const status = herdStatusOf(peer, now);
-    push(`Status: ${herdStatusLabel(status).toLowerCase()}`, statusTone(status));
+    push(`${herdRowMarker(status)} ${herdStatusLabel(status).toLowerCase()}`, statusTone(status));
     push(`Kind: ${peer.kind === "subagent" ? "subagent" : "session"}`, "muted");
     const a = peer.activity;
     if (a && typeof a.turn === "number") {

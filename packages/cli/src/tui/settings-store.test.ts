@@ -339,6 +339,41 @@ describe("store: write target", () => {
     expect(readProjectOverrides(project)).toEqual({ density: "compact" });
     expect(loadGlobalSettings(home).density).toBe(DEFAULT_SETTINGS.density);
   });
+
+  it("persists operator consent globally even inside a configured project", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    writeProjectRaw(project, { density: "compact" });
+    configureSettingsStore({ homeDir: home, projectDir: project });
+
+    expect(updateSetting("diagnosticReporting", "automatic")).toBe(true);
+    expect(updateSetting("updatePolicy", "notify")).toBe(true);
+    expect(updateSetting("diagnosticReportingPrompted", true)).toBe(true);
+    expect(loadGlobalSettings(home).diagnosticReporting).toBe("automatic");
+    expect(loadGlobalSettings(home).updatePolicy).toBe("notify");
+    expect(loadGlobalSettings(home).diagnosticReportingPrompted).toBe(true);
+    expect(readProjectOverrides(project)).toEqual({ density: "compact" });
+  });
+
+  it("rejects project consent writes without changing effective policy or notifying", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    writeProjectRaw(project, { density: "compact" });
+    configureSettingsStore({ homeDir: home, projectDir: project });
+    const before = getSettings();
+    const notified = vi.fn();
+    subscribeSettings(notified);
+
+    expect(updateSetting("diagnosticReporting", "automatic", { scope: "project" })).toBe(false);
+    expect(updateSetting("updatePolicy", "automatic", { scope: "project" })).toBe(false);
+    expect(updateSetting("diagnosticReportingPrompted", true, { scope: "project" })).toBe(false);
+    expect(getSettings()).toBe(before);
+    expect(notified).not.toHaveBeenCalled();
+    expect(loadGlobalSettings(home).diagnosticReporting).toBe("off");
+    expect(loadGlobalSettings(home).updatePolicy).toBe("off");
+    expect(loadGlobalSettings(home).diagnosticReportingPrompted).toBe(false);
+    expect(readProjectOverrides(project)).toEqual({ density: "compact" });
+  });
 });
 
 describe("previewSetting", () => {

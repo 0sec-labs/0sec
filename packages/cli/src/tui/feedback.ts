@@ -25,8 +25,10 @@
  *
  * So the rules encoded below are:
  *
- *   - **Never automatic.** There is no "always send" setting and no retry
- *     queue. Every transmission is one explicit human action for one message.
+ *   - **Never automatic.** The transport never initiates on its own and has
+ *     no retry queue. Every transmission requires explicit caller consent —
+ *     the existence of diagnostic or feedback data is never taken as implicit
+ *     permission to transmit.
  *   - **Previewable.** {@link buildSubmitPreview} returns the literal bytes
  *     and the literal headers that would go on the wire, so the operator can
  *     read the hostname before it leaves rather than trusting a summary.
@@ -303,7 +305,10 @@ export function submissionBlockedReason(
   for (const name of FEEDBACK_OPT_OUT_ENV) {
     if (isOptOutSet(env[name])) return "opt-out";
   }
-  const target = resolveFeedbackTarget(env, options);
+  return targetBlockedReason(resolveFeedbackTarget(env, options));
+}
+
+function targetBlockedReason(target: FeedbackTarget | null): SubmitSkipReason | null {
   if (target === null) return "no-endpoint";
   let parsed: URL;
   try {
@@ -435,6 +440,20 @@ export interface SubmitOptions extends FeedbackResolveOptions {
   /** Injected transport, matching the repo's `fetchImpl` convention. */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /**
+   * When set, the transport re-derives the current endpoint, body, and
+   * redacted-authorization headers and rejects (zero POST) if they differ
+   * from the reviewed preview. This protects the operator from sending to a
+   * destination they did not explicitly approve — the preview shown in the
+   * confirmation dialog is locked to the bytes that actually go on the wire.
+   *
+   * The check runs after opt-out/auth availability (which are re-evaluated
+   * from live state, not pinned from the preview), so a credential that was
+   * valid at preview time but has since been revoked still correctly blocks.
+   * The redacted-header comparison prevents token-identity drift; the actual
+   * token value is never compared or persisted.
+   */
+  expectedPreview?: SubmitPreview;
 }
 
 /**
@@ -454,11 +473,35 @@ export async function submitFeedback(
   if (blocked !== null) return { ok: false, skipped: blocked, error: describeSkip(blocked) };
 
   const target = resolveFeedbackTarget(env, opts);
+  const targetBlocked = targetBlockedReason(target);
+  if (targetBlocked !== null) return { ok: false, skipped: targetBlocked, error: describeSkip(targetBlocked) };
   if (target === null) return { ok: false, skipped: "no-endpoint", error: describeSkip("no-endpoint") };
 
   const body = serializePayload(payload);
   if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) {
     return { ok: false, error: `Message too large to submit (limit ${MAX_BODY_BYTES} bytes).` };
+  }
+
+  // Re-derive the current preview shape and reject if it no longer matches
+  // the caller's reviewed preview. The token is never compared — only the
+  // redacted form, so token rotation between preview and send still allows
+  // submission (the redacted form is always "Bearer <redacted>").
+  const reviewed = opts.expectedPreview;
+  if (reviewed !== undefined) {
+    const currentHeaders = requestHeaders(target, true);
+
+    if (
+      target.url !== reviewed.url ||
+      body !== reviewed.body ||
+      Object.keys(currentHeaders).length !== Object.keys(reviewed.headers).length ||
+      !Object.keys(currentHeaders).every((k) => currentHeaders[k] === reviewed.headers[k])
+    ) {
+      return {
+        ok: false,
+        error:
+          "Reviewed feedback destination has changed. Preview the updated submission before sending again.",
+      };
+    }
   }
 
   const doFetch = opts.fetchImpl ?? fetch;
@@ -486,6 +529,7 @@ export async function submitFeedback(
         headers: requestHeaders(target),
         body,
         signal: controller.signal,
+        redirect: "error",
       });
       return response.ok
         ? { ok: true, status: response.status }
@@ -500,4 +544,69 @@ export async function submitFeedback(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic auto-report
+// ---------------------------------------------------------------------------
+
+export interface DiagnosticInfo {
+  kind: "tool" | "runtime";
+  version: string;
+  platform: string;
+  arch: string;
+  runtime: string;
+  runtimeVersion: string;
+  toolName?: string;
+  /** Used only for a finite error category, never message/stack/output. */
+  error?: unknown;
+  timestamp?: string;
+}
+
+export const MAX_DIAGNOSTIC_MESSAGE_BYTES = 512;
+const DIAGNOSTIC_PLATFORMS = new Set(["darwin", "linux", "win32", "aix", "freebsd", "openbsd", "sunos"]);
+const DIAGNOSTIC_ARCHS = new Set(["x64", "arm64", "arm", "ia32", "s390", "mips", "ppc64"]);
+const DIAGNOSTIC_RUNTIMES = new Set(["node", "bun", "deno"]);
+
+function diagnosticError(error: unknown): string {
+  try {
+    if (error instanceof TypeError) return "TypeError";
+    if (error instanceof ReferenceError) return "ReferenceError";
+    if (error instanceof SyntaxError) return "SyntaxError";
+    if (error instanceof RangeError) return "RangeError";
+    if (error instanceof URIError) return "URIError";
+    if (error instanceof EvalError) return "EvalError";
+    if (error instanceof Error) return "Error";
+  } catch { /* A hostile proxy must not break error reporting. */ }
+  return "unknown";
+}
+
+/** Numeric release identity only; custom build labels may contain private data. */
+function diagnosticVersion(raw: string): string {
+  if (typeof raw !== "string" || raw.length > 128) return "unknown";
+  return /^v?(\d{1,6}\.\d{1,6}\.\d{1,6})(?:[-+][a-zA-Z0-9.+-]+)?$/.exec(raw)?.[1] ?? "unknown";
+}
+
+/**
+ * Finite diagnostics only. Arbitrary tool names, error text, build suffixes,
+ * paths and environment values never enter the existing feedback wire body.
+ * This builder performs no I/O and grants no permission to transmit.
+ */
+export function buildDiagnosticFeedback(info: DiagnosticInfo): FeedbackPayload {
+  const kind = info.kind === "tool" ? "tool" : info.kind === "runtime" ? "runtime" : "unknown";
+  const platform = DIAGNOSTIC_PLATFORMS.has(info.platform) ? info.platform : "unknown";
+  const arch = DIAGNOSTIC_ARCHS.has(info.arch) ? info.arch : "unknown";
+  const runtime = DIAGNOSTIC_RUNTIMES.has(info.runtime) ? info.runtime : "unknown";
+  const runtimeVersion = diagnosticVersion(info.runtimeVersion);
+  const version = diagnosticVersion(info.version);
+  const timestamp = typeof info.timestamp === "string"
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(info.timestamp)
+    && Number.isFinite(Date.parse(info.timestamp)) ? info.timestamp : new Date().toISOString();
+  // All interpolated values are finite labels or bounded numeric versions;
+  // the complete UTF-8 message remains below MAX_DIAGNOSTIC_MESSAGE_BYTES.
+  return {
+    message: `Diagnostic: ${kind} error — ${platform}/${arch} on ${runtime} ${runtimeVersion}\nVersion: ${version}\nError: ${diagnosticError(info.error)}`,
+    timestamp,
+    version,
+  };
 }

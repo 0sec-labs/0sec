@@ -226,7 +226,7 @@ export function ResumeScreen({
     ? (items.find((item) => item.id === pendingDelete)?.label ?? "this session")
     : "";
   const statusText = pendingDelete
-    ? `Delete "${pendingLabel}"? press del again to confirm · esc cancel`
+    ? `\uf071 Delete "${pendingLabel}"? press del again to confirm · esc cancel`
     : deleteError
       ? deleteError
       : "";
@@ -319,9 +319,10 @@ export function ResumeScreen({
     if (key.ctrl || key.meta || key.option) return;
     if (key.name === "escape") {
       if (pendingDeleteRef.current) setPendingDelete(null);
-      else if (filteringRef.current) setFiltering(false);
-      else if (filterRef.current) setQuery("");
-      else onBack();
+      else if (filteringRef.current || filterRef.current) {
+        setFiltering(false);
+        setQuery("");
+      } else onBack();
       return;
     }
     if (key.name === "up") return move(-1);
@@ -402,12 +403,12 @@ export function ResumeScreen({
   // Empty-state guidance text, context-aware.
   const totalAll = visibleSessions.length;
   const emptyText = (() => {
-    if (filter) return "no sessions match this filter";
+    if (filter) return "\uf002 no sessions match this filter";
     if (scopedSessions.length === 0 && scope === "project" && hasOtherSessions && totalAll > 0) {
-      return 'no sessions saved in this project — press Tab to browse all projects';
+      return '\uf115 no sessions in this project — press Tab to browse all';
     }
-    if (totalAll === 0 && filter.length === 0) return "no saved sessions to resume";
-    return "no sessions to show";
+    if (totalAll === 0 && filter.length === 0) return "\u{f0051} no saved sessions to resume";
+    return "\uf002 no sessions to show";
   })();
 
   const body = (
@@ -417,7 +418,7 @@ export function ResumeScreen({
         cursor={cursor}
         panel={panel}
         query={filter}
-        placeholder="type to filter sessions"
+        placeholder={"\uf002 type to filter sessions"}
         gutter={items.some((item) => item.current === true)}
         isCurrent={(item) => item.current === true}
         renderDetail={renderDetail}

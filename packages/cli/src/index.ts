@@ -97,6 +97,7 @@ import {
   registerUpgradeCommand,
   registerH1Command,
   registerAuthCommand,
+  registerHostedCommand,
   registerIntelCommand,
   registerReconCommand,
   registerConsoleCommand,
@@ -118,22 +119,23 @@ import {
   registerConfigCommand,
 } from "./commands/index.js";
 import { detectAndRoute } from "./routing.js";
-import { maybeNotifyUpdate } from "./utils/update-check.js";
+import { runStartupUpdate } from "./utils/update-check.js";
 import { enforceSourceDistFreshness } from "./source-freshness.js";
 
 enforceSourceDistFreshness({ entryUrl: import.meta.url });
 
 
-// Fire-and-forget update check. It only runs when 0SEC_UPDATE_CHECK=1;
-// otherwise normal commands make no update request or cache write.
-void maybeNotifyUpdate(VERSION);
+// Explicit automatic updates finish before command parsing or interactive work.
+// Notification-only checks stay in the background; unset settings remain opt-in.
+await runStartupUpdate(VERSION);
 
 const program = new Command();
 
 program
   .name("0sec")
   .description("Open-source multi-model security research harness")
-  .version(VERSION);
+  .version(VERSION)
+  .enablePositionalOptions();
 
 registerScanCommand(program);
 registerResumeCommand(program);
@@ -169,6 +171,7 @@ registerCveCommand(program);
 registerUpgradeCommand(program);
 registerH1Command(program);
 registerAuthCommand(program);
+registerHostedCommand(program);
 registerIntelCommand(program);
 registerReconCommand(program);
 registerConsoleCommand(program);
@@ -221,7 +224,7 @@ async function showInteractiveMenu(): Promise<void> {
 
 // ── Entry point ──
 const userArgs = process.argv.slice(2);
-const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "fix", "file-review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "identity", "adgraph", "entragraph", "cloud", "xnu-fuzz", "research", "timeline", "console", "agent-assure", "binary", "plugin", "theme", "config", "evolve", "help"];
+const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "fix", "file-review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "login", "models", "balance", "intel", "recon", "js-recon", "npm-discovery", "identity", "adgraph", "entragraph", "cloud", "xnu-fuzz", "research", "timeline", "console", "agent-assure", "binary", "plugin", "theme", "config", "evolve", "help"];
 
 if (userArgs.length === 0) {
   showInteractiveMenu().catch((err) => {

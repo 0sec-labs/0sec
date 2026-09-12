@@ -1,11 +1,11 @@
 /** @jsxImportSource @opentui/react */
 import { appendFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CliRenderEvents, createCliRenderer, type CliRenderer, type KeyEvent } from "@opentui/core";
 import { AppContext, createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { VERSION, type Finding, type FindingTriageStatus } from "@0sec/shared";
-import type { NativeRuntime, SourceFixResult, SourceFixStatus } from "@0sec/core";
+import type { ConsoleSession, NativeRuntime, SourceFixResult, SourceFixStatus } from "@0sec/core";
 import { resolveEngagement } from "../engagement-plan.js";
 import { getRuntimeAvailability } from "../utils.js";
 import { buildFindingChatPrompt, loadFindingFocus } from "../finding-focus.js";
@@ -32,13 +32,15 @@ import {
 } from "./chat-screen.js";
 import { HerdScreen } from "./herd-screen.js";
 import { SettingsScreen } from "./settings-screen.js";
+import { HarnessProvider } from "./harness-context.js";
+import { HarnessControlsPanel, HarnessTrustBadge } from "./harness-trust-controls.js";
 import { ModelScreen } from "./model-screen.js";
 import { ResumeScreen } from "./resume-screen.js";
 import { listSessions, loadSession, deleteSession } from "./session-store.js";
 import { MarketScreen } from "./market-screen.js";
 import { createPluginService } from "./plugin-service.js";
 import { createSessionPluginHostManager, type SessionPluginHostManager } from "./session-plugin-host.js";
-import { TOOL_DEFINITIONS } from "@0sec/core";
+import { connectMcpServers, parseMcpConfig, TOOL_DEFINITIONS } from "@0sec/core";
 import { ConnectScreen } from "./connect-screen.js";
 import type { ConnectionRecovery } from "./connection-recovery.js";
 import { UsageScreen } from "./usage-screen.js";
@@ -97,6 +99,7 @@ type ConsoleRoute =
   | { type: "findings"; options: FindingsScreenOptions }
   | { type: "replay"; dbPath?: string; scanId?: string }
   | { type: "settings" }
+  | { type: "harness" }
   | { type: "herd" }
   | { type: "market" }
   | { type: "connect"; recovery?: ConnectionRecovery }
@@ -119,6 +122,7 @@ interface ShellNav {
    * none re-enters chat with its defaults, which is what the palette does.
    */
   openChat: (options?: ChatScreenOptions) => void;
+  openNewChat: () => void;
   openLauncher: () => void;
   openOps: () => void;
   openDoctor: () => void;
@@ -126,6 +130,7 @@ interface ShellNav {
   openFindings: () => void;
   openReplay: (scanId?: string) => void;
   openSettings: () => void;
+  openHarness: () => void;
   /** Opens the model picker above the live conversation. */
   openModels: (chatOptions?: ChatScreenOptions) => void;
   openResume: (chatOptions?: ChatScreenOptions) => void;
@@ -801,6 +806,13 @@ function createShellCommands(shell?: ShellNav): PaletteCommand[] {
       action: shell.openChat,
     },
     {
+      id: "nav-new-chat",
+      title: "New chat",
+      category: "Session",
+      description: "Start a fresh session with the selected model and connection",
+      action: shell.openNewChat,
+    },
+    {
       id: "nav-launcher",
       title: "Run engagement",
       category: "Engagement",
@@ -861,6 +873,13 @@ function createShellCommands(shell?: ShellNav): PaletteCommand[] {
       keybind: "8",
       suggested: true,
       action: shell.openSettings,
+    },
+    {
+      id: "nav-harness",
+      title: "Live harness",
+      category: "Session",
+      description: "Views, commands, settings, rollback and workspace trust",
+      action: shell.openHarness,
     },
     {
       id: "nav-models",
@@ -2246,7 +2265,7 @@ function DoctorScreen({ onExit, shell }: { onExit: () => void; shell?: ShellNav 
         if (!alive) return;
         const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
         setState({
-          nodeOk: nodeMajor >= 20,
+          nodeOk: nodeMajor >= 24,
           nodeVersion: process.version,
           ...result,
         });
@@ -2282,7 +2301,7 @@ function DoctorScreen({ onExit, shell }: { onExit: () => void; shell?: ShellNav 
   const nextStep = !state
     ? "Checking environment"
     : !state.nodeOk
-      ? "Upgrade to Node 20+ before running 0sec."
+      ? "Upgrade to Node 24+ before running 0sec."
       : state.apiRuntime.configured && !state.apiRuntime.valid && state.apiRuntime.error
         ? "Repair the configured API runtime before scanning."
         : state.hasApiKey || state.availableRuntimes.length > 0
@@ -3775,17 +3794,35 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
  * toggle. Esc leaves, which is the binding the palette was mostly used for.
  */
 function SettingsRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) {
+  const theme = useTheme();
+  useKeyboard((key) => {
+    if (key.ctrl && key.name === "g") shell?.openHarness();
+  });
   return (
     <SettingsScreen
       onBack={() => leaveCurrentScreen(shell, onExit)}
       onExit={onExit}
       frame={({ body, hint }) => (
         <ShellFrame view="settings">
+          {shell ? (
+            <text fg={theme.ACCENT} onMouseDown={() => shell.openHarness()}>
+              Live harness · ctrl+g
+            </text>
+          ) : null}
           {body}
           <FooterBar hint={hint} />
         </ShellFrame>
       )}
     />
+  );
+}
+
+function HarnessRoute({ onBack }: { onBack: () => void }) {
+  const { width } = useTerminalDimensions();
+  return (
+    <ShellFrame view="Live harness">
+      <HarnessControlsPanel contentWidth={Math.max(1, width - 4)} onBack={onBack} />
+    </ShellFrame>
   );
 }
 
@@ -3812,7 +3849,7 @@ function HerdRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) 
   );
 }
 
-/** Routes model selection back to the always-mounted chat's runtime switch. */
+/** Select a future runtime without reconstructing the always-mounted live session. */
 function ModelRoute({
   currentModel,
   onSelect,
@@ -3832,6 +3869,7 @@ function ModelRoute({
       onExit={onExit}
       frame={({ body, hint }) => (
         <ShellFrame view="models">
+          <text>Selections apply to New chat · current runtime and conversation stay unchanged</text>
           {body}
           <FooterBar hint={hint} />
         </ShellFrame>
@@ -4103,6 +4141,7 @@ function ConsoleApp({
   onExit: () => void;
   lensEvolution?: TuiLensEvolutionController;
 }) {
+  const { width: terminalWidth } = useTerminalDimensions();
   const rootRoute: ConsoleRoute = initialRoute.type === "chat" ? initialRoute : { type: "chat" };
   const hasChatRoot = initialRoute.type === "chat";
   const [routes, setRoutes] = useState<ConsoleRoute[]>(() =>
@@ -4130,15 +4169,26 @@ function ConsoleApp({
   const chatOptionsRef = useRef(chatOptions);
   chatOptionsRef.current = chatOptions;
   const chatModelRef = useRef<{ model: string | undefined; select: (id: string) => void } | null>(null);
+  const [liveSession, setLiveSession] = useState<ConsoleSession | null>(null);
+  const [chatWorking, setChatWorking] = useState(false);
+  const [workspaceRoot] = useState(() => process.cwd());
+  const nextChatOptions = useRef<Pick<ChatScreenOptions, "model" | "providerId">>({});
+  const selectNextChatOptions = useCallback((selection: Pick<ChatScreenOptions, "model" | "providerId">) => {
+    nextChatOptions.current = { ...nextChatOptions.current, ...selection };
+  }, []);
+  const [startingChat, setStartingChat] = useState(false);
+  const startingChatRef = useRef(false);
+  const [chatTransitionError, setChatTransitionError] = useState<string | null>(null);
+  const appAlive = useRef(true);
+  useEffect(() => {
+    appAlive.current = true;
+    return () => { appAlive.current = false; };
+  }, []);
 
-  // The shell-level plugin-host manager (marketplace → live console). Created
-  // async (it loads any already-enabled plugins on start); stays null until
-  // ready, and stays null if creation fails — the chat/market then run without
-  // a shared host, exactly as before this feature. ChatScreen subscribes to the
-  // manager's onChanged itself and rebuilds its session IN PLACE (carrying the
-  // transcript), so enabling a plugin in the market no longer remounts/wipes the
-  // live console.
+  // Marketplace hosts belong to the shell; each session leases its initial
+  // approved tool set. Refresh prepares the next chat without rebuilding this one.
   const [pluginHostManager, setPluginHostManager] = useState<SessionPluginHostManager | null>(null);
+  const [pluginHostReady, setPluginHostReady] = useState(false);
   useEffect(() => {
     let disposed = false;
     let created: SessionPluginHostManager | undefined;
@@ -4150,9 +4200,12 @@ function ConsoleApp({
         }
         created = mgr;
         setPluginHostManager(mgr);
+        setPluginHostReady(true);
       })
-      .catch(() => {
-        /* fail-soft: no shared plugin host; chat + market work unchanged */
+      .catch((error) => {
+        if (disposed) return;
+        setChatTransitionError(`Marketplace tools unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        setPluginHostReady(true);
       });
     return () => {
       disposed = true;
@@ -4163,7 +4216,54 @@ function ConsoleApp({
   // an overlay (the finding-detail "Fix" action) can route a request through a
   // normal chat turn without importing the chat's internals or core tools.
   const chatSubmitRef = useRef<((text: string) => void) | null>(null);
+  const chatStagePromptRef = useRef<((text: string) => void) | null>(null);
+  const stageHarnessPrompt = useCallback((text: string) => {
+    chatStagePromptRef.current?.(text);
+    setRouteIndex(0);
+  }, []);
   const chatReconnectRef = useRef<((providerId: string) => void) | null>(null);
+  const startNewChat = async (resumeOptions?: ChatScreenOptions) => {
+    if (startingChatRef.current) return;
+    if (chatWorking) {
+      setChatTransitionError("Finish or cancel the active turn before starting a new chat.");
+      return;
+    }
+    startingChatRef.current = true;
+    setStartingChat(true);
+    setChatTransitionError(null);
+    try {
+      // Drain the existing host/accounting before applying any new-runtime pin.
+      const previous = chatOptionsRef.current;
+      if (liveSession) await liveSession.cleanup();
+      else await previous?.mcpHost?.closeAll();
+      if (!appAlive.current) return;
+      const mcpHost = previous?.mcpHost
+        ? await connectMcpServers(parseMcpConfig(process.env["0SEC_MCP"]))
+        : undefined;
+      if (!appAlive.current) {
+        await mcpHost?.closeAll();
+        return;
+      }
+      const options: ChatScreenOptions = {
+        ...previous,
+        ...nextChatOptions.current,
+        ...resumeOptions,
+        initialMessages: resumeOptions?.initialMessages,
+        initialPrompt: undefined,
+        mcpHost,
+      };
+      setLiveSession(null);
+      setChatOptions(options);
+      setChatGeneration((generation) => generation + 1);
+      setRoutes([{ type: "chat", options }]);
+      setRouteIndex(0);
+    } catch (error) {
+      if (appAlive.current) setChatTransitionError(`Could not start a new chat: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      startingChatRef.current = false;
+      if (appAlive.current) setStartingChat(false);
+    }
+  };
 
   const navigate = (route: ConsoleRoute) => {
     setRoutes((current) => {
@@ -4180,15 +4280,16 @@ function ConsoleApp({
     goBack: () => setRouteIndex((current) => Math.max(0, current - 1)),
     goForward: () => setRouteIndex((current) => Math.min(routes.length - 1, current + 1)),
     openChat: (options) => {
-      // Explicitly resuming a transcript rebuilds chat even when its model is
-      // unchanged. Plain navigation preserves the live conversation and draft.
-      if (options && (options.initialMessages !== undefined ||
-        (options.model !== undefined && options.model !== chatOptionsRef.current?.model))) {
-        setChatOptions((prev) => ({ ...prev, ...options }));
-        setChatGeneration((generation) => generation + 1);
+      if (options?.initialMessages !== undefined) {
+        void startNewChat(options);
+        return;
+      }
+      if (options?.model !== undefined) {
+        chatModelRef.current?.select(options.model);
       }
       navigate({ type: "chat", options });
     },
+    openNewChat: () => { void startNewChat(); },
     openLauncher: () => navigate({ type: "launcher" }),
     openOps: () => navigate({ type: "ops", dbPath: chatOptionsRef.current?.dbPath, refreshMs: 4000 }),
     openDoctor: () => navigate({ type: "doctor" }),
@@ -4196,6 +4297,7 @@ function ConsoleApp({
     openFindings: () => navigate({ type: "findings", options: { dbPath: chatOptionsRef.current?.dbPath, limit: 50 } }),
     openReplay: (scanId) => navigate({ type: "replay", dbPath: chatOptionsRef.current?.dbPath, scanId }),
     openSettings: () => navigate({ type: "settings" }),
+    openHarness: () => navigate({ type: "harness" }),
     openModels: (chatOpts) => navigate({ type: "models", chatOptions: chatOpts ?? chatOptionsRef.current }),
     openResume: (chatOpts) => navigate({ type: "resume", chatOptions: chatOpts ?? chatOptionsRef.current }),
     openHerd: () => navigate({ type: "herd" }),
@@ -4213,6 +4315,8 @@ function ConsoleApp({
     doctor: shell.openDoctor,
     replay: shell.openReplay,
     settings: shell.openSettings,
+    harness: shell.openHarness,
+    "new-chat": shell.openNewChat,
     models: () => shell.openModels(chatOptions),
     market: shell.openMarket,
     usage: () => shell.openUsage(chatOptions),
@@ -4351,11 +4455,16 @@ function ConsoleApp({
     ? tuiLensEvolutionStatusLabel(lensEvolutionState)
     : undefined;
   const baseChat = (
-    <AppContext.Provider value={overlayActive ? { ...appContext, keyHandler: null } : appContext}>
+    <AppContext.Provider value={overlayActive || startingChat ? { ...appContext, keyHandler: null } : appContext}>
+      {pluginHostReady ? (
       <ChatScreen
         key={`chat-${chatGeneration}`}
         options={chatOptions}
         submitHandle={chatSubmitRef}
+        stagePromptHandle={chatStagePromptRef}
+        onSessionChange={setLiveSession}
+        onWorkingChange={setChatWorking}
+        onNextChatOptions={selectNextChatOptions}
         reconnectHandle={chatReconnectRef}
         modelHandle={chatModelRef}
         pluginHostManager={pluginHostManager ?? undefined}
@@ -4377,6 +4486,7 @@ function ConsoleApp({
         onConnectionFailure={(recovery) => navigate({ type: "connect", recovery })}
         onExit={onExit}
       />
+      ) : <text>Preparing approved tools…</text>}
     </AppContext.Provider>
   );
 
@@ -4426,6 +4536,8 @@ function ConsoleApp({
     overlay = <ReplayScreen dbPath={currentRoute.dbPath} scanId={currentRoute.scanId} onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "settings") {
     overlay = <SettingsRoute onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "harness") {
+    overlay = <HarnessRoute onBack={shell.goBack} />;
   } else if (currentRoute.type === "models") {
     overlay = (
       <ModelRoute
@@ -4489,7 +4601,17 @@ function ConsoleApp({
   }
 
   return (
+    <HarnessProvider
+      host={liveSession?.harness ?? null}
+      busy={chatWorking}
+      workspaceRoot={workspaceRoot}
+      stagePrompt={stageHarnessPrompt}
+    >
     <box flexDirection="column" width="100%" height="100%">
+      <HarnessTrustBadge contentWidth={terminalWidth} onOpen={shell.openHarness} />
+      {startingChat ? <text>Closing the previous session before starting a new chat…</text> : null}
+      {chatTransitionError ? <text wrapMode="word">{chatTransitionError}</text> : null}
+      <box flexDirection="column" width="100%" flexGrow={1} minHeight={0}>
       {baseChat}
       {overlayActive && overlay ? (
         <box position="absolute" top={0} left={0} width="100%" height="100%" zIndex={100}>
@@ -4498,7 +4620,9 @@ function ConsoleApp({
           )}
         </box>
       ) : null}
+      </box>
     </box>
+    </HarnessProvider>
   );
 }
 

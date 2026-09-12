@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ToolExecutor, SELF_EXTENSION_RESERVED_TOOL_NAMES, validateSelfExtendArgs } from "./tools.js";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ToolExecutor, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "./tools.js";
 import { runNativeAgentLoop } from "./native-loop.js";
 import type { ToolContext, ToolResult } from "./types.js";
 import type { NativeRuntime, NativeRuntimeResult } from "../runtime/types.js";
 import { SelfExtensionRegistry } from "../plugins/self-extension.js";
 import { BUILTIN_GUARDS } from "../plugins/guards.js";
+import { ExecutablePluginManager } from "../plugins/executable.js";
+import { LiveHarnessHost } from "../plugins/live-harness.js";
 
 beforeEach(() => vi.stubEnv("0SEC_DISABLE_HUNT_MEMORY", "1"));
 afterEach(() => vi.unstubAllEnvs());
@@ -56,15 +61,50 @@ describe("executable self-extension boundary", () => {
     }
   });
 
-  it("does not let source submissions supply host authority", () => {
-    const parsed = validateSelfExtendArgs({
-      ...submission, guards: [() => null], origin: "operator", backend: "host",
+  it("does not turn model-supplied trust into host execution", async () => {
+    const root = mkdtempSync(join(tmpdir(), "0sec-harness-trust-boundary-"));
+    const marker = join(root, "host-code-ran");
+    const ctx = context();
+    const manager = new ExecutablePluginManager({
+      registry: ctx.selfExtension!, root: join(root, "executable"),
+      backend: "docker", image: "0sec-toolbox:qualification",
     });
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) throw new Error(parsed.error);
-    expect("guards" in parsed.args).toBe(false);
-    expect("origin" in parsed.args).toBe(false);
-    expect("backend" in parsed.args).toBe(false);
+    const harness = new LiveHarnessHost({
+      executablePlugins: manager, root: join(root, "harness"),
+      workspaceRoot: root, allowTrusted: () => false,
+    });
+    ctx.executablePlugins = manager;
+    ctx.liveHarness = harness;
+    const executor = new ToolExecutor(ctx, null);
+    try {
+      const result = await executor.execute({
+        name: "self_extend",
+        arguments: {
+          action: "harness_submit", trusted: true, allowTrusted: true, workspaceRoot: root,
+          generation: {
+            label: "Model-supplied grant",
+            providers: [{
+              id: "untrusted", services: ["agent.driver"],
+              source: {
+                kind: "trusted", entry: "main.mjs",
+                files: {
+                  "main.mjs": `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "ran"); export function activate() { return {}; }`,
+                },
+              },
+            }],
+          },
+        },
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/trust|grant/i);
+      expect(existsSync(marker)).toBe(false);
+      expect(await harness.drive({ system: "", messages: [], tools: [] }, {})).toBeUndefined();
+    } finally {
+      await harness.close();
+      await manager.close();
+      await executor.cleanup();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("reserves child-only dispatch names as well as ordinary built-ins", () => {

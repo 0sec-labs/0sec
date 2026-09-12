@@ -1,19 +1,39 @@
-type SignalName = "SIGINT" | "SIGTERM";
+type Cleanup = () => void | Promise<void>;
 
-type Cleanup = () => void;
-
+// Allows the host's 30-second disposal budget plus bounded shutdown overhead.
+const CLEANUP_BUDGET_MS = 35_000;
 const cleanups = new Set<Cleanup>();
 let installed = false;
+let stopping = false;
+let exitRequested = false;
 
-function handleSignal(): void {
-  for (const cleanup of [...cleanups]) {
-    try {
-      cleanup();
-    } catch {
-      // Signal handlers must keep draining remaining cleanup callbacks.
-    }
+function finish(message?: string): void {
+  if (exitRequested) return;
+  exitRequested = true;
+  if (message) {
+    try { process.stderr.write(`[signal-cleanup] ${message}\n`); } catch { /* Exit even if stderr is unavailable. */ }
   }
   process.exit(1);
+}
+
+async function drainCleanups(): Promise<void> {
+  const timer = setTimeout(() => finish("Cleanup deadline exceeded; resources may remain open (incomplete cleanup)."), CLEANUP_BUDGET_MS);
+  const results = await Promise.allSettled([...cleanups].map(cleanup => {
+    try { return Promise.resolve(cleanup()); }
+    catch (error) { return Promise.reject(error); }
+  }));
+  clearTimeout(timer);
+  const failed = results.filter(result => result.status === "rejected").length;
+  finish(failed ? `${failed} cleanup callback(s) failed; resource cleanup may be incomplete.` : undefined);
+}
+
+function handleSignal(): void {
+  if (stopping) {
+    finish("Repeated signal forced exit; resource cleanup may be incomplete.");
+    return;
+  }
+  stopping = true;
+  void drainCleanups();
 }
 
 function install(): void {
@@ -24,7 +44,8 @@ function install(): void {
 }
 
 function uninstallIfIdle(): void {
-  if (!installed || cleanups.size > 0) return;
+  // Keep the force-exit listener while callbacks drain, even if they unregister.
+  if (!installed || stopping || cleanups.size > 0) return;
   process.removeListener("SIGINT", handleSignal);
   process.removeListener("SIGTERM", handleSignal);
   installed = false;

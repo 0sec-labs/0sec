@@ -465,6 +465,7 @@ export class DockerRunner implements ReplayRunner {
       }
       case "docker":
         if (!step.action.image.trim()) return "Docker action is missing an image";
+        if (step.action.image.trimStart().startsWith("-")) return "Docker image must not be a command-line option";
         return {
           image: step.action.image,
           // These arguments come after the image and therefore cannot alter
@@ -561,7 +562,7 @@ export class DockerRunner implements ReplayRunner {
     if (typeof process.getuid === "function" && typeof process.getgid === "function") {
       args.push("--user", `${process.getuid()}:${process.getgid()}`);
     }
-    args.push(command.image, ...command.command);
+    args.push("--", command.image, ...command.command);
     return args;
   }
 }

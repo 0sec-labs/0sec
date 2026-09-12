@@ -25,7 +25,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { homeStateDir } from "@0sec/shared";
+import { DEFAULT_ALLOW_MODEL_SELF_EXTENSION, homeStateDir } from "@0sec/shared";
 
 import {
   DEFAULT_THEME_NAME,
@@ -179,6 +179,12 @@ export interface TuiSettings {
    * disables decorative animations (logo intro, shimmers, sweeps).
    */
   reduceMotion: boolean;
+  /** Operator-global consent; a project must never enable diagnostic egress. */
+  diagnosticReporting: "off" | "ask" | "automatic";
+  /** Internal first-use state, not a grant of reporting consent. */
+  diagnosticReportingPrompted: boolean;
+  /** Operator-global update policy; unset installations remain opted out. */
+  updatePolicy: "off" | "notify" | "automatic";
 }
 
 /** Keys of `TuiSettings` whose value is a boolean. */
@@ -212,6 +218,8 @@ type TuiSettingDef =
   | EnumSettingDef<"toolCardStyle">
   | EnumSettingDef<"transcriptDetail">
   | EnumSettingDef<"modelDisplay">
+  | EnumSettingDef<"diagnosticReporting">
+  | EnumSettingDef<"updatePolicy">
   | EnumSettingDef<"logoAnimation">
   | EnumSettingDef<"theme">;
 
@@ -439,9 +447,9 @@ const DEFS: readonly TuiSettingDef[] = [
     key: "allowModelSelfExtension",
     label: "Model self-extension",
     description:
-      "Enabling this lets the model add tools to its own session, and a prompt-injected model can therefore author tools you did not write.",
+      "Allow new sessions to add sandboxed tools and live harness generations. Existing disabled sessions stay disabled; trusted host execution requires a separate workspace grant.",
     kind: "boolean",
-    default: false,
+    default: DEFAULT_ALLOW_MODEL_SELF_EXTENSION,
     group: "Security",
   },
   {
@@ -529,6 +537,24 @@ const DEFS: readonly TuiSettingDef[] = [
     default: false,
     group: "Motion",
   },
+  {
+    key: "diagnosticReporting",
+    label: "Problem reports",
+    description: "Off, ask before sending, or automatically send limited diagnostics. Never includes prompts, tool arguments or output. Applies to your account on this computer, not this project.",
+    kind: "enum",
+    default: "off",
+    choices: ["off", "ask", "automatic"],
+    group: "Privacy",
+  },
+  {
+    key: "updatePolicy",
+    label: "Updates",
+    description: "Off, notify about releases, or install updates before the console starts. Applies to this computer; project settings cannot enable installation.",
+    kind: "enum",
+    default: "off",
+    choices: ["off", "notify", "automatic"],
+    group: "Updates",
+  },
 ];
 
 export const SETTING_DEFS: readonly SettingDef[] = DEFS;
@@ -558,7 +584,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   richToolCards: true,
   transcriptDetail: "expanded",
   theme: DEFAULT_THEME_NAME,
-  allowModelSelfExtension: false,
+  allowModelSelfExtension: DEFAULT_ALLOW_MODEL_SELF_EXTENSION,
   autoEvolveFinderLenses: false,
   autoPromoteFinderLenses: false,
   showTokenUsage: false,
@@ -567,6 +593,9 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   modelDisplay: "statusbar",
   logoAnimation: "glitch",
   reduceMotion: false,
+  diagnosticReporting: "off",
+  diagnosticReportingPrompted: false,
+  updatePolicy: "off",
 };
 
 /** Basename of the settings file inside the 0sec state directory. */
@@ -637,6 +666,12 @@ export function projectSettingsExist(projectDir: string = process.cwd()): boolea
 function strictValueAt<K extends keyof TuiSettings>(raw: unknown, key: K): TuiSettings[K] | undefined {
   const value = rawValue(raw, key);
   if (value === undefined) return undefined;
+  if (key === "diagnosticReportingPrompted") {
+    return typeof value === "boolean" ? (value as TuiSettings[K]) : undefined;
+  }
+  if (value === false && (key === "diagnosticReporting" || key === "updatePolicy")) {
+    return "off" as TuiSettings[K];
+  }
   if (key === "theme") {
     return typeof value === "string" && isKnownTheme(value)
       ? (value as TuiSettings[K])
@@ -659,6 +694,11 @@ export interface LayeredSettings {
   sources: Record<keyof TuiSettings, SettingLayer>;
 }
 
+/** Repository-owned configuration cannot grant operator permissions. */
+export function isOperatorSetting(key: keyof TuiSettings): boolean {
+  return key === "diagnosticReporting" || key === "diagnosticReportingPrompted" || key === "updatePolicy";
+}
+
 /**
  * Resolve two raw layers (already parsed) plus the built-in defaults into the
  * effective settings and per-key provenance. Pure and total.
@@ -667,7 +707,7 @@ export function resolveLayeredSettings(globalRaw: unknown, projectRaw: unknown):
   const settings = {} as Record<string, unknown>;
   const sources = {} as Record<keyof TuiSettings, SettingLayer>;
   for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof TuiSettings)[]) {
-    const projectValue = strictValueAt(projectRaw, key);
+    const projectValue = isOperatorSetting(key) ? undefined : strictValueAt(projectRaw, key);
     if (projectValue !== undefined) {
       settings[key] = projectValue;
       sources[key] = "project";
@@ -790,6 +830,9 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     modelDisplay: enumAt(raw, "modelDisplay"),
     logoAnimation: enumAt(raw, "logoAnimation"),
     reduceMotion: booleanAt(raw, "reduceMotion"),
+    diagnosticReporting: strictValueAt(raw, "diagnosticReporting") ?? DEFAULT_SETTINGS.diagnosticReporting,
+    diagnosticReportingPrompted: booleanAt(raw, "diagnosticReportingPrompted"),
+    updatePolicy: strictValueAt(raw, "updatePolicy") ?? DEFAULT_SETTINGS.updatePolicy,
   };
 }
 
@@ -845,6 +888,7 @@ export function saveSettings(settings: TuiSettings, homeDir?: string): boolean {
 export function sanitizeOverrides(raw: unknown): Partial<TuiSettings> {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof TuiSettings)[]) {
+    if (isOperatorSetting(key)) continue;
     const value = strictValueAt(raw, key);
     if (value !== undefined) out[key] = value;
   }
@@ -882,6 +926,7 @@ export function setProjectOverride<K extends keyof TuiSettings>(
   value: TuiSettings[K],
   projectDir?: string,
 ): boolean {
+  if (isOperatorSetting(key)) return false;
   const current = readProjectOverrides(projectDir);
   return saveProjectOverrides({ ...current, [key]: value }, projectDir);
 }

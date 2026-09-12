@@ -276,7 +276,11 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
    */
   const commit = (next: TuiSettings) => {
     setPending(null);
-    const saved = setSettings(next);
+    const saved = setSettings({
+      ...next,
+      diagnosticReportingPrompted:
+        next.diagnosticReportingPrompted || next.diagnosticReporting !== getSettings().diagnosticReporting,
+    });
     if (saved) {
       setNotice(null);
       return;

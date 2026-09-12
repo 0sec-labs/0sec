@@ -84,8 +84,10 @@ export type FetchLike = (
 export interface WpFingerprintOptions {
   /** Base target URL (scheme + host). Trailing slash optional. */
   target: string;
-  /** Injectable fetch for tests. Defaults to globalThis.fetch. */
+  /** Target probe transport. Defaults to globalThis.fetch. */
   fetchImpl?: FetchLike;
+  /** Separate fixed-service advisory transport; defaults to fetchImpl. */
+  advisoryFetchImpl?: FetchLike;
   /** Per-request timeout, milliseconds. Default 10_000. */
   timeoutMs?: number;
   /** Maximum number of plugins to probe for a readme.txt. Default 40. */
@@ -107,6 +109,7 @@ export async function runWpFingerprint(
 ): Promise<WpFingerprintResult> {
   const base = normalizeBase(opts.target);
   const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+  const advisoryFetchImpl = opts.advisoryFetchImpl ?? fetchImpl;
   const timeoutMs = opts.timeoutMs ?? 10_000;
   const maxProbes = opts.maxPluginProbes ?? 40;
   const maxVulnerableProbes = opts.maxVulnerablePluginProbes ?? 40;
@@ -222,13 +225,13 @@ export async function runWpFingerprint(
           entry.kind,
           entry.slug,
           entry.version,
-          fetchImpl,
+          advisoryFetchImpl,
           timeoutMs,
         );
         const wpScanCves = wpScanApiToken
-          ? await queryWpScanForWordPress(entry.kind, entry.slug, entry.version, wpScanApiToken, fetchImpl, timeoutMs)
+          ? await queryWpScanForWordPress(entry.kind, entry.slug, entry.version, wpScanApiToken, advisoryFetchImpl, timeoutMs)
           : [];
-        const osvCves = await queryOsvForWordPress(entry.slug, entry.version, fetchImpl, timeoutMs);
+        const osvCves = await queryOsvForWordPress(entry.slug, entry.version, advisoryFetchImpl, timeoutMs);
         const cves = mergeCveHits(localMatchesToCves(localMatches), wpVulnerabilityCves, wpScanCves, osvCves);
         return {
           kind: entry.kind,
@@ -249,11 +252,11 @@ export async function runWpFingerprint(
         entry.kind,
         entry.slug,
         entry.version,
-        fetchImpl,
+        advisoryFetchImpl,
         timeoutMs,
       );
       const wpScanCves = wpScanApiToken
-        ? await queryWpScanForWordPress(entry.kind, entry.slug, entry.version, wpScanApiToken, fetchImpl, timeoutMs)
+        ? await queryWpScanForWordPress(entry.kind, entry.slug, entry.version, wpScanApiToken, advisoryFetchImpl, timeoutMs)
         : [];
       const cves = mergeCveHits(localMatchesToCves(localMatches), wpVulnerabilityCves, wpScanCves);
       return {

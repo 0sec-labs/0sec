@@ -527,6 +527,20 @@ export interface ToolContext {
    */
   oast?: OastCollaborator;
   /**
+   * Live harness host for this session. When set, the engine may replace
+   * root-model rounds with a plugin-provided agent.driver provider. Created
+   * alongside the executable plugin manager when self-extension is enabled.
+   * Absent — no harness is wired and the normal model dispatch runs unchanged.
+   */
+  liveHarness?: import("../plugins/live-harness.js").LiveHarnessHost;
+  /**
+   * Captured canonical workspace root for trust/enablement decisions. Used
+   * by root-model and child-agent loops to evaluate workspace trust
+   * consistently; set to the configured workspaceRoot or the default
+   * process.cwd() at session creation time.
+   */
+  workspaceRoot?: string;
+  /**
    * Shared per-scan cost ledger (see agent/cost-ledger.ts). Threaded onto the
    * ToolContext so the `spawn_agent` / `spawn_agents` handlers can pass it into
    * the child `runNativeAgentLoop` config — otherwise every subagent session

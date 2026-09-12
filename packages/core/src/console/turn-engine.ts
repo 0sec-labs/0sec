@@ -4,16 +4,19 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
 
 import { LlmApiRuntime } from "../runtime/llm-api.js";
-import { DEFAULT_AUTONOMY_MODE, DEFAULT_ALLOW_MODEL_SELF_EXTENSION } from "@0sec/shared";
+import { DEFAULT_AUTONOMY_MODE, DEFAULT_ALLOW_MODEL_SELF_EXTENSION, homeStateDir, type HarnessSnapshot } from "@0sec/shared";
 import type {
   NativeContentBlock,
   NativeMessage,
   NativeRuntime,
+  NativeRuntimeResult,
   NativeStreamCallbacks,
   NativeToolDef,
   RuntimeConfig,
 } from "../runtime/types.js";
 import { createExecutablePlugins, executableModelResult, parseExecutableModelRequest, resolveExecutableEvolutionProfiles, type ExecutablePluginConfiguration } from "../agent/executable-plugins.js";
+import { LiveHarnessHost } from "../plugins/live-harness.js";
+import { getWorkspaceHarnessTrust } from "../plugins/harness-trust.js";
 import type { EvolutionConfig } from "../improvement/types.js";
 import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "../agent/tools.js";
 import type { McpHost } from "../agent/mcp-host.js";
@@ -42,7 +45,7 @@ import { checkInvocationCapabilities, NETWORK_CAPABLE_TOOLS, LOCAL_SCOPE_TOOLS, 
 import type { SelfExtensionEvent } from "../plugins/self-extension.js";
 import type { PluginHost } from "../plugins/loader.js";
 import type { AgentRole, OperatorQuestionAnswer, OperatorQuestionRequest, ScopedAuditEscalationRequest, ToolCall, ToolContext, ToolDefinition, ToolResult } from "../agent/types.js";
-import { ScopePolicy } from "../scope/scope.js";
+import { normalizeScopeHostname, ScopePolicy } from "../scope/scope.js";
 import { eventBus } from "../events/bus.js";
 import { createSessionObjectiveService } from "./session-objective.js";
 import { shellTokens } from "../agent/shell-tokens.js";
@@ -85,6 +88,7 @@ import type { MessagingRuntime } from "../agent/agent-messaging.js";
 
 /** Streaming + activity callbacks a renderer (CLI REPL, product UI) hooks into. */
 export interface ConsoleRenderCallbacks {
+  onHarnessUpdate?: (snapshot: HarnessSnapshot) => void;
   /** Incremental visible assistant text (SSE delta fragments, not cumulative). */
   onAssistantDelta?: (text: string) => void;
   /** Incremental hidden reasoning-summary text. */
@@ -133,32 +137,28 @@ export interface ConsoleUsageReport {
 
 /**
  * Operator engagement mode for the console. This is a FRICTION model, not an
- * authorization-removal model: the launch TARGET is the authorization anchor in
+ * authorization-removal model: the current TARGET is the authorization anchor in
  * every mode, and the executor's own target/scope boundary plus the absolute
  * SSRF/private-network rail run underneath all three regardless of mode.
  *
- * - `"standard"` (default): the MOST-PROMPTING mode. Every effectful
+ * - `"standard"`: the MOST-PROMPTING mode. Every effectful
  *   (non-read-only) action is put to the operator via `approveTool` before it
  *   runs and is dispatched only on an explicit yes — approval is never assumed.
  *   Out-of-scope network targets still go through scope-on-demand
  *   (`requestScope`), and uncovered local paths through `requestLocalScope`.
  * - `"copilot"`: full autonomy WITHIN the engagement. No per-action prompts.
  *   Scope-on-demand is AUTO-APPROVED for newly-discovered targets that belong
- *   to the engagement (the launch target's host / its sub-domains, or paths
+ *   to the engagement (the current target's host / its sub-domains, or paths
  *   adjacent to an established local scope) — the scope grows without asking,
  *   and the expansion is recorded. A target OUTSIDE the established engagement
  *   is not auto-authorized: it defers to the operator (`requestScope`) or, with
  *   no approval channel, is refused. Copilot only ever operates against the
  *   target/scope the operator established.
- * - `"yolo"`: no prompts of any kind, and NO preconfigured scope required. It
- *   proceeds on the operator's launch TARGET and hosts that belong to it,
- *   auto-expanding scope to them without asking, and auto-grants local scope for
- *   the paths it touches. yolo drops only the interactive prompting and the
- *   "configure a scope first" requirement — it does NOT drop the target anchor:
- *   a host that is neither the launch target nor reachable-from-it, and any
- *   network destination this gate cannot even resolve, is still refused. The
- *   dangerous-local-root refusal, the denied-decision memory, the executor's
- *   target/scope boundary and the absolute SSRF rail all still apply.
+ * - `"yolo"` (default): no per-action prompts or preconfigured scope required.
+ *   Target-related hosts and local paths are authorized automatically. A new
+ *   unrelated network target asks the operator through `requestScope`; without
+ *   an approval channel it is refused. Explicit exclusions, denied-decision
+ *   memory, dangerous-local-root restrictions and SSRF protections remain.
  * - `"recon"`: passive, in-scope reconnaissance — the MOST capability-restricted
  *   mode. For AUTHORIZATION it behaves like standard: it operates strictly
  *   within the configured scope / target anchor and NEVER auto-expands scope
@@ -431,12 +431,10 @@ export interface ConsoleSessionConfig {
   /** System-prompt override. Defaults to {@link buildConsoleSystemPrompt}. */
   systemPrompt?: string;
   /**
-   * Engagement mode (see {@link ConsoleAutonomyMode}): `"standard"` (default)
-   * prompts the operator to approve EACH effectful action before it runs and
-   * uses scope-on-demand for out-of-scope network calls; `"copilot"` runs
-   * without per-action prompts and AUTO-EXPANDS scope to in-engagement targets
-   * without asking; `"yolo"` runs prompt-free with no preconfigured scope
-   * required, anchored to the launch target and what belongs to it.
+   * Engagement mode (see {@link ConsoleAutonomyMode}): standard prompts for each
+   * effectful action. Copilot and the default yolo mode run actions without
+   * per-action prompts and expand target-related scope automatically. New
+   * unrelated network targets still require operator scope approval.
    */
   autonomyMode?: ConsoleAutonomyMode;
   /**
@@ -524,6 +522,9 @@ export interface ConsoleSessionConfig {
   refineObjective?: boolean;
   /** Enable sandboxed TypeScript tools, skills, and agent programs for this session. */
   allowModelSelfExtension?: boolean;
+  /** Captured once; model-authored source cannot change the workspace trust root. */
+  workspaceRoot?: string;
+  onHarnessUpdate?: (snapshot: HarnessSnapshot) => void;
   executablePlugins?: ExecutablePluginConfiguration;
   /** Evaluation contracts owned by the operator, not editable by generated code. */
   executableEvolutionProfiles?: Record<string, EvolutionConfig>;
@@ -565,6 +566,7 @@ export interface ConsoleSessionConfig {
 /** A live console session: persistent history + a `send()` per operator line. */
 export interface ConsoleSession {
   readonly scanId: string;
+  readonly harness?: LiveHarnessHost;
   readonly systemPrompt: string;
   readonly tools: ToolDefinition[];
   /** Full conversation so far (native content blocks). Grows with each turn. */
@@ -648,7 +650,7 @@ export function buildConsoleSystemPrompt(opts: {
 }): string {
   const mode = opts.autonomyMode ?? DEFAULT_AUTONOMY_MODE;
   const autonomyInstruction = mode === "yolo"
-    ? "YOLO mode: run without any approval prompts and without a preconfigured scope. Security testing stays anchored to the launch target and hosts that belong to it (its sub-domains); do not pivot to unrelated hosts. Source acquisition is different: use a standalone public HTTPS git clone, optionally prefixed by cd DIR &&, to obtain a repository for local review even when its hosting service is not the launch target. This does not add the source host to engagement scope. Explicit exclusions and private/internal-network protections still apply. Clone first, then inspect or build in a separate tool call; never bundle checkout with unrelated commands."
+    ? "YOLO mode: run without per-action approval prompts and without a preconfigured scope. Security testing stays within the current operator-selected target and authorized scope. Target-related hosts expand automatically; a tool requesting an unrelated target goes through the operator's scope-approval prompt. On approval, continue in this same session using the updated target and scope; do not request a restart. Updating a target profile alone does not grant authorization. Source acquisition is different: use a standalone public HTTPS git clone, optionally prefixed by cd DIR &&, to obtain a repository for local review even when its hosting service is not the current target. This does not add the source host to engagement scope. Explicit exclusions and private/internal-network protections still apply. Clone first, then inspect or build in a separate tool call; never bundle checkout with unrelated commands."
     : mode === "copilot"
     ? "Co-pilot mode: act with full autonomy within the engagement — no per-action approval prompts. Scope expands automatically to newly-discovered targets that belong to the engagement; a target outside the established engagement still needs the operator's decision."
     : mode === "recon"
@@ -660,16 +662,45 @@ export function buildConsoleSystemPrompt(opts: {
     "source and package scanning, variant hunting, exploit verification, and",
     "patch generation).",
     "",
-    "You are talking to a trusted operator on an authorized engagement. Work",
-    "conversationally: use tools to investigate, report what you find in clear",
-    "prose, and then STOP and wait for the operator's next instruction. Do not",
-    "narrate a long autonomous plan — take the next concrete step, show the",
-    "result, and hand control back.",
+    "You are talking to a trusted operator on an authorized engagement. Carry",
+    "the requested work through investigation, requested implementation, and",
+    "verification, then give a concise evidence-backed answer. Stay within the",
+    "request; do not stop at an arbitrary intermediate step or invent extra work.",
+    "Ask only for a necessary decision or authorization you genuinely lack.",
+    "",
+    "When substantial work has multiple useful, independent slices, proactively",
+    "delegate through the available tools. Prefer a spawn_agents batch to serial",
+    "one-at-a-time delegation; do not wait for the operator to ask for parallelism.",
+    "Use as many workers as genuinely useful within current tool and budget",
+    "limits, never a quota. Keep simple questions, small changes, and dependent",
+    "steps inline; do not create padding or duplicate work to increase agent count.",
+    "",
+    "Give each worker a self-contained objective, necessary context and scope,",
+    "disjoint file or area ownership, and observable acceptance evidence.",
+    "Serialize shared writes and agree exact handoffs before overlapping edits.",
+    "Avoid competing broad validations. Retain integration ownership: inspect",
+    "worker results, reconcile contradictions, and verify the combined outcome",
+    "before claiming completion. Report actual outcomes, not fabricated progress.",
+    "",
+    "Delegation never expands scope, workspace trust, credential access, or",
+    "approval authority, and never bypasses budgets, worker/depth limits, or",
+    "cancellation. If delegation is unavailable or refused, continue only through",
+    "remaining authorized capabilities; do not evade the restriction.",
+    "",
+    "For finding summaries, use compact structured sections: finding and status;",
+    "observed evidence; business impact and prerequisites; severity and confidence;",
+    "remediation; and next verification steps. Use saved findings and stored",
+    "assessments where available. Separate observations from inference and label",
+    "conditional or unverified chains; do not present a suggested finding as verified.",
+    "Keep CVSS vectors and 0–10 scores distinct from 0–100 workflow scores and",
+    "business-impact assessments. Leave unsupported values unknown rather than",
+    "inventing evidence, scores, impact, verification, or completed scans.",
     "",
     "Call tools whenever they help; prefer real tool output over speculation.",
     autonomyInstruction,
     "",
     opts.target ? `Current target: ${opts.target}` : "No target is set yet; ask the operator for one when a tool needs it.",
+    "An operator message consisting only of an HTTP(S) URL or hostname selects the current target without resetting the session. update_target records discovered profile information; it does not authorize new targets.",
     `Session id: ${opts.scanId}`,
   ].join("\n");
 }
@@ -838,14 +869,14 @@ function extractLocalPath(call: ToolCall): string {
  */
 function hostOf(url: string): string | null {
   try {
-    return new URL(url).hostname.toLowerCase();
+    return normalizeScopeHostname(new URL(url).hostname);
   } catch {
     return null;
   }
 }
 
 /**
- * The host of the engagement anchor (the launch/session target), lowercased, or
+ * The host of the engagement anchor (the current session target), lowercased, or
  * null when no usable target is set. Accepts both a full URL and a bare
  * `host[:port]`, so a target configured either way yields the same anchor host.
  */
@@ -853,6 +884,25 @@ function anchorHostFromTarget(target: string): string | null {
   const trimmed = target.trim();
   if (!trimmed) return null;
   return hostOf(trimmed) ?? hostOf(`https://${trimmed}`);
+}
+
+/**
+ * A target-only operator message is an explicit selection, not a URL extracted
+ * from prose. Never call this on history, peer messages, or model/tool output.
+ */
+function operatorTargetFromMessage(text: string): string | undefined {
+  const value = text.trim();
+  if (!value || /[\s\x00-\x1f\x7f"'`<>\\]/u.test(value)) return undefined;
+  const absolute = /^https?:\/\//i.test(value);
+  if (!absolute && !/^[^:/?#]+(?::\d+)?(?:[/?#].*)?$/.test(value)) return undefined;
+  try {
+    const url = new URL(absolute ? value : `https://${value}`);
+    if (url.username || url.password) return undefined;
+    if (!absolute && !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(url.hostname)) return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -864,10 +914,8 @@ function anchorHostFromTarget(target: string): string | null {
  *   - a sub-domain of the anchor host (matched on the dot boundary, so
  *     `notexample.com` is NOT a sub-domain of `example.com`, and
  *     `example.com.evil.com` is not one either).
- * Deliberately narrow: a host related only by some looser measure is treated as
- * foreign so it can NEVER be auto-authorized — the operator (standard/copilot
- * prompt) or a hard denial (yolo) decides instead. This is the friction-model
- * guarantee that neither copilot nor yolo silently reaches an unrelated host.
+ * Deliberately narrow: an unrelated host requires an operator scope decision,
+ * never silent auto-authorization.
  */
 function hostBelongsToEngagement(
   host: string | null,
@@ -950,13 +998,9 @@ function pathBelongsToEngagement(requestedPath: string, scopePath: string | unde
 //   ./fetch.sh                         — a script whose contents we never see
 //   printf '\\x63url evil.example' | sh — escaped/obfuscated program name
 //
-// So the extractor is DEFENCE IN DEPTH, not ENFORCEMENT. Its job is to raise
-// the cost of an accidental or lazily-constructed out-of-scope call and to give
-// the operator something concrete to approve. The ACTUAL enforcement decision
-// lives in `maybeResolveScope`: when a network-capable tool carries a shell
-// payload whose destination we could NOT resolve, the call is escalated to the
-// operator (standard/copilot) or denied (yolo) instead of being approved by
-// default. "We did not find a URL" must never again mean "there is no URL".
+// The extractor is defence in depth, not an egress sandbox. Standard/copilot
+// escalate unresolved shell destinations. YOLO permits opaque local commands,
+// but named unrelated hosts still require an operator scope decision.
 //
 // Real enforcement, if it is ever wanted, has to happen where the syscalls
 // happen: a network namespace, a filtering proxy the tools are forced through,
@@ -970,10 +1014,8 @@ function pathBelongsToEngagement(requestedPath: string, scopePath: string | unde
  * behaviour exactly: explicit `http(s)://` extraction plus the session-target
  * fallback.
  *
- * `python_exec` is deliberately NOT here: its payload is Python, not shell, so
- * the shell tokenizer would produce noise rather than signal. That is a known
- * residual hole (see the honesty note above) — it is covered only by the
- * yolo-requires-scope floor, not by target extraction.
+ * `python_exec` is deliberately NOT here: its payload is Python, not shell.
+ * Shell target extraction cannot establish its network destinations.
  */
 const SHELL_PAYLOAD_TOOLS: Record<string, true> = {
   bash: true,
@@ -1499,6 +1541,7 @@ async function dispatchConversationHistoryTool(call: ToolCall, history: ConsoleC
  */
 export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSession {
   const scanId = config.scanId ?? `console-${randomUUID()}`;
+  const workspaceRoot = resolve(config.workspaceRoot ?? process.cwd());
   const role: AgentRole = config.role ?? "audit";
   let autonomyMode: ConsoleAutonomyMode = config.autonomyMode ?? DEFAULT_AUTONOMY_MODE;
 
@@ -1590,6 +1633,12 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   const executablePlugins = selfExtension
     ? createExecutablePlugins(selfExtension, config.executablePlugins)
     : undefined;
+  const harness = executablePlugins ? new LiveHarnessHost({
+    executablePlugins, root: resolve(homeStateDir(), "live-harness", randomUUID()), workspaceRoot,
+    allowTrusted: () => getWorkspaceHarnessTrust(workspaceRoot), onChange: config.onHarnessUpdate,
+  }) : undefined;
+  toolContext.liveHarness = harness;
+  toolContext.workspaceRoot = workspaceRoot;
   toolContext.selfExtension = selfExtension;
   toolContext.executablePlugins = executablePlugins;
   toolContext.executablePluginConfiguration = config.executablePlugins;
@@ -1615,7 +1664,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   // this pass (findings live in `toolContext.findings` for the session). When
   // the CLI/TUI provides a DB handle, save_finding persists there and
   // query_findings can read current, prior, or all sessions.
-  const executor = new ToolExecutor(toolContext, config.db ?? null);
+  const executor = new ToolExecutor(toolContext, config.db ?? null, undefined, config.runtime.forkForSubagent?.bind(config.runtime));
 
   const tools =
     config.tools ?? getToolsForRole(role, { allowScanners: config.allowScanners });
@@ -1781,6 +1830,34 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     },
   });
 
+  function applySessionScope(target: string, scope: ScopePolicy): void {
+    sessionTarget = target;
+    sessionScope = scope;
+    toolContext.target = target;
+    toolContext.scope = scope;
+    if (!customSystemPrompt) {
+      systemPrompt = buildConsoleSystemPrompt({ target: sessionTarget, scanId, autonomyMode });
+    }
+  }
+
+  function selectOperatorTarget(text: string, notify?: (message: string) => void): void {
+    const target = operatorTargetFromMessage(text);
+    if (!target) return;
+    const host = hostOf(target)!;
+    if (deniedHosts.has(host)) {
+      notify?.(`Target ${target} was previously declined; use an explicit scope approval to change that decision.`);
+      return;
+    }
+    const base = sessionScope?.raw ?? {};
+    const scope = ScopePolicy.fromJson({ ...base, in_scope: [...(base.in_scope ?? []), host] });
+    if (!scope.match(target).allowed) {
+      notify?.(`Target ${target} is explicitly out of scope; the current target is unchanged.`);
+      return;
+    }
+    applySessionScope(target, scope);
+    notify?.(`Target set to ${target}; continuing in the same session.`);
+  }
+
   // AUTO-EXPAND the in-memory engagement scope to cover `uncoveredUrls`, used by
   // copilot (in-engagement targets) and yolo (target-anchored hosts) to grow
   // scope WITHOUT prompting. Adds each host as an EXACT-host rule (never a
@@ -1830,9 +1907,8 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   //   - standard: prompt the operator (requestScope) for anything uncovered.
   //   - copilot: auto-expand for in-engagement targets; defer the rest to the
   //     operator (or refuse when no prompt channel exists).
-  //   - yolo: no prompts and no preconfigured-scope requirement — auto-expand
-  //     to target-anchored hosts and REFUSE anything outside the anchor (an
-  //     unrelated host, or a destination this gate cannot even resolve).
+  //   - yolo: auto-expand target-related hosts; ask for unrelated named hosts.
+  //     Opaque local commands retain existing full-autonomy behavior.
   // In EVERY mode the executor's own validateTargetUrl (target/scope boundary +
   // the absolute SSRF rail) still runs underneath, and the denied-decision
   // memory below is never cleared or skipped by a mode.
@@ -1898,6 +1974,19 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       };
     }
 
+    const exclusions = sessionScope?.raw.out_of_scope ?? [];
+    if (exclusions.length) {
+      const exclusionPolicy = ScopePolicy.fromJson({
+        in_scope: uncoveredUrls.map(hostOf).filter((host): host is string => host !== null),
+        out_of_scope: exclusions,
+      });
+      const excluded = uncoveredUrls.filter(url => !exclusionPolicy.match(url).allowed);
+      if (excluded.length) return {
+        success: false, output: null,
+        error: `Explicit scope exclusions forbid ${excluded.join(", ")}; scope is unchanged.`,
+      };
+    }
+
     const anchorHost = anchorHostFromTarget(sessionTarget);
     // Fetching public source is setup, not authority to test the hosting service.
     // The executor runs this narrow command without a shell, behind a pinned
@@ -1907,7 +1996,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       const acquisition = parseRepositoryAcquisition(command);
       if (acquisition &&
           !hostBelongsToEngagement(hostOf(acquisition.url), anchorHost, sessionScope) &&
-          !deniedHosts.has(new URL(acquisition.url).hostname) &&
+          !deniedHosts.has(hostOf(acquisition.url)!) &&
           repositoryAcquisitionAllowed(acquisition, sessionScope)) {
         notify?.(`Acquiring public repository source from ${acquisition.url}; engagement scope is unchanged.`);
         return "approved";
@@ -1922,29 +2011,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       (url) => !hostBelongsToEngagement(hostOf(url), anchorHost, sessionScope),
     );
 
-    // ── yolo: no prompts, no preconfigured-scope requirement, TARGET-anchored ──
-    // yolo drops the interactive prompt and the "configure a scope first" gate,
-    // but the launch TARGET stays the authorization anchor: reach the target and
-    // hosts that belong to it, and REFUSE everything else. A destination this
-    // gate cannot resolve cannot be proven in-anchor, so it is refused too. The
-    // executor's SSRF rail and target/scope boundary still run underneath.
-    if (autonomyMode === "yolo") {
-      // A command this gate cannot fully READ — a piped interpreter, base64 -d,
-      // a $VAR URL, a local file op like `ls ~/.ssh` — is NOT proof of a foreign
-      // target. YOLO is the operator's explicit full-autonomy opt-in on their
-      // own machine; refusing every unreadable command just blocks legitimate
-      // local work (the operator kept hitting this). Allow unnameable
-      // destinations — the executor's SSRF rail (private/internal-network block)
-      // still runs beneath every call. Only a FOREIGN NAMED host outside the
-      // launch-target anchor stays refused: yolo is target-anchored, not
-      // "attack anything, anywhere".
-      if (foreign.length > 0) {
-        return {
-          success: false,
-          output: null,
-          error: `YOLO mode: ${foreign.join(", ")} is not the launch target and is not reachable from it — outside the yolo authorization anchor; refused.`,
-        };
-      }
+    // YOLO stays prompt-free inside the engagement. A named foreign target
+    // requires the same explicit operator decision as other scope expansions.
+    if (autonomyMode === "yolo" && foreign.length === 0) {
       return autoExpandScope(uncoveredUrls, notify, "YOLO");
     }
 
@@ -1958,9 +2027,13 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       return autoExpandScope(uncoveredUrls, notify, "Co-pilot");
     }
 
-    // ── standard (and copilot's foreign/unreadable remainder): ask the operator ──
+    // Ask for uncovered standard targets and foreign copilot/YOLO targets.
     const requestScope = config.requestScope;
     if (!requestScope) {
+      if (autonomyMode === "yolo") {
+        return { success: false, output: null,
+          error: `YOLO mode: approval is required for ${foreign.join(", ")} but no scope-approval channel is available. Select this target explicitly or use an interactive session with scope approval.` };
+      }
       if (autonomyMode === "copilot") {
         // Copilot must not fall open on a foreign/unreadable target with no
         // operator channel — refuse rather than defer to same-origin luck.
@@ -2011,7 +2084,11 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       };
     }
 
-    const uncovered = urls.filter((url) => !resolution.scope.match(url).allowed);
+    const approvedScope = exclusions.length ? ScopePolicy.fromJson({
+      ...resolution.scope.raw,
+      out_of_scope: [...new Set([...exclusions, ...(resolution.scope.raw.out_of_scope ?? [])])],
+    }) : resolution.scope;
+    const uncovered = urls.filter((url) => !approvedScope.match(url).allowed);
     if (uncovered.length > 0) {
       return {
         success: false,
@@ -2021,20 +2098,15 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     }
 
     // Apply the resolution: update in-memory target + scope (never persist).
-    sessionTarget = resolution.target;
-    sessionScope = resolution.scope;
-    toolContext.target = resolution.target;
-    toolContext.scope = resolution.scope;
+    applySessionScope(resolution.target, approvedScope);
+    notify?.(`Scope approved for ${urls.join(", ") || resolution.target}; continuing in the same session.`);
     // An approved host must never remain a denied one: clear from the denied
     // set every host the newly approved scope now authorizes, so an earlier
     // denial can't shadow a later approval of the same target (whether that
     // host was the one just requested or is simply covered by the broadened
     // scope).
     for (const host of [...deniedHosts]) {
-      if (resolution.scope.match(`https://${host}`).allowed) deniedHosts.delete(host);
-    }
-    if (!customSystemPrompt) {
-      systemPrompt = buildConsoleSystemPrompt({ target: sessionTarget, scanId, autonomyMode });
+      if (approvedScope.match(`https://${host}`).allowed) deniedHosts.delete(host);
     }
     return "approved";
   }
@@ -2262,7 +2334,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
    * The THIRD built-in, `guardNetworkRequiresScope`, is DELIBERATELY NOT wired:
    * it is retired. It denied a network-capable tool in yolo when no scope was
    * configured, but the new yolo intentionally drops the
-   * require-preconfigured-scope gate — it is anchored to the launch target, not
+   * require-preconfigured-scope gate — it is anchored to the current target, not
    * to a scope object. That anchor is enforced precisely by `maybeResolveScope`
    * (target-relatedness) plus the executor's own same-origin/scope boundary and
    * the absolute SSRF rail — a stronger, mode-correct check than a blanket
@@ -2372,7 +2444,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     notify?: (message: string) => void,
     signal?: AbortSignal,
     allowScopeExpansion = true,
+    assertAuthority?: () => void,
   ): Promise<ToolResult> {
+    assertAuthority?.();
     if (signal?.aborted) return { success: false, output: null, error: "Tool call cancelled before dispatch." };
     const recon = maybeAllowReconCapability(call);
     if (recon !== "approved") return recon;
@@ -2386,13 +2460,14 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     if (!guard.allowed) {
       return { success: false, output: null, error: `Tool "${call.name}" denied: ${guard.reasons.join("; ")}` };
     }
+    assertAuthority?.();
     if (signal?.aborted) return { success: false, output: null, error: "Tool call cancelled before dispatch." };
     if (config.conversationHistory &&
       (call.name === LIST_CONVERSATIONS_NAME || call.name === READ_CONVERSATION_NAME)) {
       return dispatchConversationHistoryTool(call, config.conversationHistory);
     }
     if (config.pluginHost?.ownsTool(call.name)) return dispatchPluginTool(config.pluginHost, call);
-    return executor.execute(call, { signal });
+    return executor.execute(call, { signal, assertAuthority });
   }
 
   let turnInProgress = false;
@@ -2426,7 +2501,17 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     if (turnInProgress) throw new Error("This console session already has an active turn.");
     turnInProgress = true;
     let turnActive = true;
+    let directDriver = false;
+    let unsubscribeHarness: (() => void) | undefined;
+    const runCalls: Array<{ call: ToolCall; result: ToolResult }> = [];
+    const usage = { inputTokens: 0, outputTokens: 0 };
+    let assistantText = "";
+    let iterations = 0;
     try {
+    if (callbacks?.onHarnessUpdate) unsubscribeHarness = harness?.subscribe(callbacks.onHarnessUpdate);
+    // Only the direct operator input can authorize a target. Keep this after
+    // admission/abort checks and before any model, peer, or tool content.
+    selectOperatorTarget(userText, callbacks?.onNotice);
 
     messages.push({ role: "user", content: [{ type: "text", text: userText }] });
 
@@ -2435,10 +2520,6 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // refinement is deferred and fire-and-forget, so this never blocks the turn.
     objectiveService.noteUserMessage(userText);
 
-    const runCalls: Array<{ call: ToolCall; result: ToolResult }> = [];
-    const usage = { inputTokens: 0, outputTokens: 0 };
-    let assistantText = "";
-    let iterations = 0;
     // Input tokens billed by the most recent model call. The next call resends
     // the entire conversation plus everything this iteration appended, so this
     // is a conservative LOWER BOUND on what one more iteration would cost — it
@@ -2508,6 +2589,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       recordModelUsage(response.usage ?? delta);
       return executableModelResult(response);
     };
+    let driverResult: NativeRuntimeResult | undefined;
     toolContext.pluginExecutionContext = () => ({
       signal,
       invokeModel: invokePluginModel,
@@ -2528,10 +2610,24 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         }
         const call: ToolCall = { name, arguments: args };
         const effectiveSignal = signal && requestSignal ? AbortSignal.any([signal, requestSignal]) : signal ?? requestSignal;
+        const driverCallId = directDriver ? `harness-${randomUUID()}` : undefined;
+        const authorityResult = driverResult;
+        const assertAuthority = directDriver
+          ? () => harness!.assertDriverAuthority()
+          : authorityResult ? () => harness!.assertDriverAuthority(authorityResult) : undefined;
         callbacks?.onToolStart?.(call);
-        const result = nativeTools.some((tool) => tool.name === name)
-          ? await dispatchAuthorized(call, callbacks?.onNotice, effectiveSignal, false)
-          : { success: false, output: null, error: `Tool "${name}" is not available to the parent session.` };
+        let result: ToolResult;
+        try {
+          result = nativeTools.some((tool) => tool.name === name)
+            ? await dispatchAuthorized(call, callbacks?.onNotice, effectiveSignal, false, assertAuthority)
+            : { success: false, output: null, error: `Tool "${name}" is not available to the parent session.` };
+        } catch (error) {
+          result = { success: false, output: null, error: error instanceof Error ? error.message : String(error) };
+        }
+        if (driverCallId) messages.push(
+          { role: "assistant", content: [{ type: "tool_use", id: driverCallId, name, input: structuredClone(args) }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: driverCallId, content: stringifyToolResult(result), is_error: !result.success }] },
+        );
         runCalls.push({ call, result });
         callbacks?.onToolResult?.(call, result);
         return result;
@@ -2596,8 +2692,29 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         }
       }
       streamedUsage = undefined;
-      const result = await config.runtime.executeNative(systemPrompt, messages, nativeTools, streamCallbacks, signal);
-      recordModelUsage(result.usage ?? streamedUsage);
+      let result: NativeRuntimeResult;
+      let driven = false;
+      driverResult = undefined;
+      try {
+        await harness?.checkpoint({ sessionId: scanId, phase: "working", iterations,
+          tokensUsed: usage.inputTokens + usage.outputTokens, tokenBudget: maxTurnTokens });
+        directDriver = true;
+        const supplied = await harness?.drive({ system: systemPrompt, messages, tools: nativeTools }, toolContext.pluginExecutionContext?.());
+        directDriver = false;
+        if (supplied !== undefined) {
+          harness!.assertDriverAuthority(supplied);
+          driven = true;
+          result = supplied;
+          driverResult = supplied;
+          // Actual SDK model calls already recorded their usage through invokePluginModel.
+        } else {
+          result = await config.runtime.executeNative(systemPrompt, messages, nativeTools, streamCallbacks, signal);
+          recordModelUsage(result.usage ?? streamedUsage);
+        }
+      } catch (error) {
+        return { assistantText, toolCalls: runCalls, usage, budget: budgetSnapshot(),
+          stopReason: signal?.aborted ? "cancelled" : "error", error: error instanceof Error ? error.message : String(error) };
+      } finally { directDriver = false; }
 
       if (result.stopReason === "error") {
         // The runtime reports an operator abort structurally via `cancelled`
@@ -2631,6 +2748,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         .map((b) => b.text)
         .join("");
       if (turnText) assistantText += turnText;
+      if (driven && turnText) callbacks?.onAssistantDelta?.(turnText);
 
       const toolUseBlocks = result.content.filter(
         (b): b is Extract<NativeContentBlock, { type: "tool_use" }> => b.type === "tool_use",
@@ -2647,6 +2765,14 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       // So once cancelled we keep iterating, but instead of dispatching we
       // append a synthetic "cancelled" tool_result for each outstanding block.
       let cancelledMidRound = false;
+      let authorityFailure: string | undefined;
+      const assertAuthority = driven ? () => {
+        try { harness!.assertDriverAuthority(result); }
+        catch (error) {
+          authorityFailure = error instanceof Error ? error.message : String(error);
+          throw error;
+        }
+      } : undefined;
       for (const block of toolUseBlocks) {
         const call: ToolCall = { name: block.name, arguments: block.input };
 
@@ -2678,7 +2804,12 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         }
 
         callbacks?.onToolStart?.(call);
-        const toolResult = await dispatchAuthorized(call, callbacks?.onNotice, signal);
+        let toolResult: ToolResult;
+        try { toolResult = await dispatchAuthorized(call, callbacks?.onNotice, signal, true, assertAuthority); }
+        catch (error) {
+          if (!authorityFailure) throw error;
+          toolResult = { success: false, output: null, error: authorityFailure };
+        }
         callbacks?.onToolResult?.(call, toolResult);
         runCalls.push({ call, result: toolResult });
         toolResultBlocks.push({
@@ -2691,6 +2822,10 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       messages.push({ role: "user", content: toolResultBlocks });
 
       iterations += 1;
+      try { assertAuthority?.(); } catch { /* Preserve completed tool receipts before reporting lost authority. */ }
+      if (authorityFailure) {
+        return { assistantText, toolCalls: runCalls, usage, budget: budgetSnapshot(), stopReason: "error", error: authorityFailure };
+      }
 
       // A mid-round abort stops here — AFTER the tool_result message for this
       // round is pushed, so every tool_use in it is matched and the history is
@@ -2733,6 +2868,13 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       }
     }
     } finally {
+      try {
+        await harness?.refreshViews({ sessionId: scanId, phase: "idle", iterations,
+          tokensUsed: usage.inputTokens + usage.outputTokens, tokenBudget: maxTurnTokens });
+      } catch (error) {
+        callbacks?.onNotice?.(`Live harness view: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+      unsubscribeHarness?.();
       turnActive = false;
       turnInProgress = false;
       // Turn over. Once no turn is active this lets the one-shot objective
@@ -2742,11 +2884,13 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       activeNotify = undefined;
       toolContext.pluginExecutionContext = undefined;
       toolContext.evolveExecutablePlugin = undefined;
+      }
     }
   }
 
   return {
     scanId,
+    harness,
     get systemPrompt(): string { return systemPrompt; },
     tools,
     messages,
@@ -2769,6 +2913,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     send,
     cleanup: async () => {
       objectiveService.dispose();
+      await harness?.close();
       await config.mcpHost?.closeAll();
       await executablePlugins?.close();
       return executor.cleanup();

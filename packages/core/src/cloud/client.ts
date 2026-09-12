@@ -1,16 +1,5 @@
-// 0sec-cloud HTTP client. Bearer-auth, JSON, scaffolding.
-//
-// Scope:
-//   - One method: `pingHealth()` — hits the configured health endpoint to
-//     verify cloud reachability.
-//
-// The hosted 0cloud dashboard serves health under `/api/health`; generic
-// self-hosted receivers retain the original `/health` convention.
-//
-// Out of scope:
-//   - `dispatchScan()`, `listScans()`, etc. — those will use real
-//     response schemas with zod once the cloud API surface is pinned.
-//   - No pagination, no rate-limit retry, no cursor-aware paginator.
+// Bearer-authenticated 0sec client for health, hosted model catalog,
+// inference balance, and request usage. Provider keys stay on the service.
 //
 // SECURITY:
 //   - The Authorization header value is built from the token but never
@@ -70,6 +59,53 @@ export interface CloudClientOptions {
 export interface CloudHealthResponse {
   status: string;
 }
+
+// ── Hosted inference API types ──
+
+/** A single model entry from the hosted inference catalog. */
+export interface InferenceModel {
+  id: string;
+  object: "model";
+  owned_by: string;
+  provider: string;
+  upstream_model: string;
+  wire_api: "chat_completions" | "responses";
+  context_length: number;
+  max_output_tokens: number;
+  pricing: {
+    input_per_million_usd: number;
+    output_per_million_usd: number;
+    cached_input_per_million_usd: number;
+  };
+}
+
+/** Response shape from GET /api/inference/v1/models */
+export interface InferenceModelsResponse {
+  object: "list";
+  data: InferenceModel[];
+}
+
+/** Availability reported by the service for one Autumn credit pool. */
+export interface InferenceCreditBalance {
+  featureId: string;
+  granted: number | null;
+  remaining: number;
+  remainingPercent: number | null;
+  /** Unix milliseconds; only the earliest balance source may reset then. */
+  nextResetAt: number | null;
+}
+
+/** Account balance from GET /api/inference/account */
+export interface InferenceAccountResponse {
+  remainingUsd: number;
+  currency: "USD";
+  credits: InferenceCreditBalance | null;
+}
+
+/** Usage metadata from GET /api/inference/usage */
+export interface InferenceUsageResponse {
+  requests: Record<string, unknown>[];
+}
 function healthPath(host: string): string {
   try {
     const hostname = new URL(host).hostname.toLowerCase();
@@ -100,6 +136,52 @@ export class CloudClient {
    */
   async pingHealth(): Promise<CloudHealthResponse> {
     return this.getJson<CloudHealthResponse>(healthPath(this.host));
+  }
+
+  /**
+   * Fetch the hosted inference model catalog — available models, pricing,
+   * wire API protocol, and context limits. Used at runtime for model
+   * selection and by the hosted provider to determine per-model capabilities.
+   * Returns the raw list response; the caller caches/filters as needed.
+   */
+  async getInferenceModels(): Promise<InferenceModelsResponse> {
+    return this.getJson<InferenceModelsResponse>("/api/inference/v1/models");
+  }
+
+  /**
+   * Fetch the organization's hosted inference credit availability. The service
+   * calculates the percentage from Autumn's current pool; holds reduce availability.
+   * Older gateways without percentage metadata remain explicitly unavailable.
+   */
+  async getInferenceAccount(): Promise<InferenceAccountResponse> {
+    const account = await this.getJson<InferenceAccountResponse>("/api/inference/account");
+    const credits = account.credits;
+    if (!credits || typeof credits !== "object" ||
+        typeof credits.featureId !== "string" || !credits.featureId.trim() ||
+        typeof credits.remaining !== "number" || !Number.isFinite(credits.remaining) || credits.remaining < 0 ||
+        (credits.granted !== null && (typeof credits.granted !== "number" || !Number.isFinite(credits.granted) || credits.granted < 0))) {
+      return { ...account, credits: null };
+    }
+    // Validate, but never reconstruct a quota or percentage on the client.
+    const remainingPercent = typeof credits.remainingPercent === "number" &&
+      Number.isFinite(credits.remainingPercent) && credits.remainingPercent >= 0 && credits.remainingPercent <= 100 &&
+      credits.granted !== null && credits.granted > 0 && credits.remaining <= credits.granted
+      ? credits.remainingPercent : null;
+    const nextResetAt = typeof credits.nextResetAt === "number" &&
+      Number.isSafeInteger(credits.nextResetAt) && credits.nextResetAt > 0 && credits.nextResetAt <= 8.64e15
+      ? credits.nextResetAt : null;
+    return { ...account, credits: {
+      featureId: credits.featureId, granted: credits.granted, remaining: credits.remaining, remainingPercent, nextResetAt,
+    } };
+  }
+
+  /**
+   * Fetch request-level usage metadata for the operator's hosted
+   * inference sessions. Returns lightweight metadata records (model,
+   * tokens, provider, timestamp) — no prompt/response payload.
+   */
+  async getInferenceUsage(): Promise<InferenceUsageResponse> {
+    return this.getJson<InferenceUsageResponse>("/api/inference/usage");
   }
 
   /**

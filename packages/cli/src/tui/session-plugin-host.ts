@@ -1,46 +1,8 @@
 /**
- * Shell-level plugin-host lifecycle for the live console (0sec plugin system).
- *
- * This is the missing link between "a plugin is enabled in the marketplace" and
- * "its tools reach the running console". `plugin-service.ts` writes the on-disk
- * enablement record; the turn engine reads a `PluginHost` off
- * `ConsoleSessionConfig.pluginHost` at each turn boundary. Something has to own
- * the host object across the chat↔market screen swap, keep it in step with the
- * on-disk enabled set, and hand the CURRENT host to each new console session.
- * That is this module, and it is deliberately self-contained so `run.tsx` can
- * drop it in as one object.
- *
- * ── Why a MANAGER and not just a host ────────────────────────────────────────
- *
- * `PluginHost.enabled` is READONLY: the loader treats the enabled set as the
- * operator's frozen approval for the life of that host, so "enable one more
- * plugin" cannot mutate a host — it must construct a NEW one with the wider set.
- * The manager therefore holds the current host, and {@link refresh} reconstructs
- * it when the on-disk enabled set changed, loads the enabled plugins into the
- * fresh host, swaps it in, disposes the old one, and notifies subscribers so the
- * shell can re-hand the new host to the next `createConsoleSession` build.
- *
- * ── The turn-boundary contract (load-bearing) ────────────────────────────────
- *
- * A reconstruct is a genuine host swap and a load mutates the gate maps, so both
- * are only safe BETWEEN turns — the loader's contract, which it cannot enforce
- * itself because it cannot see turns. The manager does not guess: {@link refresh}
- * is the explicit call the shell invokes at a chat turn boundary, and the market
- * bridge only triggers it while no turn is in flight (deferring past a live turn
- * exactly as it already defers a run). Nothing here reconstructs mid-turn.
- *
- * ── What is NOT weakened ──────────────────────────────────────────────────────
- *
- *   - install ≠ enable ≠ run: the manager loads ONLY the ids `loadableIds`
- *     reports (reconcile of the on-disk record against the current manifests),
- *     and it hands `PluginHost` the same set as its `enabled` — so a non-enabled
- *     id is refused by the loader, the single enablement authority, unchanged.
- *   - `reservedToolNames` and `coreVersion` ARE passed to every host it builds
- *     (and to `readInstalledPlugin` when it reconciles), so the loader's on-load
- *     re-validation against built-in shadowing and its `minCoreVersion` check
- *     run for a session-loaded plugin exactly as for an overlay-loaded one.
- *   - fail-soft: one plugin that fails to load never aborts the others and never
- *     throws out of `refresh`; a failed build degrades to "no plugin host".
+ * Marketplace host ownership. New sessions lease the current approved tool set;
+ * refresh builds the next host without changing or stopping a leased live host.
+ * A retired host shuts down only after its last session finishes cleanup.
+ * The core loader remains the only registry and enablement authority.
  */
 
 import type { PluginHost } from "@0sec/core";
@@ -56,12 +18,11 @@ export interface SessionPluginHostManager {
    * reconstructs; a reconstruct replaces it and fires {@link onChanged}.
    */
   current(): PluginHost;
+  /** Pin the current host for a session; release only after that session drains. */
+  acquire(): { host: PluginHost; release: () => void };
   /**
-   * Reconcile the on-disk enabled set into the live host. Reconstructs (new host
-   * + load enabled plugins + swap + dispose old + notify) when that set changed;
-   * otherwise loads any still-unloaded enabled plugin into the current host.
-   * Returns after loads settle. Safe ONLY at a turn boundary — the caller owns
-   * that. Fail-soft per plugin.
+   * Reconcile approvals for future sessions. Replaced hosts remain alive while
+   * leased, so a marketplace change cannot interrupt a running chat.
    */
   refresh(): Promise<void>;
   /**
@@ -71,11 +32,10 @@ export interface SessionPluginHostManager {
    */
   runPlugin(pluginId: string): Promise<CoreLoadResult>;
   /**
-   * Subscribe to host REPLACEMENTS. The shell re-hands the new host to the next
-   * console session build. Returns an unsubscribe function.
+   * Subscribe to future-session host replacements, without rebuilding live sessions.
    */
   onChanged(listener: SessionPluginHostListener): () => void;
-  /** Tear the current host down. Idempotent. */
+  /** Stop admitting work; leased hosts drain when their owners release them. */
   dispose(): void;
 }
 
@@ -135,6 +95,9 @@ export async function createSessionPluginHostManager(
   let loaded = new Map<string, string[]>();
   /** Sorted enabled ids backing the current host; the reconstruct trigger. */
   let enabledKey = "";
+  const leases = new Map<PluginHostLike, number>();
+  let disposed = false;
+  let refreshTail: Promise<void> = Promise.resolve();
 
   /** The ids safe to load right now: the on-disk approvals that still reconcile. */
   function computeLoadable(c: CorePluginApi): string[] {
@@ -185,7 +148,7 @@ export async function createSessionPluginHostManager(
     }
   }
 
-  /** Build a fresh host for `enabled`, load it, swap it in, dispose the old. */
+  /** Publish a new approved host; retire the old host without breaking its leases. */
   async function reconstruct(
     c: CorePluginApi,
     enabled: readonly string[],
@@ -194,13 +157,17 @@ export async function createSessionPluginHostManager(
     const next = buildHost(c, enabled);
     const nextLoaded = new Map<string, string[]>();
     await loadAll(next, enabled, nextLoaded);
+    if (disposed) {
+      next.shutdown?.();
+      throw new Error("Marketplace host manager is closed");
+    }
 
     const old = host;
     host = next;
     loaded = nextLoaded;
     enabledKey = enabled.slice().sort().join("\n");
 
-    if (old) {
+    if (old && !leases.has(old)) {
       try {
         old.shutdown?.();
       } catch {
@@ -220,13 +187,16 @@ export async function createSessionPluginHostManager(
   }
 
   async function refresh(): Promise<void> {
+    if (disposed) throw new Error("Marketplace host manager is closed");
+    const operation = refreshTail.then(async () => {
+    if (disposed) throw new Error("Marketplace host manager is closed");
     const c = await getCore();
+    if (disposed) throw new Error("Marketplace host manager is closed");
     const enabled = computeLoadable(c);
     const key = enabled.join("\n");
 
-    if (host && key === enabledKey) {
-      // Same approved set: no swap. Load any enabled plugin not yet live (e.g. a
-      // prior load that failed soft), so a repeated run can recover it.
+    if (host && key === enabledKey && (!leases.has(host) || enabled.every((id) => loaded.has(id)))) {
+      // Never load into a leased host: even a retry changes its tool/gate maps.
       for (const id of enabled) {
         if (loaded.has(id)) continue;
         try {
@@ -241,6 +211,9 @@ export async function createSessionPluginHostManager(
     // First build (host === undefined) or the set changed: reconstruct. Emit only
     // on a genuine replacement, so the initial build (no subscribers) is quiet.
     await reconstruct(c, enabled, /* emit */ host !== undefined);
+    });
+    refreshTail = operation.catch(() => {});
+    return operation;
   }
 
   async function runPlugin(pluginId: string): Promise<CoreLoadResult> {
@@ -265,15 +238,40 @@ export async function createSessionPluginHostManager(
   }
 
   function current(): PluginHost {
+    if (disposed || !host) throw new Error("Marketplace host manager is closed");
     return host as unknown as PluginHost;
   }
 
+  function acquire(): { host: PluginHost; release: () => void } {
+    const owned = current();
+    const pinned = host!;
+    leases.set(pinned, (leases.get(pinned) ?? 0) + 1);
+    let released = false;
+    return {
+      host: owned,
+      release() {
+        if (released) return;
+        released = true;
+        const count = (leases.get(pinned) ?? 1) - 1;
+        if (count > 0) {
+          leases.set(pinned, count);
+          return;
+        }
+        leases.delete(pinned);
+        if (pinned !== host || disposed) pinned.shutdown?.();
+      },
+    };
+  }
+
   function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    listeners.clear();
     const old = host;
     host = undefined;
     loaded = new Map();
     enabledKey = "";
-    if (old) {
+    if (old && !leases.has(old)) {
       try {
         old.shutdown?.();
       } catch {
@@ -289,5 +287,5 @@ export async function createSessionPluginHostManager(
     await reconstruct(c, computeLoadable(c), /* emit */ false);
   }
 
-  return { current, refresh, runPlugin, onChanged, dispose };
+  return { current, acquire, refresh, runPlugin, onChanged, dispose };
 }

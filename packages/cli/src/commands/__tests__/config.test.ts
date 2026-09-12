@@ -122,6 +122,8 @@ describe("config import", () => {
 
   it("REFUSES to flip a security setting without --yes", () => {
     const home = makeDir("cfg-home-");
+    const initialSettings = { ...DEFAULT_SETTINGS, allowModelSelfExtension: false };
+    saveSettings(initialSettings, home);
     const project = makeDir("cfg-proj-");
     const file = join(makeDir("cfg-in-"), "danger.json");
     writeFileSync(file, JSON.stringify({ allowModelSelfExtension: true, showLogo: false }));
@@ -132,7 +134,7 @@ describe("config import", () => {
     expect(cap.err.join("\n")).toMatch(/security-sensitive/);
     expect(cap.err.join("\n")).toMatch(/allowModelSelfExtension: off -> on/);
     // Nothing was written — not even the safe key.
-    expect(loadGlobalSettings(home)).toEqual(DEFAULT_SETTINGS);
+    expect(loadGlobalSettings(home)).toEqual(initialSettings);
   });
 
   it("requires explicit approval before enabling unattended TUI lens evolution", () => {
@@ -153,6 +155,7 @@ describe("config import", () => {
 
   it("applies a security flip when --yes is passed and prints it", () => {
     const home = makeDir("cfg-home-");
+    saveSettings({ ...DEFAULT_SETTINGS, allowModelSelfExtension: false }, home);
     const file = join(makeDir("cfg-in-"), "danger.json");
     writeFileSync(file, JSON.stringify({ allowModelSelfExtension: true }));
     const cap = capture();

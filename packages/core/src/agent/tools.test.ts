@@ -37,6 +37,24 @@ afterEach(() => {
   else process.env["0SEC_FEATURE_ZEROVERSE"] = ORIGINAL_ZEROVERSE_ENV;
 });
 
+// Mock transport only; URL and crawl policy still run in ToolExecutor.
+const mockFetchScoped = vi.hoisted(() =>
+  vi.fn(async (_url: string, _init?: RequestInit, _policy?: unknown) =>
+    new Response("ok", { status: 200, headers: { "content-type": "text/plain" } }),
+  ),
+);
+vi.mock("../http.js", async (importOriginal) => {
+  const http = await importOriginal<object>();
+  return { ...http, fetchScoped: mockFetchScoped };
+});
+
+beforeEach(() => {
+  mockFetchScoped.mockReset();
+  mockFetchScoped.mockImplementation(async (_url: string, _init?: RequestInit) =>
+    new Response("ok", { status: 200, headers: { "content-type": "text/plain" } }),
+  );
+});
+
 // ── Tool Registry ──
 
 describe("TOOL_DEFINITIONS", () => {
@@ -1359,20 +1377,10 @@ describe("ToolExecutor", () => {
     } as any;
     const dbExecutor = new ToolExecutor(ctx, mockDb);
 
-    // Mock fetch for http_request
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '{"result":"ok"}',
-      headers: new Headers({ "content-type": "application/json" }),
-    } as Response)));
-
     await dbExecutor.execute({
       name: "http_request",
       arguments: { url: "https://example.com/api", method: "GET" },
     });
-
-    vi.restoreAllMocks();
 
     const artifactEvent = loggedEvents.find((e) => e.eventType === "tool_artifact");
     expect(artifactEvent).toBeDefined();
@@ -1391,35 +1399,30 @@ describe("ToolExecutor", () => {
     const dbExecutor = new ToolExecutor(ctx, mockDb);
     let sentHeaders: Record<string, string> | undefined;
 
-    vi.stubGlobal("fetch", vi.fn(async (_url, init: RequestInit) => {
-      sentHeaders = init.headers as Record<string, string>;
-      return {
-        ok: true,
+    mockFetchScoped.mockImplementation(async (_url: string, init?: RequestInit) => {
+      sentHeaders = init?.headers as Record<string, string>;
+      return new Response(`echoed token: ${secret}; echoed header: Bearer ${secret}`, {
         status: 200,
-        text: async () => `echoed token: ${secret}; echoed header: Bearer ${secret}`,
-        headers: new Headers({
+        headers: {
           authorization: `Bearer ${secret}`,
           "set-cookie": `session=${secret}`,
-        }),
-      } as Response;
-    }));
-
-    try {
-      const result = await dbExecutor.execute({
-        name: "http_request",
-        arguments: { url: "https://example.com/api", method: "GET" },
+          "content-type": "text/plain",
+        },
       });
+    });
 
-      expect(sentHeaders?.Authorization).toBe(`Bearer ${secret}`);
-      expect(JSON.stringify(result.output)).not.toContain(secret);
-      expect(JSON.stringify(result.output)).toContain("<REDACTED-AUTH>");
+    const result = await dbExecutor.execute({
+      name: "http_request",
+      arguments: { url: "https://example.com/api", method: "GET" },
+    });
 
-      const artifactEvent = loggedEvents.find((event) => event.eventType === "tool_artifact");
-      expect(JSON.stringify(artifactEvent.payload)).not.toContain(secret);
-      expect(artifactEvent.payload.request.headers.Authorization).toBe("<REDACTED-AUTH>");
-    } finally {
-      vi.restoreAllMocks();
-    }
+    expect(sentHeaders?.Authorization).toBe(`Bearer ${secret}`);
+    expect(JSON.stringify(result.output)).not.toContain(secret);
+    expect(JSON.stringify(result.output)).toContain("<REDACTED-AUTH>");
+
+    const artifactEvent = loggedEvents.find((event) => event.eventType === "tool_artifact");
+    expect(JSON.stringify(artifactEvent.payload)).not.toContain(secret);
+    expect(artifactEvent.payload.request.headers.Authorization).toBe("<REDACTED-AUTH>");
   });
 
   it("keeps reflected credentials out of form and crawl results", async () => {
@@ -1427,7 +1430,7 @@ describe("ToolExecutor", () => {
     ctx.authConfig = { type: "bearer", token: secret };
     const authExecutor = new ToolExecutor(ctx, null);
 
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+    mockFetchScoped.mockImplementation(async () => new Response(
       `<html><body>echoed ${secret} and Bearer ${secret}</body></html>`,
       {
         status: 200,
@@ -1436,24 +1439,20 @@ describe("ToolExecutor", () => {
           "set-cookie": `session=${secret}`,
         },
       },
-    )));
+    ));
 
-    try {
-      const form = await authExecutor.execute({
-        name: "submit_form",
-        arguments: { url: "https://example.com/login", fields: { user: "test" } },
-      });
-      const crawl = await authExecutor.execute({
-        name: "crawl",
-        arguments: { url: "https://example.com/", depth: 1 },
-      });
+    const form = await authExecutor.execute({
+      name: "submit_form",
+      arguments: { url: "https://example.com/login", fields: { user: "test" } },
+    });
+    const crawl = await authExecutor.execute({
+      name: "crawl",
+      arguments: { url: "https://example.com/", depth: 1 },
+    });
 
-      expect(JSON.stringify(form.output)).not.toContain(secret);
-      expect(JSON.stringify(crawl.output)).not.toContain(secret);
-      expect(JSON.stringify(crawl.output)).toContain("<REDACTED-AUTH>");
-    } finally {
-      vi.restoreAllMocks();
-    }
+    expect(JSON.stringify(form.output)).not.toContain(secret);
+    expect(JSON.stringify(crawl.output)).not.toContain(secret);
+    expect(JSON.stringify(crawl.output)).toContain("<REDACTED-AUTH>");
   });
 
   it("keeps overlapping tool artifacts joined to their own calls", async () => {
@@ -1465,8 +1464,8 @@ describe("ToolExecutor", () => {
     let entered!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const started = new Promise<void>((resolve) => { entered = resolve; });
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/slow")) {
+    mockFetchScoped.mockImplementation(async (input: string) => {
+      if (input.endsWith("/slow")) {
         entered();
         await held;
       }
@@ -1492,7 +1491,6 @@ describe("ToolExecutor", () => {
     } finally {
       release();
       await slow;
-      fetchSpy.mockRestore();
       await dbExecutor.cleanup();
     }
   });
@@ -2568,31 +2566,20 @@ describe("ToolExecutor — scope enforcement (0sec#215)", () => {
       targetInfo: {},
       scope,
     };
-    const fetchStub = vi.fn(async (_url: string) => ({
-      ok: true,
-      status: 200,
-      url: "https://api.example.com/health",
-      headers: new Headers({ "content-type": "text/plain" }),
-      text: async () => "ok",
-      json: async () => ({}),
+    const fetchStub = vi.fn(async () => new Response("ok", {
+      headers: { "content-type": "text/plain" },
     }));
-    vi.stubGlobal("fetch", fetchStub);
+    mockFetchScoped.mockImplementation(fetchStub);
     try {
       const ex = new ToolExecutor(ctx, null);
       const result = await ex.execute({
         name: "http_request",
         arguments: { url: "https://api.example.com/health" },
       });
-      // Stubbed fetch always succeeds, so the scope gate is what we're
-      // really asserting here — but if a future refactor changes the
-      // failure shape, still assert it's NOT a scope error.
-      if (!result.success) {
-        expect(result.error).not.toMatch(/Scope violation/);
-      } else {
-        expect(fetchStub).toHaveBeenCalled();
-      }
+      expect(result.success).toBe(true);
+      expect(result.output).toMatchObject({ status: 200 });
     } finally {
-      vi.unstubAllGlobals();
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -2680,13 +2667,8 @@ describe("ToolExecutor — scope enforcement (0sec#215)", () => {
 // cross-origin check. With no scope, the same-origin rail is unchanged.
 describe("ToolExecutor — cross-origin in-scope authorization", () => {
   const okFetch = () =>
-    vi.fn(async (url: string) => ({
-      ok: true,
-      status: 200,
-      url,
-      headers: new Headers({ "content-type": "text/plain" }),
-      text: async () => "ok",
-      json: async () => ({}),
+    vi.fn(async () => new Response("ok", {
+      headers: { "content-type": "text/plain" },
     }));
 
   it("ALLOWS an in-scope subdomain whose origin differs from the base target", async () => {
@@ -2703,7 +2685,7 @@ describe("ToolExecutor — cross-origin in-scope authorization", () => {
       scope,
     };
     const fetchStub = okFetch();
-    vi.stubGlobal("fetch", fetchStub);
+    mockFetchScoped.mockImplementation(fetchStub);
     try {
       const ex = new ToolExecutor(ctx, null);
       const result = await ex.execute({
@@ -2717,7 +2699,7 @@ describe("ToolExecutor — cross-origin in-scope authorization", () => {
       expect(result.error ?? "").not.toMatch(/Scope violation/);
       expect(fetchStub).toHaveBeenCalled();
     } finally {
-      vi.unstubAllGlobals();
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -2792,6 +2774,37 @@ describe("ToolExecutor — cross-origin in-scope authorization", () => {
     expect(metadata.error).toMatch(/Local\/internal/);
   });
 
+  it.each(["[::1]", "[::]", "[::ffff:127.0.0.1]", "[::ffff:10.0.0.1]", "[fc00::1]", "[fe90::1]"])("keeps the private floor for retained IPv6 scope %s after a public target switch", async host => {
+    const url = `http://${host}/`;
+    const fetch = mockFetchScoped.mockImplementation(async () => new Response("fixture", { status: 200 }));
+    const ctx: ToolContext = {
+      target: url, scanId: "ipv6-floor", findings: [], attackResults: [], targetInfo: {},
+      scope: HttpAuditScopePolicy.fromJson({ in_scope: [new URL(url).hostname] }),
+    };
+    const executor = new ToolExecutor(ctx, null);
+    try {
+      expect((await executor.execute({ name: "http_request", arguments: { url } })).success).toBe(true);
+      ctx.target = "https://public.test/";
+      const blocked = await executor.execute({ name: "http_request", arguments: { url } });
+      expect(blocked.success).toBe(false);
+      expect(blocked.error).toMatch(/Local\/internal/);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally { await executor.cleanup(); fetch.mockRestore(); }
+  });
+
+  it("allows authorized public IPv6 and public IPv4-mapped destinations", async () => {
+    const urls = ["https://[2606:4700::1111]/", "https://[::ffff:8.8.8.8]/"];
+    const fetch = mockFetchScoped.mockImplementation(async () => new Response("fixture", { status: 200 }));
+    const executor = new ToolExecutor({
+      target: "https://public.test/", scanId: "ipv6-public", findings: [], attackResults: [], targetInfo: {},
+      scope: HttpAuditScopePolicy.fromJson({ in_scope: urls.map(url => new URL(url).hostname) }),
+    }, null);
+    try {
+      for (const url of urls) expect((await executor.execute({ name: "http_request", arguments: { url } })).success).toBe(true);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally { await executor.cleanup(); fetch.mockRestore(); }
+  });
+
   it("PATH ALLOWLIST still applies on top of an in-scope cross-origin host", async () => {
     const { ScopePolicy } = await import("../scope/scope.js");
     const scope = ScopePolicy.fromJson({
@@ -2823,7 +2836,7 @@ describe("ToolExecutor — cross-origin in-scope authorization", () => {
     // In-path on the same in-scope cross-origin host → passes the URL gate.
     const okCtx = mkCtx();
     const fetchStub = okFetch();
-    vi.stubGlobal("fetch", fetchStub);
+    mockFetchScoped.mockImplementation(fetchStub);
     try {
       const allowed = await new ToolExecutor(okCtx, null).execute({
         name: "http_request",
@@ -2833,7 +2846,7 @@ describe("ToolExecutor — cross-origin in-scope authorization", () => {
       expect(allowed.error ?? "").not.toMatch(/Scope violation/);
       expect(fetchStub).toHaveBeenCalled();
     } finally {
-      vi.unstubAllGlobals();
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -3238,8 +3251,8 @@ describe("ToolExecutor — structured scanner wrappers (0sec#555)", () => {
 // The unit tests in attribution.test.ts cover the helper directly. These
 // integration tests pin that http_request actually attaches the configured
 // headers to its outbound fetch when scope + attribution are wired through
-// ToolContext. We mock global `fetch` so we can inspect the RequestInit
-// the executor passes into it without actually hitting the network.
+// ToolContext. The transport mock records the outbound RequestInit without
+// making network calls; executor authorization remains real.
 
 describe("ToolExecutor — attribution-header injection (0sec#216)", () => {
   it("http_request attaches configured attribution headers on in-scope traffic", async () => {
@@ -3247,11 +3260,9 @@ describe("ToolExecutor — attribution-header injection (0sec#216)", () => {
     const scope = ScopePolicy.fromJson({ in_scope: ["api.example.com"] });
 
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: any, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return new Response("ok", { status: 200 });
-    }) as any;
+    
+    mockFetchScoped.mockImplementation(async (url: any, init?: RequestInit) => { calls.push({ url: String(url), init });
+    return new Response("ok", { status: 200 }); });
 
     try {
       const ctx: ToolContext = {
@@ -3278,17 +3289,15 @@ describe("ToolExecutor — attribution-header injection (0sec#216)", () => {
       // UA must contain the engagement token.
       expect(sentHeaders["User-Agent"]).toMatch(/engagement: engagement-123/);
     } finally {
-      globalThis.fetch = originalFetch;
+      mockFetchScoped.mockReset();
     }
   });
 
   it("http_request does NOT attach attribution when no attribution is configured", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: any, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return new Response("ok", { status: 200 });
-    }) as any;
+    
+    mockFetchScoped.mockImplementation(async (url: any, init?: RequestInit) => { calls.push({ url: String(url), init });
+    return new Response("ok", { status: 200 }); });
 
     try {
       const ctx: ToolContext = {
@@ -3309,7 +3318,7 @@ describe("ToolExecutor — attribution-header injection (0sec#216)", () => {
       // No engagement token configured → no engagement-tagged UA.
       expect(sentHeaders["User-Agent"]).toBeUndefined();
     } finally {
-      globalThis.fetch = originalFetch;
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -3321,11 +3330,9 @@ describe("ToolExecutor — attribution-header injection (0sec#216)", () => {
     const scope = ScopePolicy.fromJson({ in_scope: ["api.example.com"] });
 
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: any, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return new Response("ok", { status: 200 });
-    }) as any;
+    
+    mockFetchScoped.mockImplementation(async (url: any, init?: RequestInit) => { calls.push({ url: String(url), init });
+    return new Response("ok", { status: 200 }); });
 
     try {
       const ctx: ToolContext = {
@@ -3351,7 +3358,7 @@ describe("ToolExecutor — attribution-header injection (0sec#216)", () => {
       expect(sentHeaders["X-Pentest"]).toBe("engagement-123");
       expect(sentHeaders["User-Agent"]).toMatch(/engagement: engagement-123/);
     } finally {
-      globalThis.fetch = originalFetch;
+      mockFetchScoped.mockReset();
     }
   });
 });
@@ -3365,17 +3372,15 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
     });
 
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: any, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      // Same-origin redirect to a host that's explicitly out of scope.
-      // The crawler must REFUSE to follow rather than ride attribution
-      // headers to evil.example.com.
-      return new Response("", {
-        status: 302,
-        headers: { Location: "https://evil.example.com/landing" },
-      });
-    }) as any;
+    
+    mockFetchScoped.mockImplementation(async (url: any, init?: RequestInit) => { calls.push({ url: String(url), init });
+    // Same-origin redirect to a host that's explicitly out of scope.
+    // The crawler must REFUSE to follow rather than ride attribution
+    // headers to evil.example.com.
+    return new Response("", {
+      status: 302,
+      headers: { Location: "https://evil.example.com/landing" },
+    }); });
 
     try {
       const ctx: ToolContext = {
@@ -3404,7 +3409,7 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
       expect(firstHeaders["X-Pentest"]).toBe("engagement-123");
       // No second fetch existed — so attribution couldn't have leaked.
     } finally {
-      globalThis.fetch = originalFetch;
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -3413,20 +3418,18 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
     const scope = ScopePolicy.fromJson({ in_scope: ["app.example.com"] });
 
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: any, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      if (calls.length === 1) {
-        return new Response("", {
-          status: 301,
-          headers: { Location: "https://app.example.com/v2/" },
-        });
-      }
-      return new Response("<html><body>ok</body></html>", {
-        status: 200,
-        headers: { "Content-Type": "text/html" },
+    
+    mockFetchScoped.mockImplementation(async (url: any, init?: RequestInit) => { calls.push({ url: String(url), init });
+    if (calls.length === 1) {
+      return new Response("", {
+        status: 301,
+        headers: { Location: "https://app.example.com/v2/" },
       });
-    }) as any;
+    }
+    return new Response("<html><body>ok</body></html>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    }); });
 
     try {
       const ctx: ToolContext = {
@@ -3450,7 +3453,7 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
       expect((calls[0].init!.headers as Record<string, string>)["X-Pentest"]).toBe("eng-1");
       expect((calls[1].init!.headers as Record<string, string>)["X-Pentest"]).toBe("eng-1");
     } finally {
-      globalThis.fetch = originalFetch;
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -3464,14 +3467,12 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
     });
 
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: any, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return new Response("", {
-        status: 302,
-        headers: { Location: "https://other.example.com/" },
-      });
-    }) as any;
+    
+    mockFetchScoped.mockImplementation(async (url: any, init?: RequestInit) => { calls.push({ url: String(url), init });
+    return new Response("", {
+      status: 302,
+      headers: { Location: "https://other.example.com/" },
+    }); });
 
     try {
       const ctx: ToolContext = {
@@ -3491,7 +3492,7 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
       expect(result.success).toBe(true);
       expect(calls).toHaveLength(1);
     } finally {
-      globalThis.fetch = originalFetch;
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -3504,14 +3505,12 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
     const scope = ScopePolicy.fromJson({ in_scope: ["app.example.com"] });
 
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: any, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return new Response(
-        '<html><body><a href="/about">about</a></body></html>',
-        { status: 200, headers: { "Content-Type": "text/html" } },
-      );
-    }) as any;
+    
+    mockFetchScoped.mockImplementation(async (url: any, init?: RequestInit) => { calls.push({ url: String(url), init });
+    return new Response(
+      '<html><body><a href="/about">about</a></body></html>',
+      { status: 200, headers: { "Content-Type": "text/html" } },
+    ); });
 
     try {
       const ctx: ToolContext = {
@@ -3534,10 +3533,9 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
       expect(headers["X-Pentest"]).toBe("eng-noop");
       const out = result.output as { pages: Array<{ status: number; links: string[] }> };
       expect(out.pages[0].status).toBe(200);
-      // Body actually got parsed (link extraction ran).
-      expect(out.pages[0].links.length).toBeGreaterThan(0);
+      expect(out.pages[0].links).toContain("https://app.example.com/about");
     } finally {
-      globalThis.fetch = originalFetch;
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -3552,17 +3550,15 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
     const scope = ScopePolicy.fromJson({ in_scope: ["app.example.com"] });
 
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: any, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      // Always 302 to a fresh same-origin path so the next-URL check
-      // passes (in-scope, same-origin, http) — only the hop counter
-      // can stop us.
-      return new Response("", {
-        status: 302,
-        headers: { Location: `https://app.example.com/loop/${calls.length}` },
-      });
-    }) as any;
+    
+    mockFetchScoped.mockImplementation(async (url: any, init?: RequestInit) => { calls.push({ url: String(url), init });
+    // Always 302 to a fresh same-origin path so the next-URL check
+    // passes (in-scope, same-origin, http) — only the hop counter
+    // can stop us.
+    return new Response("", {
+      status: 302,
+      headers: { Location: `https://app.example.com/loop/${calls.length}` },
+    }); });
 
     try {
       const ctx: ToolContext = {
@@ -3581,13 +3577,11 @@ describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
       });
       expect(result.success).toBe(true);
       // MAX_REDIRECTS=5 → initial + 5 follows = 6 fetches, then bail.
-      // The cap MUST hold the call count to a small finite number.
-      expect(calls.length).toBeLessThanOrEqual(6);
-      expect(calls.length).toBeGreaterThan(1);
+      expect(calls).toHaveLength(6);
       const out = result.output as { pages: Array<Record<string, unknown>> };
       expect(out.pages[0].error).toMatch(/too many redirects/);
     } finally {
-      globalThis.fetch = originalFetch;
+      mockFetchScoped.mockReset();
     }
   });
 });
@@ -3869,15 +3863,10 @@ describe("ToolExecutor — http_audit enforcement (FROZEN CONTRACT)", () => {
 
   it("http_request counts an in-scope, in-path request", async () => {
     const ctx = httpAuditCtx();
-    const fetchStub = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      url: "https://api.example.com/api/health",
-      headers: new Headers({ "content-type": "text/plain" }),
-      text: async () => "ok",
-      json: async () => ({}),
+    const fetchStub = vi.fn(async () => new Response("ok", {
+      headers: { "content-type": "text/plain" },
     }));
-    vi.stubGlobal("fetch", fetchStub);
+    mockFetchScoped.mockImplementation(fetchStub);
     try {
       const ex = new ToolExecutor(ctx, null);
       await ex.execute({
@@ -3889,7 +3878,7 @@ describe("ToolExecutor — http_audit enforcement (FROZEN CONTRACT)", () => {
       expect(s.requests_out_of_scope_blocked).toBe(0);
       expect(fetchStub).toHaveBeenCalled();
     } finally {
-      vi.unstubAllGlobals();
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -4017,7 +4006,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
         text: async () => "<html>ok</html>",
       } as unknown as Response;
     });
-    vi.stubGlobal("fetch", fetchStub);
+    mockFetchScoped.mockImplementation(fetchStub);
     try {
       const ex = new ToolExecutor(ctx, null);
       const result = await ex.execute({
@@ -4046,7 +4035,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
       expect(summary.total_blocks).toBe(1);
       expect(summary.total_bypasses).toBe(1);
     } finally {
-      vi.unstubAllGlobals();
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -4057,7 +4046,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
       headers: new Headers({ "content-type": "application/json" }),
       text: async () => '{"ok":true}',
     } as unknown as Response));
-    vi.stubGlobal("fetch", fetchStub);
+    mockFetchScoped.mockImplementation(fetchStub);
     try {
       const ex = new ToolExecutor(ctx, null);
       const result = await ex.execute({
@@ -4070,7 +4059,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
       expect(fetchStub).toHaveBeenCalledTimes(1);
       expect(ctx.wafDetector!.summary().waf_detected).toBe(false);
     } finally {
-      vi.unstubAllGlobals();
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -4085,7 +4074,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
       headers: new Headers({ server: "cloudflare", "cf-ray": "7d-LHR" }),
       text: async () => "Attention Required! | Cloudflare",
     } as unknown as Response));
-    vi.stubGlobal("fetch", fetchStub);
+    mockFetchScoped.mockImplementation(fetchStub);
     try {
       const ex = new ToolExecutor(ctx, null);
       const result = await ex.execute({
@@ -4110,7 +4099,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
       expect(summary.total_blocks).toBe(1);
       expect(summary.total_bypasses).toBe(0);
     } finally {
-      vi.unstubAllGlobals();
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -4121,7 +4110,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
       headers: new Headers({ server: "cloudflare", "cf-ray": "7d-LHR" }),
       text: async () => "Attention Required! | Cloudflare",
     } as unknown as Response));
-    vi.stubGlobal("fetch", fetchStub);
+    mockFetchScoped.mockImplementation(fetchStub);
     const prev = process.env["0SEC_WAF_EVASION"];
     process.env["0SEC_WAF_EVASION"] = "0";
     try {
@@ -4138,7 +4127,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
     } finally {
       if (prev === undefined) delete process.env["0SEC_WAF_EVASION"];
       else process.env["0SEC_WAF_EVASION"] = prev;
-      vi.unstubAllGlobals();
+      mockFetchScoped.mockReset();
     }
   });
 
@@ -4159,7 +4148,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
             text: async () => "<html>ok</html>",
           } as unknown as Response);
     });
-    vi.stubGlobal("fetch", fetchStub);
+    mockFetchScoped.mockImplementation(fetchStub);
     try {
       const ex = new ToolExecutor(ctx, null);
       const result = await ex.execute({
@@ -4173,7 +4162,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
       expect(fetchStub.mock.calls.length).toBeGreaterThanOrEqual(2);
       expect(output.waf.evasion.bypassed).toBe(true);
     } finally {
-      vi.unstubAllGlobals();
+      mockFetchScoped.mockReset();
     }
   });
 });

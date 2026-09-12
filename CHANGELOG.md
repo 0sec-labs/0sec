@@ -14,6 +14,44 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Cloud sign-in, BYOK credentials, and provider subscriptions are separate
+  connection choices. Cancelling sign-in returns to the current conversation;
+  changing the provider or model applies to the next chat. Login alone does not
+  establish model availability or a funded account.
+- `0sec balance` displays the service-reported percentage of inference credits
+  remaining. Missing percentage data stays unavailable; JSON retains accounting
+  fields, and reservations remain distinct from settled spending.
+- Interactive YOLO sessions request approval for uncovered targets and retain
+  the same conversation after approval. Explicit exclusions, denied hosts,
+  private-address checks, and revoked tool authority remain enforced.
+- Main and worker transcripts share expandable command and output views.
+  Status rows and pickers use Nerd Font icons with retained text labels;
+  glyph appearance depends on the terminal font. Cancellation keeps partial
+  output without adding a persistent interruption notice.
+- Removed the persistent problem-reporting invitation from the chat footer.
+- Target HTTP tools check scope and resolved addresses before connecting and
+  following redirects. Requests pin destination addresses, retain TLS hostname
+  verification, and bound decoded bodies and elapsed time. WordPress advisory
+  requests use a separate service-bound transport.
+- The standalone CLI runtime includes the existing PDF report dependency.
+- Console guidance asks for useful parallel delegation on independent work and
+  evidence-backed finding summaries while retaining scope and budget limits.
+- Contextual model, session, finding, usage, worker, and marketplace views use
+  compact controls. Usage reports scroll without losing unknown-cost markers;
+  worker steering accepts pasted text, and marketplace actions retain confirmation.
+- Child runtimes inherit the parent's resolved provider configuration.
+  Scoped harness shutdown drains work before disposal and reports incomplete
+  cleanup. Restarting an engine does not reconstruct active harness state.
+- Optional problem reporting defaults to off and uses operator-global consent;
+  project settings cannot enable it. Automatic reports contain limited version,
+  platform, runtime, and problem-category data, excluding prompts, tool arguments,
+  output, and credentials. Manual feedback retains review and local capture.
+  Feedback submission rejects redirects to unreviewed destinations.
+- Update checks and automatic installation use an operator-global policy.
+  Automatic installation is opt-in and completes before interactive startup;
+  notification-only checks remain in the background. Manual upgrades retain
+  their version and destination options and report failures or interruption.
+
 - Executable TypeScript plugins, reusable skills, and agent programs can be
   created during a session, composed through tool/model brokers, retained
   across restarts, replaced, and rolled back. Evaluated source evolution can
@@ -37,11 +75,9 @@ on the published npm package and the GitHub Release tag.
   worker transcripts preserve their scrollable extent through detail and size
   changes without leaking layout state into the Main conversation.
 
-- Rebuilt the unreleased desktop as a dedicated project-and-session workspace,
-  separate from the operations dashboard. Adds session tabs, a command palette,
-  progressive conversation and approval views, system/light/dark appearance,
-  and native UI-preference persistence across changing sidecar ports. Desktop
-  remains a development build, not a published product release.
+- Native desktop development is paused. Root desktop launch and packaging
+  shortcuts are removed, and the macOS packaging workflow is archived.
+  Desktop source and CLI-required dashboard components are retained.
 
 - YOLO console sessions can acquire public HTTPS Git repositories for local
   review without authorizing their hosting services as testing targets.
@@ -191,6 +227,13 @@ on the published npm package and the GitHub Release tag.
 
 ### Fixed
 
+- Craft helpers pass model-provided paths as literal arguments rather than
+  shell text. Replay container launches validate image references and keep
+  mount paths and command arguments separate from shell syntax.
+
+- Windows Cloud sign-in passes the browser URL as data to a fixed launcher
+  command, so URL metacharacters are not interpreted as shell commands.
+
 - Source evolution rejects candidates that lose an already-solved case, even
   when aggregate development and held-out scores improve. The retention check
   also applies to approval and canary evaluations.
@@ -217,7 +260,7 @@ on the published npm package and the GitHub Release tag.
   multiply linked files. Deep-review also checks resolved subsystem paths
   against the prepared source tree before exposing source to a finder.
 - Foxguard integration now consumes native v1 JSON reports instead of silently
-  dropping their findings. The npm fallback is pinned to v0.12.0; provisioned
+  dropping their findings. The npm fallback is pinned to v0.13.0; provisioned
   binaries are used directly, and multi-path scans use valid CLI invocations.
 - Installers, container builds, and scanner CI provision a checksum-verified
   FoxGuard companion from a shared version/hash pin; the default installer

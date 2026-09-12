@@ -32,6 +32,22 @@ describe("ScopePolicy — exact host", () => {
   });
 });
 
+describe("ScopePolicy — IPv6 identity", () => {
+  it("matches one address across bare, expanded and bracketed spellings without widening", () => {
+    const policy = ScopePolicy.fromJson({ in_scope: ["2606:4700:4700:0:0:0:0:1111"] });
+    expect(policy.match("https://[2606:4700:4700::1111]/").allowed).toBe(true);
+    expect(policy.match("https://[2606:4700:4700::1112]/").allowed).toBe(false);
+  });
+
+  it("keeps an equivalent exclusion authoritative over an exact allow", () => {
+    const policy = ScopePolicy.fromJson({
+      in_scope: ["[2606:4700:4700::1111]"],
+      out_of_scope: ["[2606:4700:4700:0:0:0:0:1111]"],
+    });
+    expect(policy.match("https://[2606:4700:4700::1111]/").allowed).toBe(false);
+  });
+});
+
 describe("ScopePolicy — wildcard subdomain", () => {
   const policy = ScopePolicy.fromJson({
     in_scope: ["*.example.com"],
@@ -292,5 +308,32 @@ describe("integration — bash extraction with various flag patterns", () => {
       `python3 -c "import urllib.request as u; u.urlopen('https://evil.com/r')"`,
     );
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("ScopePolicy — DNS root dot identity", () => {
+  it.each([
+    { allow: "excluded.test.", deny: "excluded.test", target: "https://EXCLUDED.TEST./" },
+    { allow: "excluded.test", deny: "excluded.test.", target: "https://excluded.test/" },
+    { allow: "excluded.test..", deny: "excluded.test", target: "https://excluded.test../" },
+  ])("preserves exclusion precedence for $target against $deny", ({ allow, deny, target }) => {
+    const policy = ScopePolicy.fromJson({ in_scope: [allow], out_of_scope: [deny] });
+    expect(policy.match(target).allowed).toBe(false);
+  });
+
+  it("normalizes wildcard denials without denying suffix lookalikes", () => {
+    const policy = ScopePolicy.fromJson({
+      in_scope: ["sub.blocked.test.", "sub.notblocked.test."],
+      out_of_scope: ["*.blocked.test."],
+    });
+    expect(policy.match("https://sub.blocked.test./").allowed).toBe(false);
+    expect(policy.match("https://sub.notblocked.test./").allowed).toBe(true);
+  });
+
+  it("matches dotted allow rules and targets without widening wildcard scope to the apex", () => {
+    const policy = ScopePolicy.fromJson({ in_scope: ["api.example.test.", "*.service.test."] });
+    expect(policy.match("https://api.example.test/").allowed).toBe(true);
+    expect(policy.match("https://sub.service.test./").allowed).toBe(true);
+    expect(policy.match("https://service.test./").allowed).toBe(false);
   });
 });

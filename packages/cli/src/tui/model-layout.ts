@@ -395,7 +395,7 @@ export function modelDetailLines(
     push(`Provider: ${group.label}`, "text");
     push(`Price: ${row.model.price}`, "text");
     if (row.active) push("Currently active", "accent");
-    else push("Enter to use this model", "accent");
+    else push("Enter to select for New chat", "accent");
   }
 
   separate();
@@ -494,10 +494,9 @@ export type ModelMode = "browse" | "filter";
 export function modelFooterHint(mode: ModelMode, hasFilter = false): string {
   return [
     "↑↓ select",
-    "enter switch",
-    "tab curated/all",
+    "enter pick",
+    "tab all",
     mode === "filter" || hasFilter ? "esc clear" : "esc back",
-    "ctrl+u clear",
   ].join(" · ");
 }
 

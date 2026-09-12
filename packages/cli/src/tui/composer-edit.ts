@@ -17,6 +17,15 @@
  * is three characters inside a `useKeyboard` callback.
  */
 
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Backspace removes one visible character, never half an emoji or accent. */
+export function deletePreviousCharacter(text: string): string {
+  if (!text) return text;
+  const last = GRAPHEMES.segment(text).containing(text.length - 1);
+  return text.slice(0, last?.index ?? 0);
+}
+
 /**
  * Delete everything before the caret.
  *

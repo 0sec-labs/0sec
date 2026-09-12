@@ -406,7 +406,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       cwd,
       env: allowlistedChildEnv(),
     }) as string;
-  const listDir = (p: string) => sh("bash", ["-lc", `cd ${JSON.stringify(safe(p || "."))} && ls -la --group-directories-first | head -200`]);
+  const listDir = (p: string) => sh("bash", ["-c", "ls -la --group-directories-first | head -200"], safe(p || "."));
   const readFile = (p: string, a?: number, b?: number) => {
     const abs = safe(p);
     if (!existsSync(abs) || statSync(abs).isDirectory()) return `(not a readable file: ${p})`;
@@ -426,7 +426,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   };
   const findSeeds = () => {
     try {
-      return clip(sh("bash", ["-lc", `find ${JSON.stringify(sourceRoot)} \\( -path '*corpus*' -o -path '*seed*' -o -path '*test*' \\) -type f \\( -size +1c -a -size -200k \\) 2>/dev/null | head -40`])
+      return clip(sh("bash", ["-c", 'find "$1" \\( -path \'*corpus*\' -o -path \'*seed*\' -o -path \'*test*\' \\) -type f \\( -size +1c -a -size -200k \\) 2>/dev/null | head -40', "0sec-find-seeds", sourceRoot])
         .split("\n").map((f) => f.replace(sourceRoot + "/", "")).join("\n"), 4000) || "(no seed/corpus files found)";
     } catch { return "(none)"; }
   };

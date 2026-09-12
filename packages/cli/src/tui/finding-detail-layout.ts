@@ -197,11 +197,26 @@ function findingCvssLine(finding: Finding, injected: string | undefined): string
   return EM_DASH;
 }
 
+// ── NERD_SYMBOLS BMP icons ──────────────────────────────────────────────────
+const ICON_CATEGORY  = "\u{f07c}"; // nf-fa-folder-open
+const ICON_STATUS    = "\u{f111}"; // nf-fa-circle
+const ICON_TRIAGE    = "\u{f0ae}"; // nf-fa-tags
+const ICON_CONFID    = "\u{f05a}"; // nf-fa-info-circle
+const ICON_LOCATION  = "\u{f07b}"; // nf-fa-folder
+const ICON_DESC      = "\u{f15c}"; // nf-fa-file-text
+const ICON_EVIDENCE  = "\u{f06e}"; // nf-fa-eye
+const ICON_FIX       = "\u{f0e3}"; // nf-fa-gavel
+const ICON_CVSS      = "\u{f0c4}"; // nf-fa-diamond
+const ICON_LINK      = "\u{f0c1}"; // nf-fa-link
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * The finding body as a flat, tone-tagged row list. Content is decided here and
- * colour by the component, so the body is testable without a renderer. Every
- * missing field renders as `—` rather than a fabricated value, and evidence is
- * only ever shown through the injected redactor.
+ * The finding body as a flat, tone-tagged row list.
+ *
+ * A compact contextual inspector — no decorative blank rows between sections,
+ * each section introduced by an icon-prefixed heading (not a separate heading
+ * row). Every missing field renders as `—`, and evidence is only ever shown
+ * through the injected redactor.
  */
 export function buildFindingRows(
   finding: Finding | undefined,
@@ -216,39 +231,35 @@ export function buildFindingRows(
 
   const redact = options.redact ?? ((text: string) => text);
   const rows: FindingDetailRow[] = [];
-  const blank = () => rows.push({ kind: "blank" });
-  const heading = (text: string) => rows.push({ kind: "heading", text, tone: "heading" });
 
-  // Strong header: title + severity badge on one row. The severity lives in the
-  // badge (red for critical/high only) rather than a key/value row, so the
-  // finding leads with its headline and severity instead of a meta table.
+  // Strong header: title + severity badge on one row — keeping as the primary
+  // identifier for this inspector view.
   rows.push({
     kind: "header",
     title: findingText(finding.title || EM_DASH),
     badge: finding.severity ? String(finding.severity).toUpperCase() : EM_DASH,
     badgeTone: severityDetailTone(finding.severity),
   });
-  blank();
 
-  // Meta — key/value rows the component renders in two columns.
+  // Meta — key/value rows, no blank padding around them.
   rows.push({
     kind: "kv",
-    label: "Category",
+    label: `${ICON_CATEGORY} Category`,
     value: finding.category ? findingText(finding.category) : EM_DASH,
     tone: "text",
   });
   rows.push({
     kind: "kv",
-    label: "Status",
+    label: `${ICON_STATUS} Status`,
     value: finding.status ? findingText(finding.status) : EM_DASH,
     tone: "text",
   });
   if (finding.triageStatus) {
-    rows.push({ kind: "kv", label: "Triage", value: findingText(finding.triageStatus), tone: "text" });
+    rows.push({ kind: "kv", label: `${ICON_TRIAGE} Triage`, value: findingText(finding.triageStatus), tone: "text" });
   }
   rows.push({
     kind: "kv",
-    label: "Confidence",
+    label: `${ICON_CONFID} Confidence`,
     value:
       typeof finding.confidence === "number" && Number.isFinite(finding.confidence)
         ? `${Math.round(clamp(finding.confidence, 0, 1) * 100)}%`
@@ -256,23 +267,18 @@ export function buildFindingRows(
     tone: "text",
   });
 
-  // Location
-  blank();
-  heading("Location");
-  pushWrapped(rows, findingLocation(finding) ?? EM_DASH, width, "text");
+  // Location — compact section label inline with wrapped text.
+  pushWrapped(rows, `${ICON_LOCATION} Location: ${findingLocation(finding) ?? EM_DASH}`, width, "text");
 
   // Description
-  blank();
-  heading("Description");
-  pushWrapped(rows, finding.description || EM_DASH, width, "text");
+  pushWrapped(rows, `${ICON_DESC} Description: ${finding.description || EM_DASH}`, width, "text");
 
-  // Evidence (redacted)
-  blank();
-  heading("Evidence");
+  // Evidence (redacted) — section label first, then redacted body.
   const evidence = findingEvidence(finding, redact);
   if (evidence.length === 0) {
-    rows.push({ kind: "text", text: EM_DASH, tone: "muted" });
+    pushWrapped(rows, `${ICON_EVIDENCE} Evidence: ${EM_DASH}`, width, "muted");
   } else {
+    rows.push({ kind: "text", text: `${ICON_EVIDENCE} Evidence`, tone: "heading" });
     for (const rawLine of evidence.split("\n")) {
       const wrapped = wrapCells(rawLine, width);
       if (wrapped.length === 0) {
@@ -284,30 +290,25 @@ export function buildFindingRows(
   }
 
   // Remediation
-  blank();
-  heading("Remediation");
   const remediation = finding.remediation;
   if (!remediation || (!remediation.summary && (remediation.steps?.length ?? 0) === 0)) {
-    rows.push({ kind: "text", text: EM_DASH, tone: "muted" });
+    pushWrapped(rows, `${ICON_FIX} Remediation: ${EM_DASH}`, width, "muted");
   } else {
-    if (remediation.summary) pushWrapped(rows, remediation.summary, width, "text");
+    pushWrapped(rows, `${ICON_FIX} Remediation${remediation.summary ? `: ${remediation.summary}` : ""}`, width, "text");
     for (const step of remediation.steps ?? []) {
-      pushWrapped(rows, `- ${step}`, width, "text");
+      pushWrapped(rows, `${step}`, width, "text");
     }
   }
 
   // CVSS
-  blank();
-  heading("CVSS");
-  pushWrapped(rows, findingCvssLine(finding, options.cvssLine), width, "text");
+  pushWrapped(rows, `${ICON_CVSS} CVSS: ${findingCvssLine(finding, options.cvssLine)}`, width, "text");
 
   // References
-  blank();
-  heading("References");
   const refs = [...(finding.remediation?.references ?? []), ...(finding.dedupRefs ?? [])];
   if (refs.length === 0) {
-    rows.push({ kind: "text", text: EM_DASH, tone: "muted" });
+    pushWrapped(rows, `${ICON_LINK} References: ${EM_DASH}`, width, "muted");
   } else {
+    rows.push({ kind: "text", text: `${ICON_LINK} References`, tone: "heading" });
     for (const ref of refs) pushWrapped(rows, ref, width, "accent");
   }
 

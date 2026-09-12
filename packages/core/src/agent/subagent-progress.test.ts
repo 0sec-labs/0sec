@@ -10,13 +10,6 @@ const h = vi.hoisted(() => ({
   configs: [] as any[],
 }));
 
-vi.mock("../runtime/llm-api.js", () => ({
-  LlmApiRuntime: class {
-    async isAvailable(): Promise<boolean> {
-      return true;
-    }
-  },
-}));
 
 vi.mock("./native-loop.js", () => ({
   runNativeAgentLoop: async (opts: any) => {
@@ -38,6 +31,15 @@ import {
   buildSubagentMessage,
 } from "./tools.js";
 import type { ToolContext } from "./types.js";
+import type { NativeRuntime } from "../runtime/types.js";
+
+async function fakeRuntime(): Promise<NativeRuntime> {
+  return {
+    type: "api",
+    isAvailable: async () => true,
+    executeNative: async () => ({ content: [], stopReason: "end_turn", durationMs: 0 }),
+  };
+}
 
 function toolContext(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -281,7 +283,7 @@ describe("spawn_agent / spawn_agents — progress events on the bus", () => {
     };
     const { progress, unsubscribe } = collect();
     try {
-      const executor = new ToolExecutor(toolContext());
+      const executor = new ToolExecutor(toolContext(), undefined, undefined, fakeRuntime);
       await executor.execute({ name: "spawn_agent", arguments: { task: "t", max_turns: 10 } });
 
       expect(progress).toHaveLength(3);
@@ -311,7 +313,7 @@ describe("spawn_agent / spawn_agents — progress events on the bus", () => {
     };
     const { progress, unsubscribe } = collect();
     try {
-      const executor = new ToolExecutor(toolContext());
+      const executor = new ToolExecutor(toolContext(), undefined, undefined, fakeRuntime);
       await executor.execute({
         name: "spawn_agents",
         arguments: {
@@ -343,7 +345,7 @@ describe("spawn_agent / spawn_agents — progress events on the bus", () => {
     };
     const { lifecycle, unsubscribe } = collect();
     try {
-      const executor = new ToolExecutor(toolContext());
+      const executor = new ToolExecutor(toolContext(), undefined, undefined, fakeRuntime);
       await executor.execute({ name: "spawn_agent", arguments: { task: "t" } });
 
       expect(lifecycle.map((e) => e.status)).toEqual(["queued", "running", "completed"]);
@@ -367,7 +369,7 @@ describe("spawn_agent / spawn_agents — progress events on the bus", () => {
     };
     const { progress, unsubscribe } = collect();
     try {
-      const executor = new ToolExecutor(toolContext());
+      const executor = new ToolExecutor(toolContext(), undefined, undefined, fakeRuntime);
       await executor.execute({ name: "spawn_agent", arguments: { task: "t" } });
 
       const serialized = JSON.stringify(progress);
@@ -389,7 +391,7 @@ describe("spawn_agent / spawn_agents — progress events on the bus", () => {
     };
     const { progress, unsubscribe } = collect();
     try {
-      const executor = new ToolExecutor(toolContext());
+      const executor = new ToolExecutor(toolContext(), undefined, undefined, fakeRuntime);
       await executor.execute({ name: "spawn_agent", arguments: { task: "t" } });
 
       const note = progress[0]!.note!;
@@ -406,7 +408,7 @@ describe("spawn_agent / spawn_agents — progress events on the bus", () => {
   it("makes report_status callable by a child (non-privileged) and returns success", async () => {
     // Reach into a child executor the way native-loop would: report_status must
     // resolve to a real handler and never touch fs/net/spawn.
-    const executor = new ToolExecutor(toolContext());
+    const executor = new ToolExecutor(toolContext(), undefined, undefined, fakeRuntime);
     const ok = await executor.execute({ name: "report_status", arguments: { status: "probing" } });
     expect(ok).toMatchObject({ success: true, output: { recorded: true, status: "probing" } });
 
@@ -427,7 +429,7 @@ describe("depth guard — a child cannot spawn further children", () => {
 
   it("gives the child a tool set that excludes spawn_agent / spawn_agents", async () => {
     h.impl = async () => fakeState({ turns: 1 });
-    const executor = new ToolExecutor(toolContext());
+    const executor = new ToolExecutor(toolContext(), undefined, undefined, fakeRuntime);
     await executor.execute({ name: "spawn_agent", arguments: { task: "t" } });
 
     expect(h.configs).toHaveLength(1);
@@ -442,7 +444,7 @@ describe("depth guard — a child cannot spawn further children", () => {
 
   it("keeps the guard for every child in a concurrent fan-out", async () => {
     h.impl = async () => fakeState({ turns: 1 });
-    const executor = new ToolExecutor(toolContext());
+    const executor = new ToolExecutor(toolContext(), undefined, undefined, fakeRuntime);
     await executor.execute({
       name: "spawn_agents",
       arguments: { tasks: [{ task: "a" }, { task: "b" }] },

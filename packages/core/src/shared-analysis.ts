@@ -10,7 +10,7 @@ import type { ScanListener } from "./scanner.js";
  * Release used by the npm launcher when Foxguard is not provisioned locally.
  * Keep this aligned with the published finding contract and cloud runtime.
  */
-export const FOXGUARD_PINNED_TAG = "v0.12.0";
+export const FOXGUARD_PINNED_TAG = "v0.13.0";
 
 /**
  * CLI runtimes (claude, codex, etc.) are full agents — they can read files,
@@ -137,7 +137,7 @@ export function selectedStaticScanner(): "foxguard" | "semgrep" {
 
 /**
  * Native v1 finding fields, also accepted in legacy bare-array reports.
- * https://github.com/0sec-labs/foxguard/blob/v0.12.0/schemas/finding-v1.schema.json
+ * https://github.com/0sec-labs/foxguard/blob/v0.13.0/schemas/finding-v1.schema.json
  *
  * Severity is `low | medium | high | critical` (lowercase). Optional
  * fields are omitted from the JSON when unset, so the translator must

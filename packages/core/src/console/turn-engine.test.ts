@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,7 +20,9 @@ import type {
 import { ScopePolicy } from "../scope/scope.js";
 import type { ToolDefinition } from "../agent/types.js";
 import * as repositoryAcquisition from "../agent/repository-acquisition.js";
+import * as http from "../http.js";
 
+import { setWorkspaceHarnessTrust } from "../plugins/harness-trust.js";
 
 /**
  * A scripted NativeRuntime: replays a queue of pre-baked results so the turn
@@ -660,10 +662,7 @@ describe("Console autonomy — denied-host memory", () => {
     expect(prompts).toBe(2);
   });
 
-  it("does not consult denied-host memory in yolo mode (behaviour unchanged)", async () => {
-    // YOLO hard-denies out-of-scope network calls before requestScope and the
-    // denied-host gate; this must remain a pure scope decision that never
-    // prompts, regardless of any prior denials in other modes.
+  it("asks once in YOLO and remembers the operator's denial on retry", async () => {
     const runtime = new ScriptedRuntime([
       httpTurn("c1", "https://offscope.test/a"),
       endTurn("Yolo denial 1."),
@@ -683,43 +682,55 @@ describe("Console autonomy — denied-host memory", () => {
 
     const first = await session.send("go");
     const second = await session.send("go again");
-    expect(prompts).toBe(0); // yolo never prompts
-    expect(first.toolCalls[0].result.error).toContain("YOLO mode");
-    expect(second.toolCalls[0].result.error).toContain("YOLO mode");
+    expect(prompts).toBe(1);
+    expect(first.toolCalls[0].result.success).toBe(false);
+    expect(second.toolCalls[0].result.success).toBe(false);
   });
 });
 
 describe("Console autonomy — yolo still enforces scope", () => {
-  it("hard-denies out-of-scope network calls without invoking requestScope", async () => {
+  it.each(["", "https://previous.test/"])("approves a new crawl target in the existing YOLO session from %s", async target => {
+    const crawl: NativeRuntimeResult = {
+      content: [{ type: "tool_use", id: "crawl", name: "crawl", input: { url: "https://doruk.ch/", depth: 1 } }],
+      stopReason: "tool_use", durationMs: 0,
+    };
     const runtime = new ScriptedRuntime([
-      {
-        content: [
-          { type: "tool_use", id: "c1", name: "http_request", input: { url: "https://offscope.test" } },
-        ],
-        stopReason: "tool_use",
-        durationMs: 1,
-      },
-      endTurn("Scope still matters in yolo."),
+      endTurn("Welcome"),
+      { ...crawl, content: [
+        { type: "tool_use", id: "profile", name: "update_target", input: { endpoints: JSON.stringify(["https://doruk.ch/"]) } },
+        ...crawl.content,
+      ] },
+      endTurn("Crawled"), crawl, endTurn("Continued"),
     ]);
-
-    let requestScopeCalled = false;
+    const fetch = vi.spyOn(http, "fetchScoped").mockImplementation(async () => new Response("<html>fixture</html>", { status: 200 }));
+    const requests: ConsoleScopeRequest[] = [];
     const session = createConsoleSession({
-      runtime,
-      autonomyMode: "yolo",
-      requestScope: async () => {
-        requestScopeCalled = true;
-        return null;
+      runtime, target, autonomyMode: "yolo", allowModelSelfExtension: false, refineObjective: false,
+      scope: ScopePolicy.fromJson({ in_scope: target ? ["previous.test"] : [], out_of_scope: ["excluded.test"] }),
+      requestScope: async request => {
+        requests.push(request);
+        expect(session.target).toBe(target);
+        expect(fetch).not.toHaveBeenCalled();
+        return { target: "https://doruk.ch/", scope: ScopePolicy.fromJson({ in_scope: ["doruk.ch", "excluded.test"] }) };
       },
-      approveTool: async () => {
-        throw new Error("approveTool should not be called in yolo mode");
-      },
+      approveTool: async () => { throw new Error("YOLO must not add a second per-action approval"); },
     });
-
-    const outcome = await session.send("go");
-    expect(requestScopeCalled).toBe(false);
-    expect(outcome.toolCalls).toHaveLength(1);
-    expect(outcome.toolCalls[0].result.success).toBe(false);
-    expect(outcome.toolCalls[0].result.error).toContain("YOLO mode");
+    try {
+      await session.send("hello");
+      const history = session.messages;
+      const outcome = await session.send("Inspect the proposed website");
+      expect(outcome.toolCalls.map(item => item.result.success)).toEqual([true, true]);
+      expect(session.target).toBe("https://doruk.ch/");
+      expect(session.scope?.match("https://doruk.ch/").allowed).toBe(true);
+      expect(session.scope?.match("https://excluded.test/").allowed).toBe(false);
+      expect(runtime.calls[2].system).toContain("Current target: https://doruk.ch/");
+      expect((await session.send("Continue the crawl")).toolCalls[0].result.success).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].requestedUrls).toContain("https://doruk.ch/");
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(session.messages).toBe(history);
+      expect(runtime.calls[3].messages[0].content).toEqual([{ type: "text", text: "hello" }]);
+    } finally { await session.cleanup(); fetch.mockRestore(); }
   });
 
   it("allows tools in yolo mode when scope is preconfigured", async () => {
@@ -757,9 +768,6 @@ describe("Console autonomy — yolo still enforces scope", () => {
   });
 
   it("hard-denies in yolo mode even when requestScope callback is absent", async () => {
-    // YOLO scope enforcement runs before the `!requestScope` early-return
-    // check, so out-of-scope network calls are denied even when no
-    // requestScope callback is configured.
     const runtime = new ScriptedRuntime([
       {
         content: [
@@ -1843,7 +1851,7 @@ describe("Console scope gate — schemeless hosts against a real scope", () => {
     expect(outcome.toolCalls[0].result.success).toBe(false);
   });
 
-  it("hard-denies an out-of-scope schemeless host in yolo without prompting", async () => {
+  it("asks before an out-of-scope schemeless host in YOLO and respects rejection", async () => {
     const runtime = new ScriptedRuntime([bashTurn("c1", "curl elsewhere.test/x"), endTurn("done")]);
     let prompts = 0;
     const session = createConsoleSession({
@@ -1857,10 +1865,8 @@ describe("Console scope gate — schemeless hosts against a real scope", () => {
     });
 
     const outcome = await session.send("go");
-    expect(prompts).toBe(0);
+    expect(prompts).toBe(1);
     expect(outcome.toolCalls[0].result.success).toBe(false);
-    expect(outcome.toolCalls[0].result.error).toContain("YOLO mode");
-    expect(outcome.toolCalls[0].result.error).toContain("elsewhere.test");
   });
 
   it("applies denied-host memory to a newly extracted schemeless host", async () => {
@@ -1934,7 +1940,7 @@ describe("Console scope gate — unresolvable shell destinations", () => {
     // its payload), but it is a LOCAL command with no network reach. YOLO is the
     // operator's explicit full-autonomy opt-in, so the scope gate no longer
     // refuses an unreadable command — it runs (the executor's SSRF rail still
-    // governs any real egress beneath). Only a FOREIGN NAMED host stays refused.
+    // applies to supported network tools). Named foreign hosts need approval.
     const prevRequireScope = process.env["0SEC_REQUIRE_SCOPE"];
     delete process.env["0SEC_REQUIRE_SCOPE"];
     try {
@@ -1999,6 +2005,152 @@ describe("Console scope gate — unresolvable shell destinations", () => {
   });
 });
 
+describe("Console operator target selection", () => {
+  const sessions: ReturnType<typeof createConsoleSession>[] = [];
+  afterEach(async () => {
+    for (const session of sessions.splice(0)) await session.cleanup();
+  });
+
+  function openSession(runtime: NativeRuntime, options: Partial<Parameters<typeof createConsoleSession>[0]> = {}) {
+    const session = createConsoleSession({
+      runtime, autonomyMode: "yolo", allowModelSelfExtension: false, refineObjective: false, ...options,
+    });
+    sessions.push(session);
+    return session;
+  }
+
+  function profileAndProbe(url: string): NativeRuntimeResult {
+    return {
+      content: [
+        { type: "tool_use", id: "profile", name: "update_target", input: { endpoints: JSON.stringify([url]) } },
+        // Exercise the real shared network authorization gate without contacting
+        // an external server: bash prints the URL instead of fetching it.
+        { type: "tool_use", id: "probe", name: "bash", input: { command: `printf '%s' ${JSON.stringify(url)}` } },
+      ],
+      stopReason: "tool_use", durationMs: 1,
+    };
+  }
+
+  it("adopts a bare operator target and changes anchors without discarding the conversation", async () => {
+    const runtime = new ScriptedRuntime([
+      endTurn("Welcome"), profileAndProbe("https://doruk.ch/"), endTurn("Ready"),
+      profileAndProbe("https://api.next.test/"), endTurn("Changed"),
+    ]);
+    const session = openSession(runtime);
+    await session.send("hello");
+    const messages = session.messages;
+    const first = await session.send("doruk.ch");
+    expect(first.toolCalls.map(({ result }) => result.success)).toEqual([true, true]);
+    expect(JSON.stringify(first.toolCalls[1].result.output)).toContain("https://doruk.ch/");
+    expect(session.target).toBe("https://doruk.ch/");
+    expect(session.scope?.match("https://doruk.ch/").allowed).toBe(true);
+    expect(runtime.calls[1].system).toContain("Current target: https://doruk.ch/");
+
+    const second = await session.send("https://next.test/");
+    expect(second.toolCalls[1].result.success).toBe(true);
+    expect(session.target).toBe("https://next.test/");
+    expect(session.scope?.match("https://api.next.test/").allowed).toBe(true);
+    expect(session.messages).toBe(messages);
+    expect(runtime.calls[3].messages[0].content).toEqual([{ type: "text", text: "hello" }]);
+    expect(runtime.calls[3].system).toContain("Current target: https://next.test/");
+  });
+
+  it("does not authorize unrelated endpoints discovered by update_target", async () => {
+    const runtime = new ScriptedRuntime([profileAndProbe("https://unrelated.test/"), endTurn("Discovered")]);
+    const session = openSession(runtime);
+    const outcome = await session.send("doruk.ch");
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+    expect(outcome.toolCalls[1].result.success).toBe(false);
+    expect(session.target).toBe("https://doruk.ch/");
+    expect(session.scope?.match("https://unrelated.test/").allowed).toBe(false);
+  });
+
+  it("does not derive authority from quoted prose, imported history, or model text", async () => {
+    const runtime = new ScriptedRuntime([
+      profileAndProbe("https://outside.test/"), endTurn("https://outside.test/"),
+      profileAndProbe("https://outside.test/"), endTurn("No authorization"),
+    ]);
+    const session = openSession(runtime, {
+      initialMessages: [{ role: "user", content: [{ type: "text", text: "outside.test" }] }],
+    });
+    const prose = await session.send('Explain this link: "https://outside.test/"');
+    const quoted = await session.send('"https://outside.test/"');
+    expect(prose.toolCalls[1].result.success).toBe(false);
+    expect(quoted.toolCalls[1].result.success).toBe(false);
+    expect(session.target).toBe("");
+    expect(session.scope).toBeUndefined();
+  });
+
+  it("preserves explicit exclusions when the operator selects an excluded target", async () => {
+    const scope = ScopePolicy.fromJson({ in_scope: ["current.test"], out_of_scope: ["excluded.test"] });
+    const session = openSession(new ScriptedRuntime([profileAndProbe("https://excluded.test/"), endTurn("Denied")]), {
+      target: "https://current.test/", scope,
+    });
+    const outcome = await session.send("excluded.test");
+    expect(outcome.toolCalls[1].result.success).toBe(false);
+    expect(session.target).toBe("https://current.test/");
+    expect(session.scope).toBe(scope);
+    expect(session.scope?.match("https://excluded.test/").allowed).toBe(false);
+  });
+
+  it("preserves an explicit declined-host decision across later target-only input", async () => {
+    let prompts = 0;
+    const session = openSession(new ScriptedRuntime([
+      profileAndProbe("https://declined.test/"), endTurn("Denied"),
+      profileAndProbe("https://declined.test/"), endTurn("Still denied"),
+    ]), {
+      autonomyMode: "standard", approveTool: async () => true,
+      requestScope: async () => { prompts++; return null; },
+    });
+    await session.send("Inspect the requested endpoint");
+    session.setAutonomyMode("yolo");
+    const outcome = await session.send("declined.test");
+    expect(outcome.toolCalls[1].result.error).toContain("already declined");
+    expect(prompts).toBe(1);
+    expect(session.target).toBe("");
+    expect(session.scope).toBeUndefined();
+  });
+
+  it("does not change authorization for cancelled or concurrently rejected sends", async () => {
+    let enter!: () => void;
+    let finish!: (value: NativeRuntimeResult) => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const result = new Promise<NativeRuntimeResult>((resolve) => { finish = resolve; });
+    const session = openSession({
+      type: "api", isAvailable: async () => true,
+      executeNative: async () => { enter(); return result; },
+    }, { target: "https://current.test/" });
+    const controller = new AbortController();
+    controller.abort();
+    expect((await session.send("cancelled.test", undefined, { signal: controller.signal })).stopReason).toBe("cancelled");
+    expect(session.messages).toEqual([]);
+    expect(session.target).toBe("https://current.test/");
+    const pending = session.send("Continue current work");
+    await entered;
+    try {
+      await expect(session.send("concurrent.test")).rejects.toThrow("already has an active turn");
+      expect(session.target).toBe("https://current.test/");
+      expect(session.scope).toBeUndefined();
+    } finally {
+      finish(endTurn("Done"));
+      await pending;
+    }
+  });
+
+  it("retains the public-target private-network boundary after target selection", async () => {
+    const runtime = new ScriptedRuntime([{
+      content: [{ type: "tool_use", id: "private", name: "http_request", input: { url: "http://169.254.169.254/latest/meta-data/" } }],
+      stopReason: "tool_use", durationMs: 1,
+    }, endTurn("Blocked")]);
+    const session = openSession(runtime, {
+      scope: ScopePolicy.fromJson({ in_scope: ["169.254.169.254"] }),
+    });
+    const outcome = await session.send("doruk.ch");
+    expect(outcome.toolCalls[0].result.error).toContain("Local/internal http_request blocked");
+    expect(session.target).toBe("https://doruk.ch/");
+  });
+});
+
 describe("Console autonomy — yolo: no preconfigured scope, but the target still anchors it", () => {
   it("runs a network-capable local command in yolo with NO scope and NO prompt", async () => {
     // The previous model refused this ("configure a scope first"). The new yolo
@@ -2052,10 +2204,7 @@ describe("Console autonomy — yolo: no preconfigured scope, but the target stil
     expect(session.scope?.match("https://target.test/health").allowed).toBe(true);
   });
 
-  it("REFUSES a host outside the target anchor — not auto-authorized — with no prompt", async () => {
-    // The authorization anchor bounds yolo: a host that is neither the launch
-    // target nor a sub-domain of it is refused outright, never auto-expanded,
-    // and never prompted.
+  it("does not auto-authorize a foreign target when the YOLO operator declines", async () => {
     const runtime = new ScriptedRuntime([
       { content: [{ type: "tool_use", id: "c1", name: "http_request", input: { url: "https://unrelated.test/x" } }], stopReason: "tool_use", durationMs: 1 },
       endTurn("done"),
@@ -2072,9 +2221,8 @@ describe("Console autonomy — yolo: no preconfigured scope, but the target stil
     });
 
     const outcome = await session.send("try to pivot off-target");
-    expect(prompts).toBe(0);
+    expect(prompts).toBe(1);
     expect(outcome.toolCalls[0].result.success).toBe(false);
-    expect(outcome.toolCalls[0].result.error).toContain("outside the yolo authorization anchor");
     // The unrelated host was NOT quietly added to scope.
     expect(session.scope?.match("https://unrelated.test/x").allowed ?? false).toBe(false);
   });
@@ -2082,7 +2230,7 @@ describe("Console autonomy — yolo: no preconfigured scope, but the target stil
   it("RUNS a command it cannot statically resolve in yolo, with no prompt", async () => {
     // Previously yolo refused any command whose destination it couldn't read.
     // That blocked legitimate local work, so yolo now RUNS it (SSRF rail still
-    // governs real egress beneath); only a foreign NAMED host stays refused.
+    // governs real egress beneath); a foreign NAMED host requires approval.
     const prevRequireScope = process.env["0SEC_REQUIRE_SCOPE"];
     delete process.env["0SEC_REQUIRE_SCOPE"];
     try {
@@ -2178,18 +2326,21 @@ describe("Console source acquisition is not target authorization", () => {
       httpTurn("probe-source-host", "https://github.com/golang/go.git"),
       endTurn("Hosting service is not an authorized target."),
     ]);
+    const requestScope = vi.fn(async () => null);
     const session = createConsoleSession({
       runtime, autonomyMode: "yolo", target: "https://target.test",
       scope: ScopePolicy.fromJson({ in_scope: ["target.test"] }),
-      requestScope: async () => { throw new Error("Checkout must not need scope approval"); },
+      requestScope,
     });
 
     const checkout = await session.send("Get Go source for local review");
     expect(checkout.toolCalls[0].result.success).toBe(true);
+    expect(requestScope).not.toHaveBeenCalled();
     expect(session.target).toBe("https://target.test");
     expect(session.scope?.match("https://github.com").allowed).toBe(false);
     const probe = await session.send("Now test the hosting service");
     expect(probe.toolCalls[0].result.success).toBe(false);
+    expect(requestScope).toHaveBeenCalledTimes(1);
   });
 
   it("also permits source setup through run_command with no preconfigured target", async () => {
@@ -2801,5 +2952,72 @@ describe("createConsoleSession — MCP deferred tool loading", () => {
     expect(names).toContain("mcp__srv__tool3");
     expect(names).not.toContain("list_tools");
     expect(names).not.toContain("load_tool");
+  });
+});
+
+describe("console live driver authority", () => {
+  it.each(["tool-start", "approval", "sdk-approval"])("blocks revoked effects at %s without replay or lost usage", async point => {
+    const root = mkdtempSync(join(tmpdir(), "0sec-console-authority-"));
+    vi.stubEnv("HOME", root);
+    const marker = join(root, "effect");
+    const runtime = new ScriptedRuntime([{ ...endTurn("model receipt"), usage: { inputTokens: 10, outputTokens: 3 } }]);
+    const session = createConsoleSession({
+      runtime, workspaceRoot: root, allowModelSelfExtension: true, refineObjective: false,
+      autonomyMode: point === "tool-start" ? "yolo" : "standard",
+      approveTool: async () => { await Promise.resolve(); setWorkspaceHarnessTrust(root, false); return true; },
+    });
+    try {
+      setWorkspaceHarnessTrust(root, true);
+      const args = { command: `printf x > ${JSON.stringify(marker)}` };
+      await session.harness!.control({ action: "submit", generation: { label: "revocation", providers: [{
+        id: "driver", services: ["agent.driver"], source: { kind: "trusted", entry: "main.mjs", files: {
+          "main.mjs": `export function activate() { return { async driver(request, execution) {
+            await execution.invokeModel(request);
+            ${point === "sdk-approval" ? `await execution.invokeTool('bash', ${JSON.stringify(args)});
+              return {content:[],stopReason:'end_turn',durationMs:0};` :
+              `return {content:[{type:'tool_use',id:'effect',name:'bash',input:${JSON.stringify(args)}}],stopReason:'tool_use',durationMs:0};`}
+          } }; }`,
+        } },
+      }] } });
+      const result = await session.send("continue", {
+        onToolStart: () => { if (point === "tool-start") setWorkspaceHarnessTrust(root, false); },
+      });
+      expect(result.stopReason).toBe("error");
+      expect(result.error).toMatch(/trust.*revoked/i);
+      expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 3 });
+      expect(runtime.calls).toHaveLength(1);
+      expect(existsSync(marker)).toBe(false);
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0]!.result.success).toBe(false);
+      const history = session.messages.flatMap(message => message.content);
+      expect(history.filter(block => block.type === "tool_use")).toHaveLength(1);
+      expect(history.filter(block => block.type === "tool_result")).toHaveLength(1);
+    } finally {
+      await session.cleanup();
+      vi.unstubAllEnvs();
+      const unlock = (directory: string): void => {
+        chmodSync(directory, 0o700);
+        for (const entry of readdirSync(directory, { withFileTypes: true })) if (entry.isDirectory()) unlock(join(directory, entry.name));
+      };
+      unlock(root); rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reauthorize a declined hostname through its dotted DNS alias", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "denied", name: "bash", input: { command: "printf https://denied.test/" } }], stopReason: "tool_use", durationMs: 0 },
+      endTurn("denied"), endTurn("unchanged"),
+    ]);
+    const requestScope = vi.fn(async () => null);
+    const session = createConsoleSession({ runtime, allowModelSelfExtension: false, refineObjective: false,
+      autonomyMode: "standard", approveTool: async () => true, requestScope });
+    try {
+      await session.send("inspect");
+      session.setAutonomyMode("yolo");
+      await session.send("https://denied.test./");
+      expect(session.target).toBe("");
+      expect(session.scope?.match("https://denied.test./").allowed ?? false).toBe(false);
+      expect(requestScope).toHaveBeenCalledTimes(1);
+    } finally { await session.cleanup(); }
   });
 });

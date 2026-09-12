@@ -53,7 +53,7 @@ const safe = (p: string): string => {
 };
 function listDir(p: string): string {
   const abs = safe(p || ".");
-  return sh("bash", ["-lc", `cd ${JSON.stringify(abs)} && ls -la --group-directories-first | head -200`]);
+  return sh("bash", ["-c", "ls -la --group-directories-first | head -200"], { cwd: abs });
 }
 function readFile(p: string, start?: number, end?: number): string {
   const abs = safe(p);
@@ -71,7 +71,7 @@ function grepRepo(pattern: string, p?: string): string {
 }
 function findSeeds(): string {
   try {
-    return clip(sh("bash", ["-lc", `find ${JSON.stringify(repoRoot)} \\( -path '*corpus*' -o -path '*seed*' -o -path '*test*' \\) -type f \\( -size +1c -a -size -200k \\) 2>/dev/null | head -40`]).split("\n").map((f) => f.replace(repoRoot + "/", "")).join("\n"), 4000) || "(no seed/corpus files found)";
+    return clip(sh("bash", ["-c", 'find "$1" \\( -path \'*corpus*\' -o -path \'*seed*\' -o -path \'*test*\' \\) -type f \\( -size +1c -a -size -200k \\) 2>/dev/null | head -40', "0sec-find-seeds", repoRoot]).split("\n").map((f) => f.replace(repoRoot + "/", "")).join("\n"), 4000) || "(no seed/corpus files found)";
   } catch { return "(none)"; }
 }
 function readSeed(p: string): string {

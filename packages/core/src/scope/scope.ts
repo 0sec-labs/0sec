@@ -112,7 +112,7 @@ export class ScopePolicy {
   match(url: string): ScopeMatch {
     let host: string;
     try {
-      host = new URL(url).hostname.toLowerCase();
+      host = normalizeScopeHostname(new URL(url).hostname);
     } catch {
       return { allowed: false, reason: `out-of-scope: not a valid URL (${url})` };
     }
@@ -180,6 +180,18 @@ export function matchUrl(url: string, policy: ScopePolicy): ScopeMatch {
   return policy.match(url);
 }
 
+/**
+ * Canonical host identity for exact scope rules and URL hosts. DNS root dots
+ * are insignificant; bare, expanded and bracketed IPv6 denote the same address.
+ */
+export function normalizeScopeHostname(hostname: string): string {
+  const normalized = hostname.toLowerCase().replace(/\.+$/, "");
+  const address = normalized.startsWith("[") && normalized.endsWith("]")
+    ? normalized.slice(1, -1)
+    : normalized;
+  return isIP(address) === 6 ? new URL(`http://[${address}]/`).hostname : normalized;
+}
+
 // ── internals ──
 
 function parseRule(raw: unknown): ParsedRule {
@@ -223,7 +235,10 @@ function parseRule(raw: unknown): ParsedRule {
   // matching ambiguity that is not worth the implementation cost for a
   // primitive whose whole job is to be conservative.
   if (rule.startsWith("*.")) {
-    const suffix = rule.slice(2);
+    // Normalise suffix so "*.example.com." → suffix "example.com".
+    // The trailing-dot FQDN form is semantically identical to the bare
+    // name, and our match logic operates on the normalised value.
+    const suffix = normalizeScopeHostname(rule.slice(2));
     if (suffix.length === 0 || suffix.includes("*")) {
       throw new Error(`Invalid wildcard rule '${raw}': must be of the form '*.domain.tld'`);
     }
@@ -234,7 +249,10 @@ function parseRule(raw: unknown): ParsedRule {
     throw new Error(`Invalid scope rule '${raw}': only leading '*.' wildcards are supported`);
   }
 
-  return { raw, kind: "exact", host: rule };
+  // Normalise host so "example.com." → host "example.com".  The raw
+  // rule string stored in the ParsedRule keeps the original for
+  // reporting purposes; only the match-target value is normalised.
+  return { raw, kind: "exact", host: normalizeScopeHostname(rule) };
 }
 
 function matches(rule: ParsedRule, host: string): boolean {

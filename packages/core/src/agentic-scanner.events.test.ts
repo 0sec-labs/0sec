@@ -11,7 +11,7 @@
  * two are independent entry points, not nested, so the top-level emit lives
  * in both places.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -19,15 +19,48 @@ import { agenticScan } from "./agentic-scanner.js";
 import { eventBus, type EventType } from "./events/bus.js";
 import { LlmApiRuntime } from "./runtime/llm-api.js";
 import { ProcessRuntime } from "./runtime/process.js";
+import { osecDB } from "@0sec/db";
 import type { ScanConfig } from "@0sec/shared";
 import type { NativeRuntimeResult } from "./runtime/types.js";
 
+let schemaDirectory: string;
+let schemaPath: string;
+
+beforeAll(() => {
+  schemaDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-agentic-events-schema-"));
+  schemaPath = path.join(schemaDirectory, "empty.db");
+  const db = new osecDB(schemaPath);
+  db.close();
+});
+
+afterAll(() => {
+  if (schemaDirectory) fs.rmSync(schemaDirectory, { recursive: true, force: true });
+});
+
+const unexpectedFetch = vi.fn<typeof fetch>();
+
+beforeEach(() => {
+  unexpectedFetch.mockReset().mockRejectedValue(new Error("Unexpected network request in event fixture"));
+  vi.stubGlobal("fetch", unexpectedFetch);
+});
+
+afterEach(() => {
+  try {
+    expect(unexpectedFetch).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 /** Make a fresh tmp DB path for each test run so scans don't collide. */
 function tmpDbPath(): string {
-  return path.join(
+  const dbPath = path.join(
     os.tmpdir(),
     `0sec-agentic-events-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
   );
+  // Each test owns its database; empty-schema migration is shared setup.
+  fs.copyFileSync(schemaPath, dbPath);
+  return dbPath;
 }
 
 let activeScopePath: string | undefined;
@@ -42,6 +75,8 @@ function tmpScopePath(): string {
 function baseConfig(overrides: Partial<ScanConfig> = {}): ScanConfig {
   return {
     target: "https://target.example.invalid",
+    // Exercise event delivery without the unrelated HTTP mode-detection probe.
+    mode: "probe",
     depth: "quick",
     format: "json",
     runtime: "api",

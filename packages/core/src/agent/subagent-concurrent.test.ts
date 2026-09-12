@@ -10,14 +10,6 @@ const h = vi.hoisted(() => ({
   configs: [] as any[],
 }));
 
-vi.mock("../runtime/llm-api.js", () => ({
-  LlmApiRuntime: class {
-    async isAvailable(): Promise<boolean> {
-      return true;
-    }
-  },
-}));
-
 vi.mock("./native-loop.js", () => ({
   runNativeAgentLoop: async (opts: any) => {
     h.configs.push(opts.config);
@@ -30,7 +22,17 @@ import { eventBus } from "../events/bus.js";
 import type { SubagentLifecyclePayload } from "../events/bus.js";
 import { ToolExecutor } from "./tools.js";
 import type { ToolContext } from "./types.js";
+import type { NativeRuntime } from "../runtime/types.js";
 import { ScanCostLedger } from "./cost-ledger.js";
+
+/** Minimal NativeRuntime sentinel for child test fixtures — never touches fs/net. */
+async function fakeRuntime(_timeoutMs?: number): Promise<NativeRuntime> {
+  return {
+    type: "api",
+    isAvailable: async () => true,
+    executeNative: async () => ({ content: [], stopReason: "end_turn" as const, durationMs: 0 }),
+  };
+}
 
 function toolContext(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -88,7 +90,7 @@ describe("spawn_agents — concurrent subagent dispatch", () => {
 
     try {
       const ctx = toolContext();
-      const executor = new ToolExecutor(ctx);
+      const executor = new ToolExecutor(ctx, undefined, undefined, fakeRuntime);
       const result = await executor.execute({
         name: "spawn_agents",
         arguments: {
@@ -119,7 +121,7 @@ describe("spawn_agents — concurrent subagent dispatch", () => {
     };
 
     const ctx = toolContext();
-    const executor = new ToolExecutor(ctx);
+    const executor = new ToolExecutor(ctx, undefined, undefined, fakeRuntime);
     const result = await executor.execute({
       name: "spawn_agents",
       arguments: {
@@ -170,7 +172,7 @@ describe("spawn_agents — concurrent subagent dispatch", () => {
       costCeilingUsd: ceiling,
       costModel: "claude-sonnet-4",
     });
-    const executor = new ToolExecutor(ctx);
+    const executor = new ToolExecutor(ctx, undefined, undefined, fakeRuntime);
     const result = await executor.execute({
       name: "spawn_agents",
       arguments: {
@@ -202,7 +204,7 @@ describe("spawn_agents — concurrent subagent dispatch", () => {
     };
 
     const ctx = toolContext();
-    const executor = new ToolExecutor(ctx);
+    const executor = new ToolExecutor(ctx, undefined, undefined, fakeRuntime);
     const result = await executor.execute({
       name: "spawn_agents",
       arguments: {
@@ -224,7 +226,7 @@ describe("spawn_agents — concurrent subagent dispatch", () => {
 
     try {
       const ctx = toolContext();
-      const executor = new ToolExecutor(ctx);
+      const executor = new ToolExecutor(ctx, undefined, undefined, fakeRuntime);
       await executor.execute({
         name: "spawn_agents",
         arguments: { tasks: [{ task: "a" }, { task: "b" }] },
@@ -251,7 +253,7 @@ describe("spawn_agents — concurrent subagent dispatch", () => {
     h.impl = async () => fakeState([]);
 
     const ctx = toolContext();
-    const executor = new ToolExecutor(ctx);
+    const executor = new ToolExecutor(ctx, undefined, undefined, fakeRuntime);
     await executor.execute({
       name: "spawn_agents",
       arguments: { tasks: [{ task: "solo" }] },
@@ -275,33 +277,9 @@ describe("spawn_agents — concurrent subagent dispatch", () => {
     expect(toolNames).not.toContain("spawn_agents");
   });
 
-  it("(7) includes sibling peer ids in each spawned child's system prompt", async () => {
-    h.impl = async () => fakeState([]);
-
-    const ctx = toolContext();
-    const executor = new ToolExecutor(ctx);
-    await executor.execute({
-      name: "spawn_agents",
-      arguments: { tasks: [{ task: "alpha" }, { task: "beta" }] },
-    });
-
-    expect(h.configs).toHaveLength(2);
-    const prompts = h.configs.map((c) => String(c.systemPrompt));
-    const ids = h.configs.map((c) => String(c.agentMessaging?.selfId));
-    expect(ids[0]).toMatch(/^parent-scan-sub-/);
-    expect(ids[1]).toMatch(/^parent-scan-sub-/);
-
-    expect(prompts[0]).toContain("Peer messaging:");
-    expect(prompts[0]).toContain(`Sibling subagents in this batch: "${ids[1]}"`);
-    expect(prompts[0]).not.toContain(`"${ids[0]}" (reachable one at a time)`);
-
-    expect(prompts[1]).toContain("Peer messaging:");
-    expect(prompts[1]).toContain(`Sibling subagents in this batch: "${ids[0]}"`);
-    expect(prompts[1]).not.toContain(`"${ids[1]}" (reachable one at a time)`);
-  });
 
   it("(8) rejects empty, oversized, and malformed task lists with a structured error", async () => {
-    const executor = new ToolExecutor(toolContext());
+    const executor = new ToolExecutor(toolContext(), undefined, undefined, fakeRuntime);
 
     const empty = await executor.execute({
       name: "spawn_agents",

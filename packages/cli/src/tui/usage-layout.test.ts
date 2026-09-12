@@ -8,20 +8,15 @@ import {
   computeKvLayout,
   computeMeterLayout,
   computeUsageLayout,
-  computeUsageTitleLayout,
   costUsd,
   formatCost,
   formatTokenCount,
   readCurrentUsage,
   resolveRates,
   shellChromeRows,
-  usageFooterHint,
   usageMeterBar,
-  usageTitle,
-  usageTitleMeta,
   type UsageLayout,
   type UsageReportRow,
-  type UsageSnapshot,
 } from "./usage-layout.js";
 
 const isInteger = (value: number): boolean => Number.isInteger(value) && value >= 0;
@@ -128,10 +123,6 @@ describe("computeUsageLayout — the sweep", () => {
         }
         if (layout.pane.height > 0) {
           expect(layout.pane.bodyRows, `zero-body pane at ${at}`).toBeGreaterThan(0);
-          const chromeRows = (layout.bordered ? 2 : 0) + 1;
-          expect(layout.pane.height - layout.pane.bodyRows, `pane chrome miscounted at ${at}`).toBe(
-            chromeRows,
-          );
           expect(layout.pane.width - layout.pane.innerWidth).toBe(layout.bordered ? 4 : 0);
         }
       }
@@ -295,14 +286,13 @@ describe("cost resolution (mirrors status-bar.ts)", () => {
 const textOf = (rows: UsageReportRow[]): string =>
   rows.map((row) => `${row.label ?? ""} ${row.value ?? ""}`).join("\n");
 
+const labelOf = (row: UsageReportRow): string | undefined =>
+  row.label?.replace(/^[\p{Co}\s]+/u, "");
+
 describe("buildUsageReport", () => {
   it("returns an empty snapshot from the lazy default and never fabricates", () => {
     const rows = buildUsageReport(readCurrentUsage());
     const text = textOf(rows);
-    // Every section header is present, so the screen has a stable shape.
-    for (const section of ["CONTEXT", "TOKENS", "COST", "MODEL", "TOOL HEALTH"]) {
-      expect(text).toContain(section);
-    }
     // No invented numbers: unknown counts read as em-dashes, cost as "$—".
     expect(text).toContain("—");
     expect(text).toContain("$—");
@@ -333,19 +323,19 @@ describe("buildUsageReport", () => {
       turn: { inputTokens: 1000, outputTokens: 200 },
       session: { inputTokens: 5000, outputTokens: 900 },
     });
-    const input = rows.find((row) => row.kind === "kv" && row.label === "input");
+    const input = rows.find((row) => row.kind === "kv" && labelOf(row) === "input");
     expect(input?.value).toBe("1k / 5k");
-    const output = rows.find((row) => row.kind === "kv" && row.label === "output");
+    const output = rows.find((row) => row.kind === "kv" && labelOf(row) === "output");
     expect(output?.value).toBe("200 / 900");
   });
 
   it("only shows a reasoning row when reasoning tokens were tracked", () => {
     const without = buildUsageReport({ session: { inputTokens: 100, outputTokens: 10 } });
-    expect(without.some((row) => row.label === "reasoning")).toBe(false);
+    expect(without.some((row) => labelOf(row) === "reasoning")).toBe(false);
     const withReasoning = buildUsageReport({
       session: { inputTokens: 100, outputTokens: 10, reasoningTokens: 42 },
     });
-    expect(withReasoning.some((row) => row.label === "reasoning")).toBe(true);
+    expect(withReasoning.some((row) => labelOf(row) === "reasoning")).toBe(true);
   });
 
   it("prices the session against the active model, or says $— when unpriced", () => {
@@ -353,14 +343,14 @@ describe("buildUsageReport", () => {
       model: "claude-sonnet-4-6",
       session: { inputTokens: 1_000_000, outputTokens: 0 },
     });
-    const estimate = priced.find((row) => row.label === "session estimate");
+    const estimate = priced.find((row) => labelOf(row) === "session");
     expect(estimate?.value).toMatch(/^\$\d/);
 
     const unpriced = buildUsageReport({
       model: "some-unlisted-model",
       session: { inputTokens: 1_000_000, outputTokens: 0 },
     });
-    expect(unpriced.find((row) => row.label === "session estimate")?.value).toBe("$—");
+    expect(unpriced.find((row) => labelOf(row) === "session")?.value).toBe("$—");
   });
 
   it("prices per-model when the session used more than one model", () => {
@@ -370,10 +360,10 @@ describe("buildUsageReport", () => {
         { model: "some-unlisted-model", inputTokens: 1_000_000, outputTokens: 0 },
       ],
     });
-    expect(rows.find((row) => row.label === "claude-sonnet-4-6")?.value).toMatch(/^\$\d/);
-    expect(rows.find((row) => row.label === "some-unlisted-model")?.value).toBe("$—");
+    expect(rows.find((row) => labelOf(row) === "claude-sonnet-4-6")?.value).toMatch(/^\$\d/);
+    expect(rows.find((row) => labelOf(row) === "some-unlisted-model")?.value).toBe("$—");
     // With an unpriced model in the mix the total cannot be honestly summed.
-    expect(rows.find((row) => row.label === "total")?.value).toBe("$—");
+    expect(rows.find((row) => labelOf(row) === "total")?.value).toBe("$—");
   });
 
   it("sums a per-model total when every model is priced", () => {
@@ -383,21 +373,18 @@ describe("buildUsageReport", () => {
         { model: "claude-haiku-4-5", inputTokens: 1_000_000, outputTokens: 0 },
       ],
     });
-    const total = rows.find((row) => row.label === "total");
+    const total = rows.find((row) => labelOf(row) === "total");
     expect(total?.value).toMatch(/^\$\d/);
     expect(total?.value).not.toBe("$—");
   });
 
   it("names the active model and derives its provider", () => {
     const rows = buildUsageReport({ model: "claude-sonnet-4-6" });
-    expect(rows.find((row) => row.label === "active")?.value).toBe("claude-sonnet-4-6");
-    expect(rows.find((row) => row.label === "provider")?.value).toBe("anthropic");
+    expect(rows.find((row) => labelOf(row) === "model")?.value).toBe("claude-sonnet-4-6");
+    expect(rows.find((row) => labelOf(row) === "provider")?.value).toBe("anthropic");
   });
 
-  it("summarises tool health, or says there are no issues", () => {
-    const clean = buildUsageReport({});
-    expect(textOf(clean)).toContain("no tool issues");
-
+  it("summarises tool health issues and repeated occurrences", () => {
     const summary: ToolHealthSummary = {
       total: 2,
       occurrences: 3,
@@ -430,7 +417,6 @@ describe("buildUsageReport", () => {
     expect(text).toContain("run_command");
     // A repeated event carries its occurrence count.
     expect(text).toContain("x2");
-    expect(text).not.toContain("no tool issues");
   });
 });
 
@@ -456,90 +442,3 @@ describe("clipUsageRows", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
-describe("computeUsageTitleLayout — the header sweep", () => {
-  it("splits the header into a title and meta that sum to the width", () => {
-    for (let inner = 0; inner <= 120; inner++) {
-      for (const metaLength of [0, 1, 4, 12, 30, 200]) {
-        const title = computeUsageTitleLayout(inner, metaLength);
-        const at = `inner ${inner}, meta ${metaLength}`;
-        expect(title.width, `header wider than the pane at ${at}`).toBe(Math.max(0, inner));
-        expect(
-          title.titleWidth + title.gap + title.metaWidth,
-          `header claimed ${title.titleWidth + title.gap + title.metaWidth} of ${title.width} at ${at}`,
-        ).toBe(title.width);
-        expect(title.metaWidth).toBeLessThanOrEqual(Math.max(0, metaLength));
-        if (title.metaWidth > 0) {
-          expect(title.gap, `meta had no gap at ${at}`).toBe(1);
-          expect(title.titleWidth, `title squeezed out at ${at}`).toBeGreaterThan(0);
-        }
-      }
-    }
-  });
-
-  it("gives the meta its own cells on a wide header and drops it on a narrow one", () => {
-    const wide = computeUsageTitleLayout(60, 12);
-    expect(wide.metaWidth).toBe(12);
-    expect(wide.titleWidth).toBeGreaterThan(0);
-    expect(wide.gap).toBe(1);
-    const narrow = computeUsageTitleLayout(6, 12);
-    expect(narrow.metaWidth).toBe(0);
-    expect(narrow.gap).toBe(0);
-    expect(narrow.titleWidth).toBe(6);
-  });
-});
-
-describe("usageTitleMeta", () => {
-  it("prices a session summary against the active model", () => {
-    const meta = usageTitleMeta({
-      model: "claude-sonnet-4-6",
-      session: { inputTokens: 1_000_000, outputTokens: 0 },
-    });
-    expect(meta).toMatch(/^\$\d.* session$/);
-  });
-
-  it("falls back to the model name when the session is unpriced or empty", () => {
-    expect(usageTitleMeta({ model: "some-unlisted-model", session: { inputTokens: 1 } })).toBe(
-      "some-unlisted-model",
-    );
-    expect(usageTitleMeta({ model: "claude-sonnet-4-6" })).toBe("claude-sonnet-4-6");
-    expect(usageTitleMeta({})).toBe("");
-  });
-
-  it("sums a per-model total when every model is priced", () => {
-    const meta = usageTitleMeta({
-      perModel: [
-        { model: "claude-sonnet-4-6", inputTokens: 1_000_000, outputTokens: 0 },
-        { model: "claude-haiku-4-5", inputTokens: 1_000_000, outputTokens: 0 },
-      ],
-    });
-    expect(meta).toMatch(/^\$\d.* session$/);
-  });
-});
-
-describe("titles and hints", () => {
-  it("titles the pane", () => {
-    expect(usageTitle()).toBe("SESSION USAGE");
-  });
-
-  it("names only the keys this read-only screen actually handles", () => {
-    const hint = usageFooterHint();
-    for (const fragment of ["esc back", "ctrl+c exit"]) expect(hint).toContain(fragment);
-    // The screen's keyboard only handles esc and ctrl+c, so it must not name a
-    // history binding it does not implement.
-    expect(hint).not.toContain("history");
-  });
-
-  it("accepts a fully-typed snapshot", () => {
-    const snapshot: UsageSnapshot = {
-      model: "claude-sonnet-4-6",
-      provider: "anthropic",
-      session: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 },
-      turn: { inputTokens: 1, outputTokens: 1 },
-      contextUsed: 1,
-      contextWindow: 2,
-    };
-    expect(() => buildUsageReport(snapshot)).not.toThrow();
-  });
-});
