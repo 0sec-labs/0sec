@@ -2665,6 +2665,97 @@ describe("ToolExecutor — scope enforcement (0sec#215)", () => {
 // was consulted. The fix makes an explicitly-approved in-scope host the
 // authority: scope, when present and covering the host, satisfies the
 // cross-origin check. With no scope, the same-origin rail is unchanged.
+describe("ToolExecutor — explicit console public-network authority", () => {
+  it("admits absolute public requests without a target only with explicit host opt-in", async () => {
+    const ctx: ToolContext = { target: "", scanId: "public-no-target", findings: [], attackResults: [], targetInfo: {}, autonomyMode: "yolo" };
+    const executor = new ToolExecutor(ctx);
+    try {
+      const call = { name: "http_request", arguments: { url: "https://public.invalid/" } };
+      expect((await executor.execute(call)).success).toBe(false);
+      expect(mockFetchScoped).not.toHaveBeenCalled();
+      ctx.publicNetwork = {};
+      expect((await executor.execute(call)).success).toBe(true);
+      expect(ctx.target).toBe("");
+      expect(ctx.scope).toBeUndefined();
+      mockFetchScoped.mockClear();
+      expect((await executor.execute({ name: "http_request", arguments: { url: "http://127.0.0.1/" } })).success).toBe(false);
+      expect(mockFetchScoped).not.toHaveBeenCalled();
+    } finally { await executor.cleanup(); }
+  });
+
+  it("does not forward target credentials after a public target-context change", async () => {
+    const ctx: ToolContext = {
+      target: "https://original.invalid/", scanId: "public-credentials", findings: [], attackResults: [], targetInfo: {},
+      publicNetwork: {}, authConfig: { type: "bearer", token: "private-fixture-token" },
+    };
+    const executor = new ToolExecutor(ctx);
+    const sent: Array<[string, string | null]> = [];
+    mockFetchScoped.mockImplementation(async (url, init, policy) => {
+      (policy as { validateUrl?: (url: string) => void }).validateUrl?.(url);
+      sent.push([url, new Headers(init?.headers).get("authorization")]);
+      return new Response("fixture");
+    });
+    try {
+      expect((await executor.execute({ name: "http_request", arguments: { url: ctx.target } })).success).toBe(true);
+      ctx.target = "https://foreign.invalid/";
+      expect((await executor.execute({ name: "http_request", arguments: { url: ctx.target } })).success).toBe(true);
+      expect(sent).toEqual([["https://original.invalid/", "Bearer private-fixture-token"], ["https://foreign.invalid/", null]]);
+      expect((await executor.execute({ name: "http_request", arguments: {
+        url: ctx.target, headers: { Authorization: "Bearer private-fixture-token" },
+      } })).success).toBe(false);
+      expect(sent).toHaveLength(2);
+    } finally { await executor.cleanup(); }
+  });
+
+  it("keeps configured restrictions authoritative over derived target grants", async () => {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const ctx: ToolContext = {
+      target: "https://derived.invalid/", scanId: "public-restrictions", findings: [], attackResults: [], targetInfo: {},
+      scope: ScopePolicy.fromJson({ in_scope: ["derived.invalid"] }),
+      publicNetwork: { scope: ScopePolicy.fromJson({ in_scope: ["allowed.invalid"] }), deniedHosts: new Set(["denied.invalid"]) },
+    };
+    const executor = new ToolExecutor(ctx);
+    try {
+      expect((await executor.execute({ name: "http_request", arguments: { url: "https://derived.invalid/" } })).success).toBe(false);
+      expect(mockFetchScoped).not.toHaveBeenCalled();
+      expect((await executor.execute({ name: "http_request", arguments: { url: "https://allowed.invalid/" } })).success).toBe(true);
+      ctx.publicNetwork = { deniedHosts: new Set(["denied.invalid"]) };
+      expect((await executor.execute({ name: "http_request", arguments: { url: "https://denied.invalid./" } })).success).toBe(false);
+      expect(mockFetchScoped).toHaveBeenCalledTimes(1);
+    } finally { await executor.cleanup(); }
+  });
+
+  it("searches independently of target restrictions without granting result URLs or sending target credentials", async () => {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const previous = process.env["0SEC_FEATURE_WEB_SEARCH"];
+    process.env["0SEC_FEATURE_WEB_SEARCH"] = "1";
+    const scope = ScopePolicy.fromJson({ in_scope: ["engagement.invalid"] });
+    const ctx: ToolContext = {
+      target: "", scanId: "independent-search", findings: [], attackResults: [], targetInfo: {}, scope,
+      publicNetwork: { scope }, authConfig: { type: "bearer", token: "target-secret" },
+    };
+    const executor = new ToolExecutor(ctx);
+    mockFetchScoped.mockImplementation(async (url, init) => {
+      expect(new URL(url).origin).toBe("https://html.duckduckgo.com");
+      expect(new Headers(init?.headers).get("authorization")).toBeNull();
+      return new Response('<a class="result__a" href="https://result.invalid/">Result</a><a class="result__snippet">Snippet</a>');
+    });
+    try {
+      const result = await executor.execute({ name: "web_search", arguments: { query: "public protocol reference" } });
+      expect(result.success).toBe(true);
+      expect(JSON.stringify(result.output)).toContain("https://result.invalid/");
+      expect(ctx.target).toBe("");
+      expect(ctx.scope).toBe(scope);
+      expect((await executor.execute({ name: "http_request", arguments: { url: "https://result.invalid/" } })).success).toBe(false);
+      expect(mockFetchScoped).toHaveBeenCalledTimes(1);
+    } finally {
+      await executor.cleanup();
+      if (previous === undefined) delete process.env["0SEC_FEATURE_WEB_SEARCH"];
+      else process.env["0SEC_FEATURE_WEB_SEARCH"] = previous;
+    }
+  });
+});
+
 describe("ToolExecutor — cross-origin in-scope authorization", () => {
   const okFetch = () =>
     vi.fn(async () => new Response("ok", {

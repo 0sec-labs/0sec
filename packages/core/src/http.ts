@@ -9,6 +9,10 @@ import { ScopePolicy, normalizeScopeHostname } from "./scope/scope.js";
 export interface ScopedHttpPolicy {
   baseUrl: string;
   scope?: ScopePolicy;
+  /** Host opt-in only; absent retains the required base/same-origin policy. */
+  allowPublicNetwork?: boolean;
+  /** Canonical operator-denied hosts/addresses, checked at each hop and DNS answer. */
+  deniedHosts?: ReadonlySet<string>;
   validateUrl?: (url: string) => void;
   beforeRequest?: (url: string) => void | Promise<void>;
   maxResponseBytes?: number;
@@ -38,21 +42,34 @@ function isLocalHost(hostname: string): boolean {
   return name === "localhost" || name.endsWith(".localhost") || isPrivateAddress(name);
 }
 
+function httpBase(policy: ScopedHttpPolicy): URL | undefined {
+  if (!policy.allowPublicNetwork) return new URL(policy.baseUrl);
+  try {
+    const base = new URL(policy.baseUrl);
+    return base.protocol === "http:" || base.protocol === "https:" ? base : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function authorizeHttpUrl(input: string, policy: ScopedHttpPolicy): URL {
-  const base = new URL(policy.baseUrl);
+  const base = httpBase(policy);
   const url = new URL(input, base);
-  if ((base.protocol !== "http:" && base.protocol !== "https:") ||
+  if ((base && base.protocol !== "http:" && base.protocol !== "https:") ||
       (url.protocol !== "http:" && url.protocol !== "https:")) {
     throw new Error("Only HTTP(S) requests are supported");
   }
   if (url.username || url.password) throw new Error("URL-embedded credentials are not supported");
-  if (isLocalHost(url.hostname) && !isLocalHost(base.hostname)) {
+  if (isLocalHost(url.hostname) && (!base || !isLocalHost(base.hostname))) {
     throw new Error(`Local/internal HTTP request blocked: ${url.hostname}`);
+  }
+  if (policy.deniedHosts?.has(normalizeScopeHostname(url.hostname))) {
+    throw new Error(`Operator-denied HTTP host: ${url.hostname}`);
   }
   if (policy.scope) {
     const verdict = policy.scope.match(url.href);
     if (!verdict.allowed) throw new Error(`Scope violation blocked: ${verdict.reason}`);
-  } else if (url.origin !== base.origin) {
+  } else if (!policy.allowPublicNetwork && url.origin !== base!.origin) {
     throw new Error(`Cross-origin HTTP request blocked: ${url.origin}`);
   }
   policy.validateUrl?.(url.href);
@@ -61,10 +78,11 @@ function authorizeHttpUrl(input: string, policy: ScopedHttpPolicy): URL {
 
 function authorizeAddress(url: URL, address: string, policy: ScopedHttpPolicy): void {
   if (!isIP(address)) throw new Error("DNS returned an invalid IP address");
-  if (isPrivateAddress(address) && !isLocalHost(new URL(policy.baseUrl).hostname)) {
+  const base = httpBase(policy);
+  if (isPrivateAddress(address) && (!base || !isLocalHost(base.hostname))) {
     throw new Error(`Local/internal DNS address blocked for ${url.hostname}`);
   }
-  if (!policy.scope?.raw.out_of_scope?.length) return;
+  if (!policy.scope?.raw.out_of_scope?.length && !policy.deniedHosts?.size) return;
   const candidates = [address];
   if (isIP(address) === 6) {
     const canonical = new URL(`http://[${address}]/`).hostname;
@@ -76,6 +94,10 @@ function authorizeAddress(url: URL, address: string, policy: ScopedHttpPolicy): 
     }
   }
   for (const candidate of candidates) {
+    if (policy.deniedHosts?.has(normalizeScopeHostname(candidate))) {
+      throw new Error(`Operator-denied DNS address for ${url.hostname}`);
+    }
+    if (!policy.scope?.raw.out_of_scope?.length) continue;
     const resolved = new URL(url);
     resolved.hostname = isIP(candidate) === 6 ? `[${candidate}]` : candidate;
     // Hostname authorization already passed; augment allows only to evaluate

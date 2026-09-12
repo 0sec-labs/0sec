@@ -49,7 +49,6 @@ import { normalizeScopeHostname, ScopePolicy } from "../scope/scope.js";
 import { eventBus } from "../events/bus.js";
 import { createSessionObjectiveService } from "./session-objective.js";
 import { shellTokens } from "../agent/shell-tokens.js";
-import { parseRepositoryAcquisition, repositoryAcquisitionAllowed } from "../agent/repository-acquisition.js";
 import { drainInbox } from "../hub/mailbox.js";
 import { renderInboundBatch } from "../agent/agent-messaging.js";
 import type { MessagingRuntime } from "../agent/agent-messaging.js";
@@ -650,7 +649,7 @@ export function buildConsoleSystemPrompt(opts: {
 }): string {
   const mode = opts.autonomyMode ?? DEFAULT_AUTONOMY_MODE;
   const autonomyInstruction = mode === "yolo"
-    ? "YOLO mode: run without per-action approval prompts and without a preconfigured scope. Security testing stays within the current operator-selected target and authorized scope. Target-related hosts expand automatically; a tool requesting an unrelated target goes through the operator's scope-approval prompt. On approval, continue in this same session using the updated target and scope; do not request a restart. Updating a target profile alone does not grant authorization. Source acquisition is different: use a standalone public HTTPS git clone, optionally prefixed by cd DIR &&, to obtain a repository for local review even when its hosting service is not the current target. This does not add the source host to engagement scope. Explicit exclusions and private/internal-network protections still apply. Clone first, then inspect or build in a separate tool call; never bundle checkout with unrelated commands."
+    ? "YOLO mode: run public-network tools without a mandatory launch target or per-discovered-host approval. A target is optional task context, not a competing permission gate. Honor explicit operator-configured scope restrictions, exclusions and previous refusals; discovered URLs and search results never rewrite those restrictions or the current target. Web search and browsing do not require an engagement target. Private/internal-network access, credential forwarding and workspace host-code trust remain separate boundaries. A fresh explicit operator target selection can request confirmation to reconsider a prior refusal in this same session. Source acquisition remains a standalone public HTTPS git clone, optionally prefixed by cd DIR &&; inspect or build in a separate tool call."
     : mode === "copilot"
     ? "Co-pilot mode: act with full autonomy within the engagement — no per-action approval prompts. Scope expands automatically to newly-discovered targets that belong to the engagement; a target outside the established engagement still needs the operator's decision."
     : mode === "recon"
@@ -699,7 +698,9 @@ export function buildConsoleSystemPrompt(opts: {
     "Call tools whenever they help; prefer real tool output over speculation.",
     autonomyInstruction,
     "",
-    opts.target ? `Current target: ${opts.target}` : "No target is set yet; ask the operator for one when a tool needs it.",
+    opts.target ? `Current target: ${opts.target}` : mode === "yolo"
+      ? "No target is selected. Use absolute public URLs for network tools; ask for context only when the requested tool actually needs a default target."
+      : "No target is set yet; ask the operator for one when a tool needs it.",
     "An operator message consisting only of an HTTP(S) URL or hostname selects the current target without resetting the session. update_target records discovered profile information; it does not authorize new targets.",
     `Session id: ${opts.scanId}`,
   ].join("\n");
@@ -1549,6 +1550,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   // to disk.
   let sessionTarget = config.target ?? "";
   let sessionScope: ScopePolicy | undefined = config.scope;
+  // Explicit restrictions are distinct from target-derived grants. Only an
+  // operator scope resolution replaces them; discovery/auto-expansion cannot.
+  let configuredScope: ScopePolicy | undefined = config.scope;
 
   // Session-scoped memory of hosts the operator explicitly DECLINED via
   // requestScope. In-memory only, per session — NEVER persisted to a scope
@@ -1592,6 +1596,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // lifts ONLY the scoped-source-audit allow-list — the network, local
     // filesystem and co-pilot gates in this file still run first.
     autonomyMode,
+    publicNetwork: autonomyMode === "yolo" ? { scope: configuredScope, deniedHosts } : undefined,
     escalateScopedAudit: config.escalateScopedAudit,
     // Information-gathering only — grants no authority (see ConsoleSessionConfig).
     askOperator: config.askOperator,
@@ -1830,11 +1835,15 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     },
   });
 
-  function applySessionScope(target: string, scope: ScopePolicy): void {
+  function applySessionScope(target: string, scope: ScopePolicy, configured = false): void {
     sessionTarget = target;
     sessionScope = scope;
     toolContext.target = target;
     toolContext.scope = scope;
+    if (configured) {
+      configuredScope = scope;
+      if (autonomyMode === "yolo") toolContext.publicNetwork = { scope: configuredScope, deniedHosts };
+    }
     if (!customSystemPrompt) {
       systemPrompt = buildConsoleSystemPrompt({ target: sessionTarget, scanId, autonomyMode });
     }
@@ -1844,6 +1853,11 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     const target = operatorTargetFromMessage(text);
     if (!target) return;
     const host = hostOf(target)!;
+    if (toolContext.publicNetwork?.scope && !toolContext.publicNetwork.scope.match(target).allowed) {
+      notify?.(`Target ${target} is outside the configured scope; the current target and restrictions are unchanged.`);
+      return;
+    }
+    let confirmed = false;
     const base = sessionScope?.raw ?? {};
     let scope = ScopePolicy.fromJson({ ...base, in_scope: [...(base.in_scope ?? []), host] });
     if (!scope.match(target).allowed) {
@@ -1882,8 +1896,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         return;
       }
       deniedHosts.delete(host);
+      confirmed = true;
     }
-    applySessionScope(target, scope);
+    applySessionScope(target, scope, confirmed);
     notify?.(`Target set to ${target}; continuing in the same session.`);
   }
 
@@ -1965,9 +1980,11 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // Check if every extracted URL is already covered by the current scope. An
     // unresolved destination can NEVER be "covered": there is nothing to match
     // a policy against, so scope coverage cannot discharge it.
-    const allCovered = urls.every((url) => sessionScope?.match(url).allowed);
-    if (allCovered && unresolved.length === 0) return "approved";
-    if (!allowScopeExpansion) {
+    const publicNetwork = toolContext.publicNetwork;
+    const effectiveScope = publicNetwork ? publicNetwork.scope : sessionScope;
+    const allCovered = urls.every((url) => effectiveScope?.match(url).allowed);
+    if (!publicNetwork && allCovered && unresolved.length === 0) return "approved";
+    if (!allowScopeExpansion && !publicNetwork) {
       return { success: false, output: null, error: "Executable code cannot expand network scope. Establish the required scope in the parent session first." };
     }
 
@@ -1990,8 +2007,8 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // those, if ANY host was previously declined we deny the whole call rather
     // than silently dropping the declined host from a call the model asked for.
     // Unparseable URLs yield a null host and are ignored (fail safe).
-    const uncoveredUrls = urls.filter((url) => !sessionScope?.match(url).allowed);
-    const previouslyDenied = uncoveredUrls.filter((url) => {
+    const uncoveredUrls = urls.filter((url) => !effectiveScope?.match(url).allowed);
+    const previouslyDenied = (publicNetwork ? urls : uncoveredUrls).filter((url) => {
       const host = hostOf(url);
       return host !== null && deniedHosts.has(host);
     });
@@ -2003,7 +2020,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       };
     }
 
-    const exclusions = sessionScope?.raw.out_of_scope ?? [];
+    const exclusions = effectiveScope?.raw.out_of_scope ?? [];
     if (exclusions.length) {
       const exclusionPolicy = ScopePolicy.fromJson({
         in_scope: uncoveredUrls.map(hostOf).filter((host): host is string => host !== null),
@@ -2016,35 +2033,23 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       };
     }
 
-    const anchorHost = anchorHostFromTarget(sessionTarget);
-    // Fetching public source is setup, not authority to test the hosting service.
-    // The executor runs this narrow command without a shell, behind a pinned
-    // HTTPS tunnel. Denied-decision memory above and explicit exclusions remain.
-    if (autonomyMode === "yolo" && (call.name === "bash" || call.name === "run_command")) {
-      const command = typeof call.arguments.command === "string" ? call.arguments.command.trim() : "";
-      const acquisition = parseRepositoryAcquisition(command);
-      if (acquisition &&
-          !hostBelongsToEngagement(hostOf(acquisition.url), anchorHost, sessionScope) &&
-          !deniedHosts.has(hostOf(acquisition.url)!) &&
-          repositoryAcquisitionAllowed(acquisition, sessionScope)) {
-        notify?.(`Acquiring public repository source from ${acquisition.url}; engagement scope is unchanged.`);
-        return "approved";
+    if (publicNetwork) {
+      if (publicNetwork.scope && uncoveredUrls.length > 0) {
+        return { success: false, output: null,
+          error: `Configured scope excludes ${uncoveredUrls.join(", ")}; restrictions are unchanged.` };
       }
+      // This grants dispatch, not private-network/credential/host-code trust.
+      // The executor and pinned HTTP transport enforce those independently.
+      return "approved";
     }
 
+    const anchorHost = anchorHostFromTarget(sessionTarget);
     // Partition the uncovered destinations by the TARGET ANCHOR: those that
     // belong to the engagement (target host / its sub-domains / already scoped)
-    // versus foreign ones. This split drives copilot's auto-expand and yolo's
-    // anchor enforcement.
+    // versus foreign ones. Co-pilot retains this engagement boundary.
     const foreign = uncoveredUrls.filter(
       (url) => !hostBelongsToEngagement(hostOf(url), anchorHost, sessionScope),
     );
-
-    // YOLO stays prompt-free inside the engagement. A named foreign target
-    // requires the same explicit operator decision as other scope expansions.
-    if (autonomyMode === "yolo" && foreign.length === 0) {
-      return autoExpandScope(uncoveredUrls, notify, "YOLO");
-    }
 
     // ── copilot: full autonomy WITHIN the engagement ──
     // When the WHOLE call stays in-engagement, expand scope automatically with
@@ -2056,13 +2061,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       return autoExpandScope(uncoveredUrls, notify, "Co-pilot");
     }
 
-    // Ask for uncovered standard targets and foreign copilot/YOLO targets.
+    // Ask for uncovered standard targets and foreign co-pilot targets.
     const requestScope = config.requestScope;
     if (!requestScope) {
-      if (autonomyMode === "yolo") {
-        return { success: false, output: null,
-          error: `YOLO mode: approval is required for ${foreign.join(", ")} but no scope-approval channel is available. Select this target explicitly or use an interactive session with scope approval.` };
-      }
       if (autonomyMode === "copilot") {
         // Copilot must not fall open on a foreign/unreadable target with no
         // operator channel — refuse rather than defer to same-origin luck.
@@ -2127,7 +2128,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     }
 
     // Apply the resolution: update in-memory target + scope (never persist).
-    applySessionScope(resolution.target, approvedScope);
+    applySessionScope(resolution.target, approvedScope, true);
     notify?.(`Scope approved for ${urls.join(", ") || resolution.target}; continuing in the same session.`);
     // An approved host must never remain a denied one: clear from the denied
     // set every host the newly approved scope now authorizes, so an earlier
@@ -2361,14 +2362,10 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
    * and adding guards can only narrow access.
    *
    * The THIRD built-in, `guardNetworkRequiresScope`, is DELIBERATELY NOT wired:
-   * it is retired. It denied a network-capable tool in yolo when no scope was
-   * configured, but the new yolo intentionally drops the
-   * require-preconfigured-scope gate — it is anchored to the current target, not
-   * to a scope object. That anchor is enforced precisely by `maybeResolveScope`
-   * (target-relatedness) plus the executor's own same-origin/scope boundary and
-   * the absolute SSRF rail — a stronger, mode-correct check than a blanket
-   * "needs a scope", and no OTHER mode requires a preconfigured scope either
-   * (standard/recon prompt or same-origin-validate, copilot auto-expands).
+   * it is retired. Console YOLO now explicitly opts into public-network access;
+   * optional operator restrictions, denied decisions and private-network
+   * boundaries remain enforced by the console, executor and pinned transport.
+   * Existing non-console callers retain their target/same-origin policy.
    * Wiring it would wrongly re-deny scopeless yolo (even `bash echo hello`). The
    * function still exists and is exported from `plugins/guards.ts` for its own
    * unit tests and any other consumer; only the wired sets omit it.
@@ -2932,13 +2929,14 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     messages,
     get autonomyMode(): ConsoleAutonomyMode { return autonomyMode; },
     get target(): string { return sessionTarget; },
-    get scope(): ScopePolicy | undefined { return sessionScope; },
+    get scope(): ScopePolicy | undefined { return toolContext.publicNetwork ? configuredScope : sessionScope; },
     get localScopePath(): string | undefined { return sessionScopePath; },
     setAutonomyMode: (mode) => {
       autonomyMode = mode;
       // The executor shares this mutable context object, so updating it here
       // is what makes `/mode yolo` take effect without a restart.
       toolContext.autonomyMode = mode;
+      toolContext.publicNetwork = mode === "yolo" ? { scope: configuredScope, deniedHosts } : undefined;
       if (!customSystemPrompt) {
         systemPrompt = buildConsoleSystemPrompt({ target: sessionTarget, scanId, autonomyMode });
       }

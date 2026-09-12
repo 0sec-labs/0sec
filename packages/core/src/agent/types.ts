@@ -378,6 +378,15 @@ export interface ToolContext {
    */
   autonomyMode?: ToolAutonomyMode;
   /**
+   * Explicit console YOLO authority, never inferred from a tool argument or
+   * target. Scope contains operator restrictions, not derived target grants.
+   * Absent for existing scan/native callers, whose URL policy is unchanged.
+   */
+  publicNetwork?: {
+    readonly scope?: ScopePolicy;
+    readonly deniedHosts?: ReadonlySet<string>;
+  };
+  /**
    * Escalation callback for the scoped-source-audit allow-list gate. When a
    * scoped source audit (role audit/review + a non-empty {@link scopePath})
    * hits a tool outside `SCOPED_SOURCE_AUDIT_TOOLS` in `standard`/`copilot`

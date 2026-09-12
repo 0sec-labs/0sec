@@ -36,6 +36,37 @@ describe("scoped HTTP physical network boundary", () => {
     expect(hits).toEqual([]);
   });
 
+  it("admits no-target public HTTP only with host opt-in, without granting private DNS access", async () => {
+    const admitted = new Error("admitted public DNS answer");
+    dns.lookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    await expect(fetchScoped("https://public.invalid/", {}, {
+      baseUrl: "", allowPublicNetwork: true,
+      beforeRequest: () => { throw admitted; },
+    })).rejects.toBe(admitted);
+    dns.lookup.mockClear();
+    await expect(fetchScoped("https://public.invalid/", {}, { baseUrl: "" })).rejects.toThrow();
+    expect(dns.lookup).not.toHaveBeenCalled();
+    dns.lookup.mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+    await expect(fetchScoped("https://public.invalid/", {}, {
+      baseUrl: "", allowPublicNetwork: true,
+    })).rejects.toThrow(/Local\/internal DNS/);
+    await expect(fetchScoped(base, {}, { baseUrl: "", allowPublicNetwork: true })).rejects.toThrow(/Local\/internal HTTP/);
+    expect(hits).toEqual([]);
+  });
+
+  it("enforces explicit restrictions and denial memory at redirects under public opt-in", async () => {
+    serve = (_req, res) => { res.writeHead(302, { Location: "https://denied.invalid/" }).end(); };
+    await expect(fetchScoped(base, { redirect: "follow" }, {
+      baseUrl: base, allowPublicNetwork: true, deniedHosts: new Set(["denied.invalid"]),
+    })).rejects.toThrow(/Operator-denied/);
+    expect(hits.map(hit => hit.url)).toEqual(["/"]);
+    await expect(fetchScoped("https://outside.invalid/", {}, {
+      baseUrl: "", allowPublicNetwork: true,
+      scope: ScopePolicy.fromJson({ in_scope: ["allowed.invalid"] }),
+    })).rejects.toThrow(/Scope violation/);
+    expect(dns.lookup).not.toHaveBeenCalled();
+  });
+
   it("rejects public-looking DNS targets with any private answer before a socket", async () => {
     dns.lookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }, { address: "127.0.0.1", family: 4 }]);
     const target = `http://public.invalid:${new URL(base).port}/`;

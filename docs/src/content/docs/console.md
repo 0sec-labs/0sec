@@ -66,8 +66,8 @@ available, falling back to the readline console otherwise.
 | `--print [prompt]` | One-shot non-interactive; reads from argument or piped stdin | (none) |
 
 A [`--scope` file](/scope/) is required for the Node readline fallback. Under
-the Bun TUI it is optional — the TUI can request session-only scope extensions
-interactively, including in YOLO mode. Explicit exclusions still apply.
+the Bun TUI it is optional. YOLO public-network tools accept absolute URLs
+without a launch target; explicit configured restrictions and exclusions still apply.
 
 ### Review previous work
 
@@ -109,11 +109,24 @@ Cycle the mode with **Shift+Tab** in the TUI, or the `/mode` command.
 | **Standard** | Runs automatically inside scope; can request a narrow session-only scope extension. |
 | **Recon** | Passive, read-only reconnaissance only. Effectful tools are refused. |
 | **Co-pilot** | Adds approval for every non-read-only tool. |
-| **YOLO** | No per-action prompts. Testing remains target/scope-anchored; public source checkout does not expand scope. |
+| **YOLO** | Public-network tools need no launch target or per-discovered-host approval. Explicit operator-configured scope, exclusions and prior refusals remain effective. |
 
 The readline fallback allows mode selection including Co-pilot and YOLO, but
 Co-pilot tool approvals always return denied — there is no approval surface in
 the text REPL. The TUI is required for interactive approval.
+
+In YOLO, the target is optional task context, not a second permission gate.
+Search results and discovered URLs do not update the target or configured scope.
+An explicitly empty configured scope remains deny-all; absent scope remains
+unconfigured. Private-network access, saved credential forwarding and workspace
+host-code trust remain separate controls. Public URLs do not grant access to
+private addresses returned by DNS.
+
+Browser HTTP requests use the scoped, address-pinned transport while a browser
+tool action is active. Cancelled or ended actions cannot dispatch delayed HTTP
+requests or deliver a held response to the page. Underlying held connections
+may remain until the existing transport deadline; this is not a full browser
+network sandbox or a WebSocket/WebRTC isolation claim.
 
 ### Acquiring a public repository in YOLO
 
@@ -126,7 +139,7 @@ cd /home/dev/coding && git clone --depth=1 https://github.com/golang/go.git gola
 ```
 
 Run inspection, builds, or other commands in subsequent tool calls. Checkout
-does **not** add GitHub to the engagement scope or authorize testing it.
+does **not** change configured engagement scope.
 Previously declined hosts and explicit exclusions still apply.
 
 This acquisition path uses standard HTTPS on port 443, public-address DNS

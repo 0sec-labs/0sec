@@ -22,9 +22,12 @@ on the published npm package and the GitHub Release tag.
   remaining. Missing percentage data stays unavailable; JSON retains accounting
   fields, and reservations remain distinct from settled spending. Small positive
   balances display `<0.1%`; nearly full balances display `>99.9%`.
-- Interactive YOLO sessions request approval for uncovered targets and retain
-  the same conversation after approval. Explicit exclusions, denied hosts,
-  private-address checks, and revoked tool authority remain enforced.
+- Interactive YOLO public-network tools no longer require a launch target or
+  approval for each discovered public host. Explicit configured restrictions,
+  exclusions, prior refusals, private-address checks and credential boundaries
+  remain enforced. Search results do not change target or scope.
+- Browser HTTP requests in public-network mode are bound to the current tool
+  action; cancellation prevents delayed dispatch and held-response delivery.
 - Entering a previously declined host directly in chat reopens scope approval.
   Approval preserves the conversation and exclusions; model retries remain denied.
 - Main and worker transcripts share expandable command and output views.
