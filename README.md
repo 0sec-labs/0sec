@@ -36,12 +36,6 @@
   <img src="https://raw.githubusercontent.com/0sec-labs/0sec/main/assets/demo-intro.gif" alt="0sec interactive CLI demonstration" width="840">
 </p>
 
-## What you can do
-
-- **Investigate in chat:** persistent conversations, tool output and model selection.
-- **Review code and packages:** repository reviews, package audits and static analysis with [Foxguard](https://github.com/0sec-labs/foxguard).
-- **Inspect the evidence:** reproduction results, verification failures and coverage limits.
-
 ## Get started
 
 ```bash
