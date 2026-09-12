@@ -63,13 +63,13 @@ jobs:
         # No --ignore-scripts: the native addon (tree-sitter) must build so the
         # compiled binary has a .node to load at runtime (arm64 has no prebuilt).
         run: pnpm install --no-frozen-lockfile
-      - name: Build dashboard and CLI dependency closure
+      - name: Build CLI dependency closure and dashboard
         # The compiled CLI embeds the Vite dashboard assets. The dashboard is
         # not a CLI dependency, so build it explicitly before bun-compile
         # generates the embedded asset manifest.
         run: |
-          pnpm --filter @0sec/dashboard build
           pnpm --filter "0sec-cli..." build
+          pnpm --filter @0sec/dashboard build
       - name: Compile native binary
         shell: bash
         run: bash scripts/bun-compile.sh "" "dist-bin/${{ matrix.asset }}"
