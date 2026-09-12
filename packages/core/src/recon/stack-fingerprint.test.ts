@@ -115,6 +115,22 @@ describe("enumerateJsChunkUrls", () => {
     // deduped
     expect(urls.filter((u) => u.includes("main-abc"))).toHaveLength(1);
   });
+
+  it("preserves document versus directory bases when resolving relative bundles", () => {
+    const html = `<script src="./app.js"></script><script src="../shared.mjs"></script>`;
+    expect(enumerateJsChunkUrls(html, "https://t.example/assets/index.html?view=1#top")).toEqual([
+      "https://t.example/assets/app.js",
+      "https://t.example/shared.mjs",
+    ]);
+    expect(enumerateJsChunkUrls(html, "https://t.example/assets/")).toEqual([
+      "https://t.example/assets/app.js",
+      "https://t.example/shared.mjs",
+    ]);
+    expect(enumerateJsChunkUrls(html, "https://t.example/assets")).toEqual([
+      "https://t.example/app.js",
+      "https://t.example/shared.mjs",
+    ]);
+  });
 });
 
 // ── End-to-end fingerprint with a mocked fetch (reproduces the live pilot) ──

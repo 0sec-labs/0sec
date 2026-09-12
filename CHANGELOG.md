@@ -12,6 +12,15 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-09-12
+
+### Fixed
+
+- Resolve relative JavaScript bundles against the actual document URL, preserving
+  standard directory, query and fragment semantics.
+- Keep `js-recon` command tests offline through the scoped transport boundary;
+  retain scope-refusal and redacted-output checks.
+
 ### Added
 
 - Messenger conversation framing and the Agents sidebar default on while saved

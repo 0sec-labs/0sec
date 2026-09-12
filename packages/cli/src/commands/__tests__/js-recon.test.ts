@@ -5,12 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const runJsReconMock = vi.fn();
+const fetchScopedMock = vi.fn();
 
 vi.mock("@0sec/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@0sec/core")>();
   return {
     ...actual,
     runJsRecon: runJsReconMock,
+    fetchScoped: fetchScopedMock,
   };
 });
 
@@ -35,7 +37,6 @@ describe("0sec js-recon", () => {
   let io: ReturnType<typeof captureIO>;
   let dir: string;
   let scopePath: string;
-  let fetchSpy: { mockRestore: () => void };
 
   beforeEach(() => {
     process.exitCode = undefined;
@@ -43,12 +44,16 @@ describe("0sec js-recon", () => {
     dir = mkdtempSync(join(tmpdir(), "jsrecon-test-"));
     scopePath = join(dir, "scope.json");
     writeFileSync(scopePath, JSON.stringify({ in_scope: ["*.example.com", "example.com"], out_of_scope: [] }));
-    // Page fetch returns one script tag; the bundle fetch is irrelevant since
-    // runJsRecon is mocked.
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      status: 200,
-      text: async () => `<script src="https://example.com/app.js"></script>`,
-    } as unknown as Response);
+    // The command fetches through fetchScoped, whose transport is pinned
+    // node:http(s), not global fetch. Mock the command's actual I/O boundary
+    // so this unit test never depends on DNS or example.com's live HTML.
+    fetchScopedMock.mockImplementation(async () => {
+      const response = new Response(`<script src="https://example.com/app.js"></script>`, {
+        status: 200,
+      });
+      Object.defineProperty(response, "url", { value: "https://example.com/" });
+      return response;
+    });
     runJsReconMock.mockResolvedValue({
       endpoints: [{ kind: "endpoint", value: "GET /api/users", source: "x" }],
       apiBaseUrls: ["https://api.example.com"],
@@ -60,8 +65,7 @@ describe("0sec js-recon", () => {
 
   afterEach(() => {
     process.exitCode = undefined;
-    vi.clearAllMocks();
-    fetchSpy.mockRestore();
+    vi.resetAllMocks();
     io.restore();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -74,6 +78,7 @@ describe("0sec js-recon", () => {
   it("refuses an out-of-scope target page before any sweep", async () => {
     await runCli(["js-recon", "https://evil.com", "--scope", scopePath]);
     expect(runJsReconMock).not.toHaveBeenCalled();
+    expect(fetchScopedMock).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(2);
     expect(io.stderr.join("\n")).toContain("out of scope");
   });
@@ -88,6 +93,14 @@ describe("0sec js-recon", () => {
     // The redacted excerpt is shown; the literal raw key never appears.
     expect(out).toContain("AKIA…[20]");
     expect(out).toContain("GET /api/users");
+  });
+
+  it("resolves relative bundles against the final scoped page URL", async () => {
+    const response = new Response(`<script src="./app.js"></script>`, { status: 200 });
+    Object.defineProperty(response, "url", { value: "https://example.com/assets/index.html" });
+    fetchScopedMock.mockResolvedValueOnce(response);
+    await runCli(["js-recon", "https://example.com", "--scope", scopePath]);
+    expect(runJsReconMock.mock.calls[0][0].scriptUrls).toEqual(["https://example.com/assets/app.js"]);
   });
 
   it("emits JSON with --json", async () => {

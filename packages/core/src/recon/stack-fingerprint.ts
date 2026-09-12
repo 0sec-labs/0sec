@@ -429,7 +429,7 @@ function normalizeBase(target: string): string {
 
 function resolveUrl(raw: string, base: string): string | undefined {
   try {
-    return new URL(raw, `${base}/`).toString();
+    return new URL(raw, base).toString();
   } catch {
     return undefined;
   }
