@@ -10,10 +10,10 @@
  * is captured in a unit test rather than only via an end-to-end resume.
  */
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { osecDB } from "@0sec/db";
 import type {
   Finding,
@@ -26,11 +26,27 @@ import { restorePersistedFinding } from "./unified-pipeline.js";
 
 const tempDirs: string[] = [];
 type PersistedFindingRestoreRow = Parameters<typeof restorePersistedFinding>[0];
+let schemaDirectory: string;
+let schemaPath: string;
+
+beforeAll(() => {
+  schemaDirectory = mkdtempSync(join(tmpdir(), "0sec-restore-schema-"));
+  schemaPath = join(schemaDirectory, "empty.db");
+  const db = new osecDB(schemaPath);
+  db.close();
+});
+
+afterAll(() => {
+  if (schemaDirectory) rmSync(schemaDirectory, { recursive: true, force: true });
+});
 
 function makeDb(): { db: osecDB; scanId: string } {
   const dir = mkdtempSync(join(tmpdir(), "0sec-restore-vspec-"));
   tempDirs.push(dir);
-  const db = new osecDB(join(dir, "0sec.db"));
+  const dbPath = join(dir, "0sec.db");
+  // Keep real serialization and persistence, without repeating empty-schema DDL.
+  copyFileSync(schemaPath, dbPath);
+  const db = new osecDB(dbPath);
   const scanConfig: ScanConfig = {
     target: "http://example.test",
     depth: "default",

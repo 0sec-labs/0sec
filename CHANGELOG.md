@@ -12,6 +12,14 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- Commit each work-plan transition and its audit records atomically, reducing
+  repeated synchronous database flushes and rolling back partial transitions
+  when audit artifact storage fails.
+- Reuse isolated empty database schemas in pipeline fixtures and load hunt
+  orchestration before timing ledger behavior.
+
 ## [0.16.3] - 2026-09-12
 
 ### Fixed

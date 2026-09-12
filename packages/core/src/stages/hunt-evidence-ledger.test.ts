@@ -46,6 +46,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const analysisAgentMock = vi.fn();
 vi.mock("../agent-runner.js", () => ({ runAnalysisAgent: (...args: unknown[]) => analysisAgentMock(...args) }));
 
+// Load the orchestration graph once, outside the ledger behavior watchdog.
+const { makeSkepticVerifier } = await import("./hunt-scan.js");
+
 let dir: string;
 let ledger: string;
 
@@ -365,7 +368,6 @@ describe("makeSkepticVerifier wiring", () => {
   it("does not turn a model-only rejection into a shared known negative", async () => {
     analysisAgentMock.mockReset();
     analysisAgentMock.mockResolvedValue({ findings: [] });
-    const { makeSkepticVerifier } = await import("./hunt-scan.js");
     const candidate = { path: "drivers/net/wireless/foo.c" };
     const finding = mkFinding(
       "use-after-free in foo_release",
@@ -389,7 +391,6 @@ describe("makeSkepticVerifier wiring", () => {
   it("does not persist claims when no ledger is configured", async () => {
     analysisAgentMock.mockReset();
     analysisAgentMock.mockResolvedValue({ findings: [] });
-    const { makeSkepticVerifier } = await import("./hunt-scan.js");
     const verifier = makeSkepticVerifier({ sourceRoot: dir, runtime: "api", model: "model-a", crossFamilyRefute: false });
     await verifier(mkFinding("some claim", "analysis"), { path: "a.c" });
     expect(existsSync(ledger)).toBe(false);
@@ -398,7 +399,6 @@ describe("makeSkepticVerifier wiring", () => {
   it("does not let a ledger I/O failure change the verdict", async () => {
     analysisAgentMock.mockReset();
     analysisAgentMock.mockResolvedValue({ findings: [{ id: "x" }] });
-    const { makeSkepticVerifier } = await import("./hunt-scan.js");
     // A directory is not a writable ledger file.
     const verifier = makeSkepticVerifier({
       sourceRoot: dir,

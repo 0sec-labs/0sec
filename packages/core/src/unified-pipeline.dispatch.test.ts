@@ -46,8 +46,8 @@
  *     these tests on the single-shot dispatch.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Finding, NpmAuditFinding, SemgrepFinding } from "@0sec/shared";
@@ -133,6 +133,19 @@ const { eventBus } = await import("./events/bus.js");
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const tempDirs: string[] = [];
+let schemaDirectory: string;
+let schemaPath: string;
+
+beforeAll(() => {
+  schemaDirectory = mkdtempSync(join(tmpdir(), "0sec-dispatch-schema-"));
+  schemaPath = join(schemaDirectory, "empty.db");
+  const db = new osecDB(schemaPath);
+  db.close();
+});
+
+afterAll(() => {
+  if (schemaDirectory) rmSync(schemaDirectory, { recursive: true, force: true });
+});
 
 function freshTmpDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), `0sec-unified-pipeline-${prefix}-`));
@@ -141,7 +154,10 @@ function freshTmpDir(prefix: string): string {
 }
 
 function freshDbPath(): string {
-  return join(freshTmpDir("db"), "0sec.db");
+  const dbPath = join(freshTmpDir("db"), "0sec.db");
+  // Share only schema initialization; each test retains its own real database.
+  copyFileSync(schemaPath, dbPath);
+  return dbPath;
 }
 
 /** Build an InstalledPackage shape — what installPackageForEcosystem returns. */

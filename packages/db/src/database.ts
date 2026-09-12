@@ -954,34 +954,36 @@ export class osecDB {
     status: WorkItemRecord["status"],
     opts?: { summary?: string | null; owner?: string | null },
   ): void {
-    const caseId = this.ensureCaseWorkPlan(scanId);
-    if (!caseId) return;
-    const template = this.workItemTemplate(kind);
-    const finding = this.getLatestFindingForScan(scanId);
-    this.upsertWorkItem({
-      id: `${caseId}:${kind}`,
-      caseId,
-      kind,
-      title: template.title,
-      owner: opts?.owner ?? template.owner,
-      status,
-      summary: opts?.summary ?? template.summary,
-      dependsOn: template.dependsOn ? `${caseId}:${template.dependsOn}` : null,
-    });
-    this.logEvent({
-      scanId,
-      stage: kind,
-      eventType: "work_item_transition",
-      findingId: finding?.id ?? undefined,
-      agentRole: opts?.owner ?? template.owner ?? undefined,
-      payload: {
-        kind,
-        status,
-        owner: opts?.owner ?? template.owner ?? null,
-        summary: opts?.summary ?? template.summary,
+    this.transaction(() => {
+      const caseId = this.ensureCaseWorkPlan(scanId);
+      if (!caseId) return;
+      const template = this.workItemTemplate(kind);
+      const finding = this.getLatestFindingForScan(scanId);
+      this.upsertWorkItem({
+        id: `${caseId}:${kind}`,
         caseId,
-      },
-      timestamp: Date.now(),
+        kind,
+        title: template.title,
+        owner: opts?.owner ?? template.owner,
+        status,
+        summary: opts?.summary ?? template.summary,
+        dependsOn: template.dependsOn ? `${caseId}:${template.dependsOn}` : null,
+      });
+      this.logEvent({
+        scanId,
+        stage: kind,
+        eventType: "work_item_transition",
+        findingId: finding?.id ?? undefined,
+        agentRole: opts?.owner ?? template.owner ?? undefined,
+        payload: {
+          kind,
+          status,
+          owner: opts?.owner ?? template.owner ?? null,
+          summary: opts?.summary ?? template.summary,
+          caseId,
+        },
+        timestamp: Date.now(),
+      });
     });
   }
 

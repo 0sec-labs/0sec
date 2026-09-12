@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -68,6 +68,35 @@ describe("osecDB read-only open", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("osecDB work item transitions", () => {
+  it("rolls back the work plan and audit event when artifact storage fails", () => {
+    withTempDb((db) => {
+      try {
+        const scanId = db.createScan({
+          target: "https://example.com",
+          depth: "default",
+        } as Parameters<typeof db.createScan>[0]);
+        const caseId = db.ensureCaseWorkPlan(scanId)!;
+        const before = db.listWorkItems({ caseId });
+        const failure = new Error("artifact storage failed");
+        vi.spyOn(db, "upsertArtifact").mockImplementationOnce(() => {
+          throw failure;
+        });
+
+        expect(() => db.transitionCaseWorkItem(scanId, "surface_map", "backlog", {
+          owner: "uncommitted-owner",
+          summary: "uncommitted transition",
+        })).toThrow(failure);
+        expect(db.listWorkItems({ caseId })).toEqual(before);
+        expect(db.getEvents(scanId)).toEqual([]);
+      } finally {
+        vi.restoreAllMocks();
+        db.close();
+      }
+    });
   });
 });
 
