@@ -55,12 +55,12 @@ console, or `0 --help` for commands. Only test systems you own or have permissio
 
 ### Choose a model connection
 
-- **Your own provider:** use an API key, local model or supported provider subscription.
-  No 0sec Cloud account is required; your provider handles authentication and billing.
-  See [provider setup](https://docs.0.security/api-keys/).
 - **0sec Cloud:** optional hosted models, still deployment-gated and not production-qualified.
   Login alone does not fund an account or grant model access.
   Managed testing and CI review have separate access and billing.
+- **Your own provider:** use an API key, local model or supported provider subscription.
+  No 0sec Cloud account is required; your provider handles authentication and billing.
+  See [provider setup](https://docs.0.security/api-keys/).
 
 ## Documentation
 
