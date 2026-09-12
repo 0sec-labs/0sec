@@ -1840,19 +1840,48 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     }
   }
 
-  function selectOperatorTarget(text: string, notify?: (message: string) => void): void {
+  async function selectOperatorTarget(text: string, notify?: (message: string) => void, signal?: AbortSignal): Promise<void> {
     const target = operatorTargetFromMessage(text);
     if (!target) return;
     const host = hostOf(target)!;
-    if (deniedHosts.has(host)) {
-      notify?.(`Target ${target} was previously declined; use an explicit scope approval to change that decision.`);
-      return;
-    }
     const base = sessionScope?.raw ?? {};
-    const scope = ScopePolicy.fromJson({ ...base, in_scope: [...(base.in_scope ?? []), host] });
+    let scope = ScopePolicy.fromJson({ ...base, in_scope: [...(base.in_scope ?? []), host] });
     if (!scope.match(target).allowed) {
       notify?.(`Target ${target} is explicitly out of scope; the current target is unchanged.`);
       return;
+    }
+    if (deniedHosts.has(host)) {
+      const requestScope = config.requestScope;
+      if (!requestScope) {
+        notify?.(`Target ${target} was previously declined; an interactive scope approval is required to change that decision.`);
+        return;
+      }
+      // This control request originates only from fresh root-operator input;
+      // it does not execute update_target or let a model retry clear a denial.
+      let resolution: ConsoleScopeResolution | null;
+      let onAbort: (() => void) | undefined;
+      try {
+        const cancelled = new Promise<null>(resolve => {
+          onAbort = () => resolve(null);
+          signal?.addEventListener("abort", onAbort, { once: true });
+        });
+        resolution = await Promise.race([requestScope({
+          call: { name: "update_target", arguments: { endpoints: [target] } },
+          requestedUrls: [target], target: sessionTarget, currentScope: sessionScope,
+        }), cancelled]);
+      } finally {
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
+      }
+      if (signal?.aborted || !resolution) return;
+      scope = ScopePolicy.fromJson({
+        ...resolution.scope.raw,
+        out_of_scope: [...new Set([...(base.out_of_scope ?? []), ...(resolution.scope.raw.out_of_scope ?? [])])],
+      });
+      if (!resolution.target.trim() || !scope.match(target).allowed) {
+        notify?.(`Scope approval does not cover target ${target}; the current target is unchanged.`);
+        return;
+      }
+      deniedHosts.delete(host);
     }
     applySessionScope(target, scope);
     notify?.(`Target set to ${target}; continuing in the same session.`);
@@ -2511,7 +2540,14 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     if (callbacks?.onHarnessUpdate) unsubscribeHarness = harness?.subscribe(callbacks.onHarnessUpdate);
     // Only the direct operator input can authorize a target. Keep this after
     // admission/abort checks and before any model, peer, or tool content.
-    selectOperatorTarget(userText, callbacks?.onNotice);
+    await selectOperatorTarget(userText, callbacks?.onNotice, signal);
+    if (signal?.aborted) {
+      return {
+        assistantText: "", toolCalls: [], usage,
+        budget: { tokensUsed: 0, tokenBudget: maxTurnTokens, iterations: 0, maxToolIterations },
+        stopReason: "cancelled",
+      };
+    }
 
     messages.push({ role: "user", content: [{ type: "text", text: userText }] });
 

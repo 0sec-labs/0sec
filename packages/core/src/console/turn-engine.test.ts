@@ -2093,7 +2093,7 @@ describe("Console operator target selection", () => {
     expect(session.scope?.match("https://excluded.test/").allowed).toBe(false);
   });
 
-  it("preserves an explicit declined-host decision across later target-only input", async () => {
+  it("asks again only for fresh explicit operator selection and preserves a repeated refusal", async () => {
     let prompts = 0;
     const session = openSession(new ScriptedRuntime([
       profileAndProbe("https://declined.test/"), endTurn("Denied"),
@@ -2106,9 +2106,98 @@ describe("Console operator target selection", () => {
     session.setAutonomyMode("yolo");
     const outcome = await session.send("declined.test");
     expect(outcome.toolCalls[1].result.error).toContain("already declined");
-    expect(prompts).toBe(1);
+    expect(prompts).toBe(2);
     expect(session.target).toBe("");
     expect(session.scope).toBeUndefined();
+  });
+
+  it("recovers a denied host only after confirmation without replacing history or custom instructions", async () => {
+    const runtime = new ScriptedRuntime([
+      profileAndProbe("https://declined.test/"), endTurn("Denied"),
+      profileAndProbe("https://declined.test/"), endTurn("Retry denied"),
+      profileAndProbe("https://declined.test/"), endTurn("Approved"),
+    ]);
+    let prompts = 0;
+    const scope = ScopePolicy.fromJson({ in_scope: ["current.test"], out_of_scope: ["excluded.test"] });
+    const session = openSession(runtime, {
+      target: "https://current.test/", scope, systemPrompt: "Keep my custom instructions",
+      requestScope: async request => {
+        prompts++;
+        if (prompts === 1) return null;
+        expect(request.requestedUrls).toEqual(["https://declined.test/"]);
+        expect(session.target).toBe("https://current.test/");
+        expect(session.scope).toBe(scope);
+        expect(runtime.calls).toHaveLength(4);
+        return { target: "https://current.test/", scope: ScopePolicy.fromJson({ in_scope: ["current.test", "declined.test", "excluded.test"] }) };
+      },
+    });
+    const history = session.messages;
+    expect((await session.send("Inspect endpoint")).toolCalls[1].result.success).toBe(false);
+    expect((await session.send("Try the same endpoint again")).toolCalls[1].result.success).toBe(false);
+    expect(prompts).toBe(1);
+    const recovered = await session.send("declined.test");
+    expect(recovered.toolCalls[1].result.success).toBe(true);
+    expect(prompts).toBe(2);
+    expect(session.target).toBe("https://declined.test/");
+    expect(session.scope?.match("https://declined.test/").allowed).toBe(true);
+    expect(session.scope?.match("https://excluded.test/").allowed).toBe(false);
+    expect(session.messages).toBe(history);
+    expect(runtime.calls[4].system).toBe("Keep my custom instructions");
+    expect(runtime.calls[4].messages[0].content).toEqual([{ type: "text", text: "Inspect endpoint" }]);
+  });
+
+  it("cancels a pending recovery without accepting late approval or admitting a concurrent turn", async () => {
+    let enter!: () => void;
+    let approve!: (value: import("./turn-engine.js").ConsoleScopeResolution) => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const decision = new Promise<import("./turn-engine.js").ConsoleScopeResolution>(resolve => { approve = resolve; });
+    let prompts = 0;
+    const runtime = new ScriptedRuntime([
+      profileAndProbe("https://declined.test/"), endTurn("Denied"),
+      profileAndProbe("https://declined.test/"), endTurn("Still denied"),
+    ]);
+    const session = openSession(runtime, {
+      requestScope: async () => {
+        if (++prompts === 1) return null;
+        enter();
+        return decision;
+      },
+    });
+    await session.send("Inspect endpoint");
+    const history = structuredClone(session.messages);
+    const controller = new AbortController();
+    const pending = session.send("declined.test", undefined, { signal: controller.signal });
+    await entered;
+    await expect(session.send("concurrent.test")).rejects.toThrow("already has an active turn");
+    controller.abort();
+    const cancelled = await pending;
+    expect(cancelled.stopReason).toBe("cancelled");
+    expect(cancelled.toolCalls).toEqual([]);
+    expect(runtime.calls).toHaveLength(2);
+    expect(session.messages).toEqual(history);
+    approve({ target: "https://declined.test/", scope: ScopePolicy.fromJson({ in_scope: ["declined.test"] }) });
+    await decision;
+    expect((await session.send("Retry endpoint")).toolCalls[1].result.success).toBe(false);
+    expect(prompts).toBe(2);
+    expect(session.target).toBe("");
+    expect(session.scope).toBeUndefined();
+  });
+
+  it("rejects a recovery approval that does not cover the selected host", async () => {
+    let prompts = 0;
+    const session = openSession(new ScriptedRuntime([
+      profileAndProbe("https://declined.test/"), endTurn("Denied"),
+      profileAndProbe("https://declined.test/"), endTurn("Still denied"),
+    ]), {
+      requestScope: async () => ++prompts === 1 ? null : {
+        target: "https://different.test/", scope: ScopePolicy.fromJson({ in_scope: ["different.test"] }),
+      },
+    });
+    await session.send("Inspect endpoint");
+    expect((await session.send("declined.test")).toolCalls[1].result.success).toBe(false);
+    expect(session.target).toBe("");
+    expect(session.scope).toBeUndefined();
+    expect(prompts).toBe(2);
   });
 
   it("does not change authorization for cancelled or concurrently rejected sends", async () => {
@@ -3017,7 +3106,7 @@ describe("console live driver authority", () => {
       await session.send("https://denied.test./");
       expect(session.target).toBe("");
       expect(session.scope?.match("https://denied.test./").allowed ?? false).toBe(false);
-      expect(requestScope).toHaveBeenCalledTimes(1);
+      expect(requestScope).toHaveBeenCalledTimes(2);
     } finally { await session.cleanup(); }
   });
 });

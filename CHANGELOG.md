@@ -20,10 +20,13 @@ on the published npm package and the GitHub Release tag.
   establish model availability or a funded account.
 - `0sec balance` displays the service-reported percentage of inference credits
   remaining. Missing percentage data stays unavailable; JSON retains accounting
-  fields, and reservations remain distinct from settled spending.
+  fields, and reservations remain distinct from settled spending. Small positive
+  balances display `<0.1%`; nearly full balances display `>99.9%`.
 - Interactive YOLO sessions request approval for uncovered targets and retain
   the same conversation after approval. Explicit exclusions, denied hosts,
   private-address checks, and revoked tool authority remain enforced.
+- Entering a previously declined host directly in chat reopens scope approval.
+  Approval preserves the conversation and exclusions; model retries remain denied.
 - Main and worker transcripts share expandable command and output views.
   Status rows and pickers use Nerd Font icons with retained text labels;
   glyph appearance depends on the terminal font. Cancellation keeps partial

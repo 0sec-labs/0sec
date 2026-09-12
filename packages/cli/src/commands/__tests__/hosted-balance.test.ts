@@ -22,7 +22,7 @@ it("does not round available credits to exhausted or partially used credits to f
   for (const [percent, label] of [[0.001, "<0.1%"], [0, "0%"], [99.999, ">99.9%"], [100, "100%"]] as const) {
     const response = {
       remainingUsd: 12345,
-      currency: "USD",
+      currency: "USD" as const,
       credits: { featureId: "inference_credits", granted: 100, remaining: percent, remainingPercent: percent, nextResetAt: null },
     };
     account.mockResolvedValueOnce(response);
