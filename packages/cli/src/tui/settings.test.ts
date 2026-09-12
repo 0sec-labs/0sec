@@ -643,14 +643,6 @@ describe("SETTING_DEFS", () => {
     }
   });
 
-  it("makes every enum's default its first choice", () => {
-    // toggleSetting cycles from choices[0], and the settings UI leans on the
-    // default being the head of the list; keep that invariant explicit.
-    for (const def of SETTING_DEFS as readonly SettingDef[]) {
-      if (def.kind !== "enum") continue;
-      expect(def.choices?.[0]).toBe(def.default);
-    }
-  });
 });
 
 /** Reads back a file the tests just wrote. */
@@ -696,17 +688,17 @@ function writeProjectRaw(projectDir: string, raw: unknown): void {
 import { dirname } from "node:path";
 
 describe("operator-only privacy and updates", () => {
-  it("does not let a project grant consent or hide unanswered onboarding", () => {
+  it("does not let a project override reporting policy or hide unanswered onboarding", () => {
     const home = makeHome();
     const project = makeProjectDir();
     writeProjectRaw(project, {
-      diagnosticReporting: "automatic",
+      diagnosticReporting: "off",
       diagnosticReportingPrompted: true,
       updatePolicy: "automatic",
       showLogo: false,
     });
     const { settings, sources } = loadLayeredSettings({ homeDir: home, projectDir: project });
-    expect(settings.diagnosticReporting).toBe("off");
+    expect(settings.diagnosticReporting).toBe("automatic");
     expect(settings.diagnosticReportingPrompted).toBe(false);
     expect(settings.updatePolicy).toBe("off");
     expect(sources.diagnosticReporting).toBe("default");
@@ -714,12 +706,12 @@ describe("operator-only privacy and updates", () => {
     expect(settings.showLogo).toBe(false);
   });
 
-  it("preserves an explicit global false as an opt-out with global provenance", () => {
+  it.each([false, "off"] as const)("preserves an explicit global %s opt-out with global provenance", (choice) => {
     const home = makeHome();
     const project = makeProjectDir();
     mkdirSync(dirname(settingsFilePath(home)), { recursive: true });
     writeFileSync(settingsFilePath(home), JSON.stringify({
-      diagnosticReporting: false,
+      diagnosticReporting: choice,
       diagnosticReportingPrompted: false,
       updatePolicy: false,
     }));

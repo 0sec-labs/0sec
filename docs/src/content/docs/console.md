@@ -519,6 +519,20 @@ The feedback payload body contains: `message`, `timestamp`, `version`, `model`,
 `mode`. The body is capped at 64 KB; request timeout is 5 seconds. Failure to
 submit never blocks the session.
 
+### Automatic problem reports
+
+Problem reporting defaults to `automatic`. Tool and runtime failures can produce
+a limited diagnostic summary through the same feedback transport, independently
+of manually staged messages. The summary excludes prompts, tool arguments and
+output, paths, and credentials; it does not upload `~/.0sec/feedback.md`.
+
+Open `/feedback` → **Problem-report preferences** to choose `off`, `ask`, or
+`automatic`. This global preference cannot be overridden by a project. Explicit
+saved opt-outs and the environment opt-outs above remain effective. `ask`
+requires confirmation before sending. Without Cloud authentication or a
+configured HTTPS endpoint, automatic reports remain local and the console
+reports submission as unavailable.
+
 ### Secret scanning
 
 When entering an API key through the TUI's credential prompt (`/connect` or

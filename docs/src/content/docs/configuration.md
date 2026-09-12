@@ -217,6 +217,25 @@ it is a bearer secret and does not accept 0sec's feedback wire schema.
 `0SEC_OFFLINE`, `0SEC_NO_TELEMETRY`, and `DO_NOT_TRACK` block every submission
 before any connection is made.
 
+### Automatic problem reports
+
+The console's **Problem reports** setting defaults to `automatic`. After a tool
+or runtime problem, it constructs a limited diagnostic summary and attempts to
+send it through the feedback transport. This is separate from operational
+stderr logs and manually staged `/feedback` messages.
+
+Use `/feedback` → **Problem-report preferences** to select `off`, `ask`, or
+`automatic`. The preference is global to this computer; project settings cannot
+override it. An explicit saved opt-out remains off after upgrading.
+`0SEC_OFFLINE`, `0SEC_NO_TELEMETRY`, and `DO_NOT_TRACK` still block submission.
+
+Delivery requires Cloud authentication or a configured HTTPS feedback endpoint.
+Without an available transport, the automatic report is saved locally and the
+console reports that submission is unavailable. Choosing `ask` requires review
+and confirmation before sending; `off` disables automatic submission.
+Automatic reports exclude prompts, tool arguments and output, paths, and
+credentials. They do not upload the feedback file or enable update checks.
+
 ## Update checks
 
 A fire-and-forget GitHub release check runs when `0SEC_UPDATE_CHECK=1` is

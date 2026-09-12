@@ -540,9 +540,9 @@ const DEFS: readonly TuiSettingDef[] = [
   {
     key: "diagnosticReporting",
     label: "Problem reports",
-    description: "Off, ask before sending, or automatically send limited diagnostics. Never includes prompts, tool arguments or output. Applies to your account on this computer, not this project.",
+    description: "Send limited diagnostics automatically by default, ask first, or turn reporting off. Uses Cloud sign-in or a configured HTTPS feedback endpoint. Never includes prompts, tool arguments or output. Applies to this computer, not this project.",
     kind: "enum",
-    default: "off",
+    default: "automatic",
     choices: ["off", "ask", "automatic"],
     group: "Privacy",
   },
@@ -593,7 +593,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   modelDisplay: "statusbar",
   logoAnimation: "glitch",
   reduceMotion: false,
-  diagnosticReporting: "off",
+  diagnosticReporting: "automatic",
   diagnosticReportingPrompted: false,
   updatePolicy: "off",
 };

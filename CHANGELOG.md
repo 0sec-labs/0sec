@@ -45,15 +45,18 @@ on the published npm package and the GitHub Release tag.
 - Child runtimes inherit the parent's resolved provider configuration.
   Scoped harness shutdown drains work before disposal and reports incomplete
   cleanup. Restarting an engine does not reconstruct active harness state.
-- Optional problem reporting defaults to off and uses operator-global consent;
-  project settings cannot enable it. Automatic reports contain limited version,
-  platform, runtime, and problem-category data, excluding prompts, tool arguments,
-  output, and credentials. Manual feedback retains review and local capture.
+- Problem reporting defaults to automatic limited diagnostics with a global
+  off/ask/automatic preference. Explicit opt-outs remain effective; project
+  settings cannot override the preference. Reports exclude prompts, tool
+  arguments, output, paths, and credentials. Delivery requires Cloud sign-in
+  or a configured HTTPS endpoint; manual feedback retains review and local capture.
   Feedback submission rejects redirects to unreviewed destinations.
 - Update checks and automatic installation use an operator-global policy.
   Automatic installation is opt-in and completes before interactive startup;
   notification-only checks remain in the background. Manual upgrades retain
   their version and destination options and report failures or interruption.
+- `/explain` and `/eli5` request a short explanation in everyday words without
+  new tool execution. The idle worker panel suggests how to request subagents.
 
 - Executable TypeScript plugins, reusable skills, and agent programs can be
   created during a session, composed through tool/model brokers, retained

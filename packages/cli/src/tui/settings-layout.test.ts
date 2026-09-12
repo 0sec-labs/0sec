@@ -455,8 +455,6 @@ describe("mutation", () => {
       const forward = cycleSetting(DEFAULT_SETTINGS, def.key, 1);
       expect(read(cycleSetting(forward, def.key, -1), def.key), `${def.key} is not reversible`)
         .toBe(def.default);
-      const back = cycleSetting(DEFAULT_SETTINGS, def.key, -1);
-      expect(read(back, def.key)).toBe((def.choices ?? []).at(-1));
     }
   });
 

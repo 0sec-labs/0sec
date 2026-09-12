@@ -358,6 +358,7 @@ describe("store: write target", () => {
   it("rejects project consent writes without changing effective policy or notifying", () => {
     const home = makeHome();
     const project = makeProjectDir();
+    saveGlobalSettings({ ...DEFAULT_SETTINGS, diagnosticReporting: "off" }, home);
     writeProjectRaw(project, { density: "compact" });
     configureSettingsStore({ homeDir: home, projectDir: project });
     const before = getSettings();

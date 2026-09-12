@@ -192,7 +192,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "explain",
     aliases: ["eli5"],
     category: "session",
-    description: "Explain the last result in plain language, without jargon",
+    description: "Explain like I'm five: short sentences and everyday words",
     usage: "/explain [topic]",
   },
   {

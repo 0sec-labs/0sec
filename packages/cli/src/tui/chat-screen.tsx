@@ -2533,8 +2533,8 @@ export function ChatScreen({
         // Sent as a normal turn so the explanation is a real model answer
         // grounded in this conversation, not a canned local string.
         const prompt = topic
-          ? `Explain "${topic}" in plain language for a non-technical reader. Avoid jargon; when a security term is unavoidable, define it in one short clause. Be concrete about impact and what someone should actually do.`
-          : `Explain your previous result in plain language for a non-technical reader. Avoid jargon; when a security term is unavoidable, define it in one short clause. Cover what was found, why it matters, and what to do next. Do not overstate certainty — say plainly if something is unconfirmed.`;
+          ? `Explain "${topic}" like I am five years old. Use 3–5 very short sentences, mostly under 12 words each. Use familiar everyday words and one simple comparison. No jargon, acronyms, code, headings, or baby talk. Say what happened, why it matters, and one thing to do next. Keep the facts accurate and say plainly what is not yet confirmed. Explain only; do not run new tests or tools.`
+          : `Explain your previous result like I am five years old. Use 3–5 very short sentences, mostly under 12 words each. Use familiar everyday words and one simple comparison. No jargon, acronyms, code, headings, or baby talk. Say what happened, why it matters, and one thing to do next. Keep the facts accurate and say plainly what is not yet confirmed. Explain only; do not run new tests or tools.`;
         void submitRef.current?.(prompt);
         return true;
       }
@@ -4568,8 +4568,14 @@ export function ChatScreen({
           <text fg={MUTED}>{fitTuiText(`AGENTS ${railRecords.length}`, rightInner)}</text>
         </box>
         {railVisible.length === 0 ? (
-          <box width={rightInner} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText("no active agents", rightInner)}</text>
+          <box width={rightInner} flexDirection="column" flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText(
+              railRecords.length > 0 ? "Open /agents" : agentsBudget >= 2 ? "Want extra eyes?" : 'Ask: "Use subagents"',
+              rightInner,
+            )}</text>
+            {railRecords.length === 0 && agentsBudget >= 2 ? (
+              <text fg={MUTED}>{fitTuiText('Ask: "Use subagents"', rightInner)}</text>
+            ) : null}
           </box>
         ) : (
           railVisible.map((rec) => {
