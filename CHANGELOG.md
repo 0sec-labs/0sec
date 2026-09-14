@@ -14,6 +14,9 @@ on the published npm package and the GitHub Release tag.
 
 ### Added
 
+- Show authoritative monthly, weekly and five-hour subscription allowance in
+  Cloud commands and the terminal status line. Follow the server's available
+  model recommendation without overriding an explicit selection.
 - Add explicit Unicode, Nerd Font, and ASCII symbol choices to migrated operator
   dialogs and sidebar components, with Unicode as the default. This migration
   does not yet cover all chat, transcript, approval, and composer glyphs.
@@ -31,6 +34,8 @@ on the published npm package and the GitHub Release tag.
 
 ### Fixed
 
+- Keep unavailable subscription snapshots separate from legacy wallet balances,
+  and prevent the hosted picker from committing an unavailable route.
 - Keep unlimited turn budgets out of finite-JSON harness checkpoints without
   weakening snapshot validation.
 - Preserve contained source-file aliases in immutable engine generations and

@@ -1847,7 +1847,7 @@ export function ChatScreen({
         setCloudBalance({ owner: session, state: sameCredentials ? hostedBalanceState(account) : { status: "unavailable" } });
         if (sameCredentials && catalog) {
           try {
-            setHostedCatalog({ owner: session, models: buildHostedModelCatalog(catalog.data), expiresAt: Date.now() + 60_000 });
+            setHostedCatalog({ owner: session, models: buildHostedModelCatalog(catalog.data, account), expiresAt: Date.now() + 60_000 });
           } catch { /* Malformed catalog metadata cannot establish a context limit. */ }
         }
       } catch {

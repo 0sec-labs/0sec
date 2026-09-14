@@ -27,6 +27,11 @@ export type {
   InferenceModelsResponse,
   InferenceAccountResponse,
   InferenceUsageResponse,
+  HostedAllowanceOverview,
+  HostedAllowanceWindow,
+  HostedAllowanceModel,
+  HostedAllowanceModelQualification,
+  HostedAllowanceModelReadiness,
 } from "./client.js";
 
 export {

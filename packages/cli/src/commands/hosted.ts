@@ -3,8 +3,10 @@
 //
 // Subcommands:
 //   - login        alias for `0sec auth login` (opens browser/polls)
-//   - models       list available hosted inference models
-//   - balance      show the percentage of inference credits remaining
+//   - models       list qualified 0sec Cloud models and server-provided
+//                  supplier-cost estimates
+//   - balance      show subscription allowance across its shared monthly,
+//                  weekly and five-hour limits, plus legacy credit availability
 //
 // All use CloudClient from @0sec/core, which reads scoped creds from
 // env or ~/.0sec/cloud.env. 401 → clear auth error, not silent fallback.
@@ -24,6 +26,7 @@ import {
   CloudNetworkError,
   CloudError,
   DEFAULT_CLOUD_HOST,
+  type HostedAllowanceOverview,
 } from "@0sec/core";
 import { runLogin } from "./auth.js";
 
@@ -46,7 +49,7 @@ export function registerHostedCommand(program: Command): void {
   // ── 0sec models ──
   program
     .command("models")
-    .description("List 0sec Cloud models and catalog rates")
+    .description("List qualified 0sec Cloud models and server-provided supplier-cost estimates")
     .option("--json", "Output raw JSON instead of a formatted table")
     .action(async (opts: { json?: boolean }) => {
       await runModels(opts);
@@ -55,8 +58,8 @@ export function registerHostedCommand(program: Command): void {
   // ── 0sec balance ──
   program
     .command("balance")
-    .description("Show the percentage of inference credits remaining")
-    .option("--json", "Output raw JSON instead of a formatted line")
+    .description("Show subscription allowance across its shared monthly, weekly and five-hour limits")
+    .option("--json", "Output raw account JSON instead of formatted allowance details")
     .action(async (opts: { json?: boolean }) => {
       await runBalance(opts);
     });
@@ -134,7 +137,10 @@ async function runModels(opts: { json?: boolean }): Promise<void> {
   }
 
   try {
-    const response = await client.getInferenceModels();
+    const [response, account] = await Promise.all([
+      client.getInferenceModels(),
+      client.getInferenceAccount().catch(() => null),
+    ]);
     const models = response.data;
 
     if (opts.json) {
@@ -144,7 +150,13 @@ async function runModels(opts: { json?: boolean }): Promise<void> {
     }
 
     if (models.length === 0) {
-      consolePresentationOutput.stdout("No models available.", "hosted.models-empty");
+      consolePresentationOutput.stdout("No qualified hosted models are available. No local model fallback will be selected.", "hosted.models-empty");
+      if (account?.allowance) {
+        consolePresentationOutput.stdout(formatAllowance(account.allowance), "hosted.models-allowance");
+        for (const model of account.allowance.models) {
+          consolePresentationOutput.stdout(`  ${model.id}: ${model.state} · ${model.reason ?? model.qualification.status}`, "hosted.model-unavailable");
+        }
+      }
       process.exitCode = EXIT_OK;
       return;
     }
@@ -159,16 +171,18 @@ async function runModels(opts: { json?: boolean }): Promise<void> {
     for (const model of models) {
       const id = model.id.padEnd(labelWidth);
       const ctx = formatTokenCount(model.context_length);
-      const inputPrice = `$${model.pricing.input_per_million_usd.toFixed(2)}/M`;
-      const outputPrice = `$${model.pricing.output_per_million_usd.toFixed(2)}/M`;
-      rows.push(
-        `  ${chalk.bold(id)}  ${ctx} context  ${inputPrice} input  ${outputPrice} output`,
-      );
+      const detail = account?.allowance?.models.find((row) => row.id === model.id && row.routeIdentity === model.routeIdentity);
+      const estimate = detail ? formatSupplierUsd(detail.estimatedSupplierCostUsd) : "unavailable";
+      rows.push(`  ${chalk.bold(id)}${model.recommended === true ? " · Recommended" : ""}  ${ctx} context  server scenario estimate: ${estimate}`);
+      if (detail) {
+        rows.push(`    Scenario: ${detail.scenario.freshInput} fresh input / ${detail.scenario.cacheRead} cached input / ${detail.scenario.output} output tokens (includes billed reasoning)`);
+        rows.push(`    Fresh five-hour window estimate: ${detail.requestsPerFreshFiveHours ?? "unavailable"} requests; shared monthly and weekly limits still apply`);
+      }
     }
 
     consolePresentationOutput.stdout(
-      `\n${chalk.bold("0sec Cloud models (catalog base rates):")}\n` +
-        rows.join("\n") + "\nCredit charges use catalog rates, peak multipliers and provider usage receipts.\n",
+      `\n${chalk.bold("Qualified 0sec Cloud models:")}\n` +
+        rows.join("\n") + "\nEstimates are not invoices or admission guarantees. Actual supplier receipts debit the shared allowance; no model weights or customer-price multipliers.\n",
       "hosted.models-list",
     );
     process.exitCode = EXIT_OK;
@@ -189,6 +203,11 @@ async function runBalance(opts: { json?: boolean }): Promise<void> {
     const acct = await client.getInferenceAccount();
     if (opts.json) {
       consolePresentationOutput.stdout(JSON.stringify(acct, null, 2), "hosted.balance-json");
+    } else if (acct.allowance !== undefined) {
+      consolePresentationOutput.stdout(
+        acct.allowance ? formatAllowance(acct.allowance) : "  Subscription allowance unavailable; no quota or entitlement inferred.",
+        acct.allowance ? "hosted.balance-allowance" : "hosted.balance-allowance-unavailable",
+      );
     } else {
       const percent = acct.credits?.remainingPercent;
       const percentLabel = percent === null || percent === undefined
@@ -200,8 +219,8 @@ async function runBalance(opts: { json?: boolean }): Promise<void> {
             : String(Number(percent.toFixed(1)));
       consolePresentationOutput.stdout(
         percentLabel === undefined
-          ? "  Cloud: usage percentage unavailable"
-          : `  Cloud: ${chalk.bold(`${percentLabel}%`)} credits remaining`,
+          ? "  Legacy credit usage percentage unavailable"
+          : `  Legacy credits: ${chalk.bold(`${percentLabel}%`)} remaining (separate from subscription allowance)`,
         "hosted.balance",
       );
       if (acct.credits?.nextResetAt !== null && acct.credits?.nextResetAt !== undefined) {
@@ -215,6 +234,32 @@ async function runBalance(opts: { json?: boolean }): Promise<void> {
   } catch (err) {
     handleApiError(err);
   }
+}
+
+function formatSupplierUsd(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value < 0) return "unavailable";
+  if (value > 0 && value < 0.000001) return "<$0.000001";
+  return `$${Number(value.toFixed(6))}`;
+}
+
+function formatAllowance(allowance: HostedAllowanceOverview): string {
+  const lines = [
+    `  Subscription: ${formatSupplierUsd(allowance.subscription.priceUsd)}/month · ${allowance.subscription.state}`,
+    "  Shared supplier-cost allowance: every request counts against all applicable windows, not separate per-model budgets.",
+    `  Admission: ${allowance.admission.allowed ? "available at this snapshot" : allowance.admission.reason ?? "unavailable"}`,
+    `  Unresolved supplier exposure (including expired windows): ${formatSupplierUsd(allowance.unresolvedReservedUsd)}`,
+  ];
+  if (allowance.windows.length === 0) lines.push("  Allowance windows not established or unavailable.");
+  const labels: Record<string, string> = { monthly: "Monthly", weekly: "Weekly", five_hour: "Five-hour" };
+  const resets: Record<string, string> = { billing_period: "paid billing period", utc_monday: "UTC Monday", first_admission: "five hours from first admission" };
+  for (const window of allowance.windows) {
+    lines.push(`  ${labels[window.kind]}: ${formatSupplierUsd(window.availableUsd)} available / ${formatSupplierUsd(window.limitUsd)} limit · ${window.remainingPercent}%`);
+    lines.push(`    Settled ${formatSupplierUsd(window.settledUsd)} · held ${formatSupplierUsd(window.reservedUsd)} (includes ${formatSupplierUsd(window.unknownReservedUsd)} unresolved)`);
+    lines.push(`    Window ends ${window.endsAt} · ${resets[window.resetSemantics]}`);
+  }
+  lines.push("  Window expiry does not guarantee access: entitlement, unresolved holds and route qualification still apply.");
+  lines.push(`  Server snapshot: ${allowance.snapshotAt}`);
+  return lines.join("\n");
 }
 
 function formatTokenCount(count: number): string {

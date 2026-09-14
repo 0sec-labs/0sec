@@ -2149,8 +2149,11 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         });
         const catalog = await client.getInferenceModels();
         const selected = this.model
-          ? catalog.data.find((model) => model.id === this.model)
-          : catalog.data[0];
+          ? catalog.data.find(model => model.id === this.model &&
+              (model.state === undefined || model.state === "available"))
+          : catalog.data.find(model => model.recommended === true &&
+              (model.state === undefined || model.state === "available")) ??
+            catalog.data.find(model => model.state === undefined || model.state === "available");
         if (!selected) {
           throw new Error(this.model
             ? `Hosted model "${this.model}" is unavailable. Run \`0sec models\` for available models.`

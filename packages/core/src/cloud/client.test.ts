@@ -151,3 +151,41 @@ describe("CloudClient credit availability", () => {
     expect((await client.getInferenceAccount()).credits?.remainingPercent).toBeNull();
   });
 });
+
+describe("CloudClient hosted subscription contract", () => {
+  it("rejects a non-boolean recommendation instead of silently choosing another model", async () => {
+    const client = new CloudClient({
+      host: HOST, token: SECRET,
+      fetchImpl: async () => jsonResponse({ object: "list", data: [{
+        id: "hosted", object: "model", owned_by: "0sec", provider: "openrouter",
+        upstream_model: "vendor/hosted", wire_api: "chat_completions",
+        context_length: 32000, max_output_tokens: 2000, recommended: "true",
+        pricing: { input_per_million_usd: 0.1, output_per_million_usd: 0.3, cached_input_per_million_usd: 0.01 },
+      }] }),
+    });
+    await expect(client.getInferenceModels()).rejects.toBeInstanceOf(CloudError);
+  });
+
+  it("preserves authoritative window percentages and fails closed on malformed ones", async () => {
+    const window: Record<string, unknown> = {
+      id: "window", kind: "five_hour", limitUsd: 2, settledUsd: 0, reservedUsd: 0,
+      unknownReservedUsd: 0, availableUsd: 2, remainingPercent: 37.5,
+      startsAt: "2026-09-14T00:00:00Z", endsAt: "2026-09-14T05:00:00Z",
+      resetSemantics: "first_admission",
+    };
+    const allowance = {
+      snapshotAt: "2026-09-14T01:00:00Z", policyVersion: "subscription15-supplier-cost-v1",
+      basis: "supplier_cost_usd", unresolvedReservedUsd: 0,
+      subscription: { priceUsd: 15, cadence: "monthly", state: "active", sourceId: "fixture", periodStart: null, periodEnd: null },
+      windows: [window], admission: { allowed: true, reason: null },
+      purchases: { enabled: false, offer: null }, models: [],
+    };
+    const client = new CloudClient({
+      host: HOST, token: SECRET,
+      fetchImpl: async () => jsonResponse({ remainingUsd: null, currency: "USD", credits: null, allowance }),
+    });
+    expect((await client.getInferenceAccount()).allowance?.windows[0]?.remainingPercent).toBe(37.5);
+    window.remainingPercent = "37.5";
+    expect((await client.getInferenceAccount()).allowance).toBeNull();
+  });
+});

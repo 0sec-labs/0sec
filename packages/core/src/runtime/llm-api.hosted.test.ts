@@ -22,7 +22,10 @@ describe("hosted catalog selection", () => {
   it("uses the catalog wire for an explicitly selected model and returns its tool call", async () => {
     const runtime = hostedRuntime("hosted-responses");
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/models")) return Response.json({ object: "list", data: [{ id: "hosted-responses", wire_api: "responses", max_output_tokens: 512 }] });
+      if (url.endsWith("/models")) return Response.json({ object: "list", data: [
+        { id: "recommended", wire_api: "responses", recommended: true },
+        { id: "hosted-responses", wire_api: "responses", max_output_tokens: 512 },
+      ] });
       if (!url.endsWith("/responses")) throw new Error("The selected model only supports Responses");
       const request = JSON.parse(String(init?.body));
       expect(request.model).toBe("hosted-responses");
@@ -41,12 +44,31 @@ describe("hosted catalog selection", () => {
     const runtime = hostedRuntime("not-enabled");
     const inference = vi.fn();
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.endsWith("/models")) return Response.json({ object: "list", data: [{ id: "available", wire_api: "chat_completions" }] });
+      if (url.endsWith("/models")) return Response.json({ object: "list", data: [
+        { id: "not-enabled", state: "disabled", wire_api: "chat_completions" },
+        { id: "available", state: "available", wire_api: "chat_completions" },
+      ] });
       inference();
       return new Response(null, { status: 500 });
     }));
     await expect(runtime.executeNative("system", [], [])).rejects.toThrow(/unavailable/);
     expect(inference).not.toHaveBeenCalled();
+  });
+
+  it("uses the server recommendation rather than the first model when no model is pinned", async () => {
+    vi.stubEnv("0SEC_MODEL", "");
+    const runtime = hostedRuntime("");
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/models")) return Response.json({ object: "list", data: [
+        { id: "other", state: "available", wire_api: "responses", max_output_tokens: 512 },
+        { id: "preferred", state: "available", recommended: true, wire_api: "responses", max_output_tokens: 512 },
+      ] });
+      if (!url.endsWith("/responses") || JSON.parse(String(init?.body)).model !== "preferred") {
+        return Response.json({ error: "wrong hosted route" }, { status: 400 });
+      }
+      return Response.json({ output_text: "qualified response" });
+    }));
+    await expect(runtime.execute("Reply to the fixture")).resolves.toMatchObject({ exitCode: 0, output: "qualified response" });
   });
 
   it("rebuilds native tool requests across hosted fallback models and wire protocols", async () => {

@@ -299,16 +299,18 @@ production**. Its parent-session SDK path connects plugin model calls through
 `invokePluginModel` to the parent `runtime.executeNative`; executable-plugin
 candidate generation uses the same broker and configured `costModel`.
 When the parent uses hosted inference, those calls consume the organization's
-inference wallet. Self-evolution does not carry a free inference allowance.
+shared hosted-inference allowance. Self-evolution does not carry free inference.
 
 `runOneSubagent` and `runPersistentLoopOnce` create fresh `LlmApiRuntime`
 instances without an explicit model. Their route must be checked independently.
 Workspace-trusted ESM can use external clients outside SDK accounting.
 
-Customer pricing uses an immutable catalog token-rate snapshot. Orca receipts
-verify usage and supplier cost. Inference credit is separate from review,
-compute, and engagement accounting. Hosted lifecycle end-to-end qualification
-and security-performance measurements remain pending.
+Subscription admission reserves bounded supplier exposure across shared monthly,
+weekly and five-hour windows. Actual supplier-cost receipts settle usage;
+catalog token rates provide estimates, not customer-tariff debits. Hosted-model
+allowance is separate from review, compute and engagement accounting.
+Hosted lifecycle end-to-end qualification and security-performance measurements
+remain pending.
 
 ## Presentation contract
 

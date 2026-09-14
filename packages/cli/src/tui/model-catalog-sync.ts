@@ -23,7 +23,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homeStateDir } from "@0sec/shared";
-import { CloudClient, loadCloudCredentials, type InferenceModel } from "@0sec/core";
+import { CloudClient, loadCloudCredentials, type InferenceAccountResponse, type InferenceModel } from "@0sec/core";
 import { OFFLINE_MODEL_CATALOG } from "./model-catalog.offline.js";
 
 /** One normalized catalog entry. Prices are $/1M tokens when known. */
@@ -215,6 +215,8 @@ export interface HostedCatalogSnapshot {
   host: string;
   /** The service's own rows, verbatim. Projected by `buildHostedModelCatalog`. */
   models: readonly InferenceModel[];
+  /** Account response with allowance — needed for model eligibility and estimates. */
+  account: InferenceAccountResponse;
   /** Epoch millis the read completed, so a caller can age its own copy. */
   fetchedAt: number;
 }
@@ -248,7 +250,10 @@ export async function loadHostedModelCatalog(
     token: credentials.token,
     fetchImpl: opts.fetchImpl,
   });
-  const catalog = await client.getInferenceModels();
+  const [catalog, account] = await Promise.all([
+    client.getInferenceModels(),
+    client.getInferenceAccount(),
+  ]);
   const current = loadCloudCredentials({ env, homeDir: opts.homeDir, warn: () => {} });
   if (current.host !== credentials.host || current.token !== credentials.token) {
     throw new Error("Cloud connection changed while loading models. Reload the picker.");
@@ -257,6 +262,7 @@ export async function loadHostedModelCatalog(
   return {
     host: credentials.host,
     models: catalog.data,
+    account,
     fetchedAt: (opts.now ?? Date.now)(),
   };
 }

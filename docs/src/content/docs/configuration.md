@@ -423,7 +423,7 @@ header.
 
 See [Cloud setup and availability](/getting-started/#hosted-models-draft).
 Planned Cloud access combines open cybersecurity models and 0sec-curated options
-under one connection and inference-credit balance, without supplier-account setup.
+under one connection and shared hosted-inference allowance, without supplier-account setup.
 The hosted-enabled CLI adds `0sec login` (alias of `0sec auth login`),
 `0sec models [--json]` and `0sec balance [--json]`, and defaults to
 `https://cloud.0.security`. Older releases use `https://cloud.0sec.ai`.
@@ -439,9 +439,9 @@ Without it, host and token come from the file or default; setting
 | `0SEC_SELECTED_PROVIDER=hosted` | Pins hosted inference instead of ambient BYOK credentials. |
 | `0SEC_MODEL` or `--model` | Must match an alias returned by `0sec models`. The service catalog determines wire protocol and output ceiling. |
 | No provider pin | Configured BYOK providers are considered before hosted credentials. Logging in doesn't replace them. |
-| No explicit hosted model | Selects the first service catalog entry. Pin an alias for a repeatable route. |
-| `0SEC_LLM_FALLBACK` | Explicit backup chain for eligible failures. No automatic hosted wallet escape or hidden gateway substitution. |
-| `0sec auth status` | Checks credentials and service health, not model entitlement, credit sufficiency or paid-flow readiness. |
+| No explicit hosted model | Uses an available server-marked recommendation, then available catalog order. Pin an alias for a repeatable route. |
+| `0SEC_LLM_FALLBACK` | Explicit backup chain for eligible failures. No automatic hosted-account escape or hidden gateway substitution. |
+| `0sec auth status` | Checks credentials and service health, not model entitlement, allowance sufficiency or paid-flow readiness. |
 | `0sec auth logout` | Removes local credential files; it doesn't revoke an issued token or clear a token exported in the environment. |
 
 Revoke issued credentials through the dashboard's session controls.

@@ -338,7 +338,7 @@ export function ModelScreen({
           // Project before publishing: a malformed catalogue (an id-less or
           // duplicated row) throws here and stays an error rather than being
           // half-drawn.
-          buildHostedModelCatalog(snapshot.models);
+          buildHostedModelCatalog(snapshot.models, snapshot.account);
           if (alive) setHostedState({ source, snapshot, error: null });
         })
         .catch((error: unknown) => {
@@ -368,7 +368,7 @@ export function ModelScreen({
   }, [source, isHosted, env]);
 
   const hostedCatalog = useMemo(
-    () => (hostedSnapshot ? buildHostedModelCatalog(hostedSnapshot.models) : []),
+    () => (hostedSnapshot ? buildHostedModelCatalog(hostedSnapshot.models, hostedSnapshot.account) : []),
     [hostedSnapshot],
   );
   const catalog = useMemo(
@@ -425,9 +425,10 @@ export function ModelScreen({
       .map((model) => ({
         id: model.id,
         label: model.id,
-        meta: model.price,
+        meta: model.selectable ? `${model.recommended ? "Recommended · " : ""}${model.price}` : "Unavailable",
         category: `Hosted · ${model.provider}`,
         current: model.id === activeModel,
+        disabled: !model.selectable,
       }));
   };
   const items = isHosted ? hostedItems(filter) : modelDialogItems(modelRows);
@@ -459,11 +460,8 @@ export function ModelScreen({
   // Keep the highlight on the same model when the background catalog refreshes.
   const [selectedId, setSelectedId] = useState(currentModel);
   const selectedIdRef = useRef(selectedId);
-  // On the hosted path the opening highlight is the operator's pin resolved
-  // against the account's own catalogue: `preferredHostedModel` returns that
-  // row, or nothing when the pinned id is not in this account's list. It never
-  // substitutes another model, so an unlisted pin simply leaves the cursor on
-  // the first row instead of silently pointing at a different one.
+  // Preserve the operator's pin; otherwise offer the server recommendation.
+  // An unavailable pin is not silently replaced by another model.
   const offeredId = preferredHostedModel(hostedCatalog, selectedId ?? activeModel)?.id;
   const highlightId = isHosted ? offeredId : (selectedId ?? activeModel);
   const cursor = clampDialogSelection(items, items.findIndex((item) => item.id === highlightId));
@@ -593,7 +591,7 @@ export function ModelScreen({
         visible,
         visible.findIndex((item) => item.id === (selectedIdRef.current ?? activeModel ?? offeredId)),
       )];
-      if (!activeItem) return;
+      if (!activeItem || activeItem.disabled) return;
       if (role !== null && rolesLive) {
         onAgentModelsChange?.({ ...agentModels, [role]: activeItem.id });
         setNotice(

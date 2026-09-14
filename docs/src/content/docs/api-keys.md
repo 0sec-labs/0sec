@@ -4,7 +4,7 @@ description: Supported LLM providers, environment variables, credential priority
 ---
 
 0sec Cloud will offer open cybersecurity models and 0sec-curated options through
-one connection and inference-credit balance, without supplier-account setup.
+one connection and shared hosted-inference allowance, without supplier-account setup.
 Alternatively, use your own API key or supported subscription without a Cloud account.
 
 <a id="hosted-inference-draft"></a>
@@ -20,22 +20,28 @@ results. Tools execute on your configured local executor.
 ### Account, models and usage
 
 `0sec models --json` lists hosted aliases, providers, wire protocols, limits and
-customer rates. Select an exact alias; otherwise the first catalog entry is used.
+server rate metadata. Select an exact alias to pin a route. Without a pin, the
+CLI uses an available server-marked recommendation, then available catalog order.
+The picker cannot commit unavailable or unqualified rows.
 
-`0sec balance --json` reads organization inference credit, separately from
-0review or local cost estimates. The dashboard and usage endpoint show model,
-provider, tokens, billed amount, cancellation and settlement status.
+`0sec balance --json` retains the account's nested `allowance` response.
+The formatted command and Cloud status line show server-produced monthly,
+weekly and five-hour percentages; they never derive quotas from token counts
+or a dollar balance. Missing windows remain unknown. Inactive subscriptions,
+unresolved charges and unavailable snapshots remain explicit. A legacy credit
+percentage is shown separately only when the service has no subscription contract.
 There is no `0sec usage` command.
 
-Autumn reserves credit before dispatch and settles measured usage afterward.
-Login adds no credit. Funding requires confirmed payment through configured
-top-ups or allowances. Requests exceeding available reserve credit are rejected;
-postpaid overage is unavailable.
+For the subscription candidate, Autumn owns checkout and subscription state;
+the application verifies the paid period and reserves across all applicable
+usage windows before dispatch. Login grants no allowance. Actual supplier
+receipts debit the shared allowance. Optional purchased credits remain disabled,
+and this implementation does not establish production payment availability.
 
 | Endpoint on the selected cloud host | Required token scope | Purpose |
 | --- | --- | --- |
 | `GET /api/inference/v1/models` | `inference:read` | Hosted aliases and rate metadata |
-| `GET /api/inference/account` | `billing:read` | Organization inference balance |
+| `GET /api/inference/account` | `billing:read` | Organization subscription windows and legacy account metadata |
 | `GET /api/inference/usage` | `inference:read` | Up to 50 recent request records |
 | `POST /api/inference/v1/chat/completions` | `inference:invoke` | Catalog-selected Chat Completions route |
 | `POST /api/inference/v1/responses` | `inference:invoke` | Catalog-selected Responses route |
@@ -45,20 +51,22 @@ these scopes. The catalog controls the provider endpoint and wire protocol.
 
 ### Charging and interrupted requests
 
-The reserve covers the catalog context window and bounded output at the configured
-multiplier. Charges use measured usage and snapshotted customer rates; supplier
-receipts establish usage and supplier cost, not retail pricing.
+Subscription reservations bound supplier exposure using the catalog context
+window, output ceiling and supplier rates. Settlement uses actual supplier
+`usage.cost`, not a token-derived estimate or model multiplier. Catalog scenario
+estimates are not invoices.
 
 Both wire APIs support server-sent events. Cancellation can still incur charges:
 the gateway may drain the bounded provider stream to collect usage. Missing usage
-or uncertain settlement stays unresolved and blocks further spending.
+or uncertain settlement stays unresolved and retains its reservations across
+window expiry. It does not become free usage or a refund.
 Check request status and balance before resubmitting.
 
 | Failure | Action |
 | --- | --- |
 | HTTP 401 | Missing, invalid or revoked credential. Sign in again. |
 | HTTP 403 | Required scope missing. Reauthorize the CLI for the intended organization. |
-| HTTP 402 | Insufficient reserve credit; no provider call. Check balance and funding. |
+| HTTP 402 | Insufficient reserve allowance; no provider call. Check the subscription and shared windows. |
 | HTTP 429 | Concurrency, unresolved charge or provider throttling. Inspect the error and request history. |
 | HTTP 503 | Hosted service, provider or billing unavailable. |
 | Transport failure or hosted HTTP 5xx | The CLI doesn't automatically replay a potentially consumed request. Inspect usage before trying again. |

@@ -1186,7 +1186,7 @@ continues across generation changes without reconstructing its session.
 A local plugin smoke or a provider-backed candidate-generation check does not
 qualify the new lifecycle with hosted inference. That integration remains
 candidate-stage and production-disabled. Hosted parent SDK calls consume
-inference credit, including evolution calls; child-route inheritance and
+shared hosted-inference allowance, including evolution calls; child-route inheritance and
 arbitrary trusted ESM clients are not covered by a blanket parent-broker
 guarantee. See [hosted inference and evolution accounting](/architecture/#hosted-inference-and-evolution-accounting)
 for the routing, pricing, and qualification boundaries. Self-Harness's

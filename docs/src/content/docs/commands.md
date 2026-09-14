@@ -2622,13 +2622,13 @@ Guide: [Cloud authentication](/api-keys/).
 
 ### models
 
-Read the configured Cloud host's inference catalog and base rates. `--json` prints the returned model array.
+Read the configured Cloud host's qualified model catalog and server-provided supplier-cost estimates. Recommended models are marked; explicit selections remain authoritative. `--json` prints the returned model array.
 
 ```text
 0sec models [options]
 ```
 
-Requires Cloud credentials. An empty catalog means no models are available to this account. Credit charges also depend on peak multipliers and provider usage receipts.
+Requires Cloud credentials. An empty catalog means no models are available to this account. Scenario estimates are not quotas or invoices; actual supplier receipts debit the shared allowance without model multipliers.
 
 Guide: [Hosted models](/getting-started/#hosted-models-draft).
 
@@ -2638,19 +2638,19 @@ Guide: [Hosted models](/getting-started/#hosted-models-draft).
 
 ### balance
 
-Read the service-reported percentage of inference credits remaining. If the service cannot provide a percentage, the command reports it as unavailable. `--json` retains the full account response, including accounting fields.
+Read the service-reported monthly, weekly and five-hour subscription windows. Missing or unavailable values are not converted to zero or 100%. Legacy credit percentages appear only when no subscription contract is present. `--json` retains the full account response.
 
 ```text
 0sec balance [options]
 ```
 
-Requires Cloud credentials. This command reads the balance; it does not purchase or grant credits. Managed scans and review credits have separate accounting.
+Requires Cloud credentials. This command reads account state; it does not purchase or grant allowance. Managed scans and review credits have separate accounting.
 
 Guide: [Cloud authentication](/api-keys/).
 
 | Option | Registered default | Description |
 | --- | --- | --- |
-| `--json` | — | Output raw JSON instead of a formatted line |
+| `--json` | — | Output raw account JSON instead of formatted allowance details |
 
 ### auth
 

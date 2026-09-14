@@ -77,13 +77,13 @@ an available model and sufficient credit.
 > hosted-enabled CLI and an approved test service.
 
 0sec Cloud will bring open cybersecurity models and 0sec-curated options to one
-connection and inference-credit balance, without supplier-account setup.
+connection and shared hosted-inference allowance, without supplier-account setup.
 Tools run locally; managed testing and 0review have separate access and billing.
 
 1. Set `HOSTED_TEST_HOST` to the operator-provided URL. Log in below, choose
    your organization, and authorize the CLI.
-2. Check models and balance. Login adds no credit. An owner or admin manages
-   funding in **Billing**; credit requires confirmed payment.
+2. Check models and allowance. Login grants no usage. An owner or admin manages
+   the subscription in **Billing**; access requires a verified paid period.
 3. Choose an alias from `0sec models`. Pin `hosted` to use it instead of any
    existing provider key or Codex login.
 
@@ -96,9 +96,11 @@ env 0SEC_SELECTED_PROVIDER=hosted 0SEC_MODEL="<alias-from-0sec-models>" \
   0sec review ./authorized-repo --runtime api
 ```
 
-Replace the alias and repository path. The review consumes model credit;
-catalog and balance reads don't. Insufficient credit for the request reserve
-returns HTTP 402 before a provider call.
+Replace the alias and repository path. The review consumes shared model allowance;
+catalog and account reads don't. The subscription candidate reports monthly,
+weekly and five-hour windows together. Insufficient allowance for the request
+reserve returns HTTP 402 before a provider call. Paid checkout and production
+activation still require operator qualification.
 
 See [billing and errors](/api-keys/#hosted-inference-draft) and
 [hosted settings](/configuration/#hosted-configuration-draft).
