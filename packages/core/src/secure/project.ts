@@ -61,6 +61,7 @@ import { randomUUID, createHash } from "node:crypto";
 import type { Finding, ScanDepth, TokenUsageForPricing } from "@0sec/shared";
 import type { PipelineOptions } from "../unified-pipeline.js";
 import { runPipeline } from "../unified-pipeline.js";
+import { recallRepairLearnings, recordRepairLearning } from "./project-memory.js";
 import { cloneGitRepo, parseRepoRef } from "../repo-clone.js";
 import { ScanCostLedger } from "../agent/cost-ledger.js";
 import type { NativeRuntime, NativeRuntimeResult, NativeMessage, NativeToolDef, NativeStreamCallbacks, RuntimeType } from "../runtime/types.js";
@@ -284,6 +285,19 @@ async function investigateSource(
   // Forward cost ceiling so the pipeline can self-limit during investigation.
   if (costCeilingUsd != null && costCeilingUsd > 0) {
     opts.costCeilingUsd = costCeilingUsd;
+  }
+
+  // Learning loop: prior repair outcomes recalled as UNTRUSTED hints (never
+  // evidence). Notes are pinned to source content digests by the memory
+  // store; anything stale or tampered simply does not recall.
+  const learnings = recallRepairLearnings(checkoutPath);
+  if (learnings.length > 0) {
+    opts.priorFindings = learnings.map((text, index) => ({
+      id: `prior-learning-${index + 1}`,
+      title: text.slice(0, 200),
+      category: "prior-repair-learning",
+      description: text,
+    }));
   }
 
   let report;
@@ -864,6 +878,10 @@ export async function runSecureProject(
         }
 
         state.repairs[finding.id] = repairResult;
+
+        // Learning loop: write the outcome back (verified pattern or failed
+        // approach) pinned to the touched files' post-run content hashes.
+        recordRepairLearning(checkoutPath, state.runId, finding, repairResult);
 
         // Persist the REAL metered cost so far. The ledger only contains
         // usage the runtime actually reported; when no usage is surfaced the
