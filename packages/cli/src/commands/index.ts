@@ -3,6 +3,7 @@ export { registerResumeCommand } from "./resume.js";
 export { registerReplayCommand } from "./replay.js";
 export { registerHistoryCommand } from "./history.js";
 export { registerFindingsCommand } from "./findings.js";
+export { registerSecureCommand } from "./secure.js";
 export { registerReviewCommand } from "./review.js";
 export { registerFixCommand } from "./fix.js";
 export { registerAuditCommand } from "./audit.js";

@@ -2490,3 +2490,17 @@ export type {
 
 // Isolated, evaluated self-rewriting candidates and pinned future workers.
 export * from "./improvement/index.js";
+
+// Self-securing software lifecycle: prepare → investigate → behavioral repair
+// → independent verification → patch/PR delivery, with persisted resume state.
+export { runSecureProject } from "./secure/project.js";
+export { runBehavioralRepair } from "./secure/behavioral-repair.js";
+export type {
+  BehavioralProbeResult,
+  BehavioralRepairOptions,
+  BehavioralRepairResult,
+  SecureEvent,
+  SecurePhase,
+  SecureProjectOptions,
+  SecureProjectResult,
+} from "./secure/types.js";
