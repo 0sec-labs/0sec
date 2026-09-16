@@ -244,7 +244,9 @@ jobs:
               }
               assert(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id), 'Unstable deployment inventory');
               seen.add(item.id);
-              if ((isolate || item.environment === 'production') && !(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) inFlight.push(item.id);
+              if ((!disable || item.environment === 'production') && !(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) {
+                inFlight.push({ id: item.id, environment: item.environment, created_on: item.created_on, latest_stage: { name: item.latest_stage?.name, status: item.latest_stage?.status } });
+              }
             }
           };
           inspectPage(firstPage, 1);
@@ -256,6 +258,7 @@ jobs:
           const inventoryHead = body => fingerprint(body.result.map(item => [item.id, item.environment, item.latest_stage]));
           const finalPage = await get(inventoryPath(1));
           assert(finalPage.result_info?.total_count === bounds.total_count && finalPage.result_info.total_pages === bounds.total_pages && Array.isArray(finalPage.result) && inventoryHead(finalPage) === inventoryHead(firstPage), 'Deployment inventory changed during inspection');
+          if (inFlight.length > 0) console.log(JSON.stringify({ in_flight_deployments: inFlight }));
           if (mutate) {
             assert(inFlight.length === 0, 'In-flight deployment');
             const fresh = (await get()).result;
@@ -283,6 +286,10 @@ jobs:
             captured_at: new Date().toISOString(), account, project,
             canonical_deployment: canonical.id,
             automatic_production: config.production_deployments_enabled,
+            automatic_preview: config.preview_deployment_setting,
+            preview_branch_includes: config.preview_branch_includes,
+            preview_branch_excludes: config.preview_branch_excludes,
+            production_contact_bindings_present: Object.fromEntries(['TURNSTILE_SECRET_KEY', 'RESEND_API_KEY', 'CONTACT_EMAIL_FROM', 'CONTACT_EMAIL_TO'].map(name => [name, Object.hasOwn(current.deployment_configs?.production?.env_vars ?? {}, name)])),
             in_flight_deployments: inFlight,
             preview_bindings_safe: Boolean(previewSafe),
             mutation_performed: false,
