@@ -246,7 +246,7 @@ jobs:
               }
               assert(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id), 'Unstable deployment inventory');
               seen.add(item.id);
-              if ((!disable || item.environment === 'production') && !(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) {
+              if ((!disable || item.environment === 'production') && !(item.is_skipped === true || ['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) {
                 inFlight.push({ id: item.id, environment: item.environment, created_on: item.created_on, latest_stage: { name: item.latest_stage?.name, status: item.latest_stage?.status } });
               }
             }
@@ -257,7 +257,7 @@ jobs:
             pages.forEach((body, offset) => inspectPage(body, page + offset));
           }
           assert(seen.size === bounds.total_count, 'Incomplete deployment inventory');
-          const inventoryHead = body => fingerprint(body.result.map(item => [item.id, item.environment, item.latest_stage]));
+          const inventoryHead = body => fingerprint(body.result.map(item => [item.id, item.environment, item.is_skipped, item.latest_stage]));
           const finalPage = await get(inventoryPath(1));
           assert(finalPage.result_info?.total_count === bounds.total_count && finalPage.result_info.total_pages === bounds.total_pages && Array.isArray(finalPage.result) && inventoryHead(finalPage) === inventoryHead(firstPage), 'Deployment inventory changed during inspection');
           if (inFlight.length > 0) console.log(JSON.stringify({ in_flight_deployments: inFlight }));
@@ -376,7 +376,7 @@ jobs:
               for (const item of body.result) {
                 assert(typeof item.id === 'string' && item.project_name === project && (isolate ? ['preview', 'production'].includes(item.environment) : item.environment === 'production') && !seen.has(item.id), 'Unstable deployment inventory');
                 seen.add(item.id);
-                assert(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'), 'In-flight deployment');
+                assert(item.is_skipped === true || ['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'), 'In-flight deployment');
               }
             };
             inspectPage(firstPage, 1);
@@ -385,7 +385,7 @@ jobs:
               pages.forEach((body, offset) => inspectPage(body, page + offset));
             }
             assert(seen.size === bounds.total_count, 'Incomplete deployment inventory');
-            const inventoryHead = body => fingerprint(body.result.map(item => [item.id, item.environment, item.latest_stage]));
+            const inventoryHead = body => fingerprint(body.result.map(item => [item.id, item.environment, item.is_skipped, item.latest_stage]));
             const finalPage = await api(inventoryPath(1));
             assert(finalPage.result_info?.total_count === bounds.total_count && finalPage.result_info.total_pages === bounds.total_pages && Array.isArray(finalPage.result) && inventoryHead(finalPage) === inventoryHead(firstPage), 'Deployment inventory changed during inspection');
             const fresh = (await api()).result;
