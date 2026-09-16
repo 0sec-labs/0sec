@@ -110,14 +110,14 @@ jobs:
           const inFlight = [];
           let complete = false;
           for (let page = 1; page <= 1000; page++) {
-            const body = await get(`/deployments?per_page=100&page=${page}`);
+            const body = await get(`/deployments?per_page=25&page=${page}`);
             assert(Array.isArray(body.result), 'Malformed deployment inventory');
             for (const item of body.result) {
               assert(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id), 'Unstable deployment inventory');
               seen.add(item.id);
               if (item.environment === 'production' && !(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) inFlight.push(item.id);
             }
-            if (body.result.length < 100 || (Number.isSafeInteger(body.result_info?.total_pages) && page >= body.result_info.total_pages)) { complete = true; break; }
+            if (body.result.length < 25 || (Number.isSafeInteger(body.result_info?.total_pages) && page >= body.result_info.total_pages)) { complete = true; break; }
           }
           assert(complete, 'Deployment inventory exceeds inspection bound');
           console.log(JSON.stringify({
