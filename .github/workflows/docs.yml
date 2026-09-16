@@ -185,13 +185,13 @@ jobs:
             const ids = [
               '169d96c0-c772-4b4c-80c4-0279f4b1dfaf', '001a3075-d977-4396-9877-5f77893b44d3',
               '7e3743d7-b5af-44da-a5ba-855288c50246', 'f910f0aa-d675-4804-ac39-3535bb03b47b',
-              '652eb6bc-ac3d-4cc9-bb91-f296d4f8e4e3', 'bd52c7a3-9954-4070-b8a0-2e701fb72267',
+              '652eb6bc-ac3d-4cc9-bb91-f296d4f8e4e3', 'afe162e4-1fda-4cc3-b740-86e772823984',
             ];
             const details = await Promise.all(ids.map(async id => {
               const value = (await get(`/deployments/${id}`)).result;
-              assert(value.id === id && value.project_name === project && value.environment === 'production', 'Deployment identity mismatch');
+              assert(value.id === id && value.project_name === project && ['preview', 'production'].includes(value.environment), 'Deployment identity mismatch');
               return {
-                id, created_on: value.created_on,
+                id, environment: value.environment, created_on: value.created_on,
                 is_skipped: value.is_skipped ?? null, skip_reason: value.skip_reason ?? null,
                 trigger_type: value.deployment_trigger?.type, source_branch: value.deployment_trigger?.metadata?.branch,
                 latest_stage: { name: value.latest_stage?.name, status: value.latest_stage?.status },
@@ -212,6 +212,10 @@ jobs:
               canonical_deployment: canonical.id,
               automatic_production: config.production_deployments_enabled,
               preview_binding_types: bindingTypes,
+              preview_settings: Object.fromEntries(Object.entries(preview ?? {}).filter(([key]) => previewSettings.has(key))),
+              preview_fingerprint: fingerprint(preview ?? null),
+              source_fingerprint: fingerprint(current.source),
+              production_configuration_fingerprint: fingerprint(current.deployment_configs?.production ?? null),
               deployment_details: details,
               inventory_page: {
                 returned: firstPage.result.length,
