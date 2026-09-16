@@ -12,12 +12,18 @@ on:
       - "pnpm-lock.yaml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
+    inputs:
+      pages_preflight:
+        description: Read-only homepage Pages gate inspection; skips docs build and deployment
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   deploy:
+    if: ${{ !inputs.pages_preflight }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -41,3 +47,77 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: e84b55c82d29ff76b789af0aea3d9121
         run: npx --yes wrangler@4 pages deploy docs/dist --project-name=0sec-docs --branch=main
+
+  pages-preflight:
+    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && inputs.pages_preflight
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Read the fixed homepage Pages target without mutation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          const account = 'e84b55c82d29ff76b789af0aea3d9121';
+          const project = '0sec-ai-homepage';
+          const endpoint = `https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${project}`;
+          const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+          const sourceKeys = new Set(['deployments_enabled', 'owner', 'owner_id', 'repo_id', 'repo_name', 'production_branch', 'pr_comments_enabled', 'production_deployments_enabled', 'preview_deployment_setting', 'preview_branch_includes', 'preview_branch_excludes', 'path_includes', 'path_excludes']);
+          const previewSettings = new Set(['always_use_latest_compatibility_date', 'build_image_major_version', 'compatibility_date', 'compatibility_flags', 'usage_model', 'placement', 'limits', 'wrangler_config_hash', 'fail_open']);
+          async function get(suffix = '') {
+            assert(process.env.CLOUDFLARE_API_TOKEN, 'Missing credential');
+            const response = await fetch(endpoint + suffix, {
+              method: 'GET',
+              redirect: 'error',
+              headers: { authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` },
+              signal: AbortSignal.timeout(30_000),
+            });
+            assert(response.ok, `Cloudflare HTTP ${response.status}`);
+            const body = await response.json().catch(() => { throw new Error('Invalid Cloudflare JSON response'); });
+            assert(body.success === true, 'Cloudflare API rejected read');
+            return body;
+          }
+          const current = (await get()).result;
+          assert(current?.name === project && uuid.test(current.id), 'Wrong project identity');
+          assert(current.production_branch === 'main' && current.source?.type === 'github', 'Unexpected project source');
+          assert(current.domains?.includes('0.security'), 'Canonical domain not attached');
+          const config = current.source.config;
+          assert(config?.owner === '0sec-labs' && config.repo_name === '0cloud' && config.production_branch === 'main', 'Unexpected source repository or branch');
+          assert(Object.keys(current.source).every(key => key === 'type' || key === 'config'), 'Unknown source field');
+          assert(Object.keys(config).every(key => sourceKeys.has(key)), 'Unknown source configuration field');
+          assert(typeof config.production_deployments_enabled === 'boolean', 'Missing automatic-production setting');
+          const canonical = current.canonical_deployment;
+          assert(uuid.test(canonical?.id) && canonical.project_name === project && canonical.environment === 'production', 'Invalid canonical deployment');
+          assert(canonical.latest_stage?.name === 'deploy' && canonical.latest_stage.status === 'success', 'Canonical deployment not successful');
+          const preview = current.deployment_configs?.preview;
+          const previewSafe = preview && typeof preview === 'object' && !Array.isArray(preview) && Object.entries(preview).every(([key, value]) =>
+            key === 'env_vars'
+              ? value && typeof value === 'object' && !Array.isArray(value) && Object.values(value).every(binding => binding?.type === 'plain_text' && typeof binding.value === 'string')
+              : previewSettings.has(key) || value == null || (typeof value === 'object' && Object.keys(value).length === 0));
+          const seen = new Set();
+          const inFlight = [];
+          let complete = false;
+          for (let page = 1; page <= 1000; page++) {
+            const body = await get(`/deployments?per_page=100&page=${page}`);
+            assert(Array.isArray(body.result), 'Malformed deployment inventory');
+            for (const item of body.result) {
+              assert(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id), 'Unstable deployment inventory');
+              seen.add(item.id);
+              if (item.environment === 'production' && !(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) inFlight.push(item.id);
+            }
+            if (body.result.length < 100 || (Number.isSafeInteger(body.result_info?.total_pages) && page >= body.result_info.total_pages)) { complete = true; break; }
+          }
+          assert(complete, 'Deployment inventory exceeds inspection bound');
+          console.log(JSON.stringify({
+            captured_at: new Date().toISOString(), account, project,
+            canonical_deployment: canonical.id,
+            automatic_production: config.production_deployments_enabled,
+            in_flight_production: inFlight,
+            preview_bindings_safe: Boolean(previewSafe),
+            mutation_performed: false,
+          }, null, 2));
+          NODE
