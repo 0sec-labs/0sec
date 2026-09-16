@@ -21,13 +21,21 @@ on:
         description: Inspect the six recorded unfinished deployments and preview binding types only
         type: boolean
         default: false
+      disable_auto_production:
+        description: Attended action to disable only homepage automatic production deployments
+        type: boolean
+        default: false
+      expected_production:
+        description: Freshly reviewed homepage production deployment UUID
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-    if: ${{ !inputs.pages_preflight && !inputs.pages_details }}
+    if: ${{ !inputs.pages_preflight && !inputs.pages_details && !inputs.disable_auto_production }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -53,20 +61,34 @@ jobs:
         run: npx --yes wrangler@4 pages deploy docs/dist --project-name=0sec-docs --branch=main
 
   pages-preflight:
-    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && (inputs.pages_preflight || inputs.pages_details)
+    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && (inputs.pages_preflight || inputs.pages_details || inputs.disable_auto_production)
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 5
+    timeout-minutes: 15
+    concurrency:
+      group: homepage-pages-control
+      cancel-in-progress: false
     steps:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
       - name: Read the fixed homepage Pages target without mutation
+        id: inspect
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           PAGES_DETAILS: ${{ inputs.pages_details }}
+          DISABLE_AUTO_PRODUCTION: ${{ inputs.disable_auto_production }}
+          EXPECTED_PRODUCTION: ${{ inputs.expected_production }}
+          CUTOVER_RECEIPT: ${{ runner.temp }}/pages-cutover-${{ github.run_id }}-${{ github.run_attempt }}.json
         run: |
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { writeFileSync } from 'node:fs';
+          const fingerprint = value => createHash('sha256').update(JSON.stringify(value, (_, item) =>
+            item && typeof item === 'object' && !Array.isArray(item)
+              ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
+              : item)).digest('hex');
+          const disable = process.env.DISABLE_AUTO_PRODUCTION === 'true';
           const account = 'e84b55c82d29ff76b789af0aea3d9121';
           const project = '0sec-ai-homepage';
           const endpoint = `https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${project}`;
@@ -106,6 +128,11 @@ jobs:
           const canonical = current.canonical_deployment;
           assert(uuid.test(canonical?.id) && canonical.project_name === project && canonical.environment === 'production', 'Invalid canonical deployment');
           assert(canonical.latest_stage?.name === 'deploy' && canonical.latest_stage.status === 'success', 'Canonical deployment not successful');
+          if (disable) {
+            assert(process.env.PAGES_DETAILS !== 'true', 'Details mode cannot mutate');
+            assert(uuid.test(process.env.EXPECTED_PRODUCTION) && canonical.id === process.env.EXPECTED_PRODUCTION, 'Stale production selection');
+            assert(canonical.deployment_trigger?.metadata?.branch === 'main', 'Unexpected canonical branch');
+          }
           const preview = current.deployment_configs?.preview;
           const previewSafe = preview && typeof preview === 'object' && !Array.isArray(preview) && Object.entries(preview).every(([key, value]) =>
             key === 'env_vars'
@@ -147,16 +174,34 @@ jobs:
           const inFlight = [];
           let complete = false;
           for (let page = 1; page <= 1000; page++) {
-            const body = await get(`/deployments?per_page=25&page=${page}`);
+            const body = await get(`/deployments?per_page=25&page=${page}${disable ? '&env=production' : ''}`);
             assert(Array.isArray(body.result), 'Malformed deployment inventory');
             for (const item of body.result) {
               assert(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id), 'Unstable deployment inventory');
               seen.add(item.id);
-              if (item.environment === 'production' && !(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) inFlight.push(item.id);
+              if (item.environment === 'production' && !(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) inFlight.push(item.id);
             }
             if (body.result.length < 25 || (Number.isSafeInteger(body.result_info?.total_pages) && page >= body.result_info.total_pages)) { complete = true; break; }
           }
           assert(complete, 'Deployment inventory exceeds inspection bound');
+          if (disable) {
+            assert(inFlight.length === 0, 'In-flight production deployment');
+            const fresh = (await get()).result;
+            assert(fresh.id === current.id && fresh.canonical_deployment?.id === canonical.id && fingerprint(fresh.source) === fingerprint(current.source), 'Pages state changed during inventory');
+            const receipt = {
+              schema_version: 1, state: 'prepared', captured_at: new Date().toISOString(),
+              account, project, project_id: current.id, repository_id: '1202833352',
+              run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+              workflow_sha: process.env.GITHUB_SHA,
+              production_before: canonical.id, automatic_before: config.production_deployments_enabled,
+              source_before_fingerprint: fingerprint(fresh.source),
+              preview_before_fingerprint: fingerprint(fresh.deployment_configs?.preview ?? null),
+              rollback: { setting: 'source.config.production_deployments_enabled', value: config.production_deployments_enabled },
+              verification_required_after_interruption: true,
+            };
+            writeFileSync(process.env.CUTOVER_RECEIPT, JSON.stringify(receipt, null, 2), { flag: 'wx', mode: 0o600 });
+            console.log(JSON.stringify(receipt, null, 2));
+          }
           console.log(JSON.stringify({
             captured_at: new Date().toISOString(), account, project,
             canonical_deployment: canonical.id,
@@ -166,3 +211,113 @@ jobs:
             mutation_performed: false,
           }, null, 2));
           NODE
+      - name: Persist credential-free rollback configuration before mutation
+        if: inputs.disable_auto_production
+        uses: actions/upload-artifact@v7
+        with:
+          name: pages-cutover-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pages-cutover-${{ github.run_id }}-${{ github.run_attempt }}.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Disable only automatic production deployments and verify unchanged selection
+        if: inputs.disable_auto_production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EXPECTED_PRODUCTION: ${{ inputs.expected_production }}
+          CUTOVER_RECEIPT: ${{ runner.temp }}/pages-cutover-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { readFileSync, openSync, writeFileSync, fsyncSync, closeSync } from 'node:fs';
+          const account = 'e84b55c82d29ff76b789af0aea3d9121';
+          const project = '0sec-ai-homepage';
+          const endpoint = `https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${project}`;
+          const receipt = JSON.parse(readFileSync(process.env.CUTOVER_RECEIPT, 'utf8'));
+          const fingerprint = value => createHash('sha256').update(JSON.stringify(value, (_, item) =>
+            item && typeof item === 'object' && !Array.isArray(item)
+              ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
+              : item)).digest('hex');
+          const save = () => {
+            const fd = openSync(process.env.CUTOVER_RECEIPT, 'w', 0o600);
+            try { writeFileSync(fd, JSON.stringify(receipt, null, 2)); fsyncSync(fd); } finally { closeSync(fd); }
+          };
+          assert(receipt.state === 'prepared' && receipt.account === account && receipt.project === project && receipt.repository_id === '1202833352', 'Invalid prepared receipt');
+          assert(receipt.run_id === process.env.GITHUB_RUN_ID && receipt.run_attempt === process.env.GITHUB_RUN_ATTEMPT && receipt.workflow_sha === process.env.GITHUB_SHA, 'Wrong workflow receipt');
+          assert(receipt.production_before === process.env.EXPECTED_PRODUCTION && typeof receipt.automatic_before === 'boolean', 'Wrong approved selection');
+          assert(Date.now() - Date.parse(receipt.captured_at) >= 0 && Date.now() - Date.parse(receipt.captured_at) < 15 * 60_000, 'Stale prepared receipt');
+          async function api(suffix = '', method = 'GET', body) {
+            assert(process.env.CLOUDFLARE_API_TOKEN, 'Missing credential');
+            const response = await fetch(endpoint + suffix, {
+              method, redirect: 'error', signal: AbortSignal.timeout(30_000),
+              headers: { authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`, 'content-type': 'application/json' },
+              ...(body ? { body: JSON.stringify(body) } : {}),
+            });
+            assert(response.ok, `Cloudflare HTTP ${response.status}`);
+            const parsed = await response.json().catch(() => { throw new Error('Invalid Cloudflare JSON response'); });
+            assert(parsed.success === true, 'Cloudflare API rejected operation');
+            return parsed;
+          }
+          function verifyIdentity(value) {
+            assert(value?.id === receipt.project_id && value.name === project && value.domains?.includes('0.security'), 'Wrong project identity');
+            assert(value.production_branch === 'main' && value.source?.type === 'github', 'Unexpected project source');
+            assert(value.source.config.owner === '0sec-labs' && String(value.source.config.repo_id) === '1202833352' && value.source.config.production_branch === 'main', 'Wrong source identity');
+            assert(value.canonical_deployment?.id === receipt.production_before && value.canonical_deployment.latest_stage?.name === 'deploy' && value.canonical_deployment.latest_stage.status === 'success', 'Production selection changed');
+          }
+          let attempted = false;
+          try {
+            const before = (await api()).result;
+            verifyIdentity(before);
+            assert(fingerprint(before.source) === receipt.source_before_fingerprint, 'Source settings changed after preparation');
+            let complete = false;
+            const seen = new Set();
+            for (let page = 1; page <= 1000; page++) {
+              const body = await api(`/deployments?env=production&per_page=25&page=${page}`);
+              assert(Array.isArray(body.result), 'Malformed production inventory');
+              for (const item of body.result) {
+                assert(typeof item.id === 'string' && item.project_name === project && item.environment === 'production' && !seen.has(item.id), 'Unstable production inventory');
+                seen.add(item.id);
+                assert(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'), 'In-flight production deployment');
+              }
+              if (body.result.length < 25 || (Number.isSafeInteger(body.result_info?.total_pages) && page >= body.result_info.total_pages)) { complete = true; break; }
+            }
+            assert(complete, 'Production inventory exceeds inspection bound');
+            const fresh = (await api()).result;
+            verifyIdentity(fresh);
+            assert(fingerprint(fresh.source) === receipt.source_before_fingerprint, 'Source settings changed before write');
+            assert(fingerprint(fresh.deployment_configs?.preview ?? null) === receipt.preview_before_fingerprint, 'Preview bindings changed before write');
+            const source = { ...fresh.source, config: { ...fresh.source.config, production_deployments_enabled: false } };
+            if (receipt.automatic_before) {
+              receipt.state = 'mutation_started';
+              receipt.mutation_may_have_occurred = true;
+              save();
+              attempted = true;
+              await api('', 'PATCH', { source });
+            }
+            const after = (await api()).result;
+            verifyIdentity(after);
+            assert(fingerprint(after.source) === fingerprint(source), 'Unexpected source settings after write');
+            assert(after.source.config.production_deployments_enabled === false, 'Automatic production still enabled');
+            assert(fingerprint(after.deployment_configs?.preview ?? null) === receipt.preview_before_fingerprint, 'Preview bindings changed');
+            Object.assign(receipt, {
+              state: 'verified', verified_at: new Date().toISOString(),
+              production_after: after.canonical_deployment.id, automatic_after: false,
+              source_after_fingerprint: fingerprint(after.source), preview_bindings_unchanged: true,
+              mutation_performed: attempted,
+            });
+            save();
+            console.log(JSON.stringify(receipt, null, 2));
+          } catch (error) {
+            Object.assign(receipt, { state: 'failed', mutation_may_have_occurred: attempted, failure: error instanceof Error ? error.message : 'Operation failed' });
+            save();
+            throw error;
+          }
+          NODE
+      - name: Retain the final credential-free operation receipt
+        if: always() && inputs.disable_auto_production && steps.inspect.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pages-cutover-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pages-cutover-${{ github.run_id }}-${{ github.run_attempt }}.json
+          if-no-files-found: error
+          retention-days: 30
