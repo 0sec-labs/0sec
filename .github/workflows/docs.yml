@@ -183,15 +183,17 @@ jobs:
           }
           if (process.env.PAGES_DETAILS === 'true') {
             const ids = [
-              'bd52c7a3-9954-4070-b8a0-2e701fb72267', '2d135b4c-fe09-4a9d-86c9-a77a5e37e013',
-              '56d917a5-f23e-4f9a-8826-04246f00d7c8', 'ae7b1aa3-9ff4-4372-9464-9575434fe63f',
-              '3f8781a3-c9dd-4d3a-8290-430b31ba969c', 'bb477deb-b441-443c-8032-cfabb910fb2e',
+              '169d96c0-c772-4b4c-80c4-0279f4b1dfaf', '001a3075-d977-4396-9877-5f77893b44d3',
+              '7e3743d7-b5af-44da-a5ba-855288c50246', 'f910f0aa-d675-4804-ac39-3535bb03b47b',
+              '652eb6bc-ac3d-4cc9-bb91-f296d4f8e4e3', 'bd52c7a3-9954-4070-b8a0-2e701fb72267',
             ];
             const details = await Promise.all(ids.map(async id => {
               const value = (await get(`/deployments/${id}`)).result;
               assert(value.id === id && value.project_name === project && value.environment === 'production', 'Deployment identity mismatch');
               return {
                 id, created_on: value.created_on,
+                is_skipped: value.is_skipped ?? null, skip_reason: value.skip_reason ?? null,
+                trigger_type: value.deployment_trigger?.type, source_branch: value.deployment_trigger?.metadata?.branch,
                 latest_stage: { name: value.latest_stage?.name, status: value.latest_stage?.status },
                 stages: value.stages?.map(stage => ({ name: stage.name, status: stage.status })),
               };
