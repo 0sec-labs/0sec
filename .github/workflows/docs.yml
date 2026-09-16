@@ -29,6 +29,10 @@ on:
         description: Remove only the homepage preview VIEWS binding without deleting its namespace
         type: boolean
         default: false
+      freeze_auto_preview:
+        description: Disable only automatic Git preview builds; preserve guarded direct uploads
+        type: boolean
+        default: false
       expected_production:
         description: Freshly reviewed homepage production deployment UUID
         type: string
@@ -39,7 +43,7 @@ permissions:
 
 jobs:
   deploy:
-    if: ${{ !inputs.pages_preflight && !inputs.pages_details && !inputs.disable_auto_production && !inputs.isolate_preview_views }}
+    if: ${{ !inputs.pages_preflight && !inputs.pages_details && !inputs.disable_auto_production && !inputs.isolate_preview_views && !inputs.freeze_auto_preview }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -65,7 +69,7 @@ jobs:
         run: npx --yes wrangler@4 pages deploy docs/dist --project-name=0sec-docs --branch=main
 
   pages-preflight:
-    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && (inputs.pages_preflight || inputs.pages_details || inputs.disable_auto_production || inputs.isolate_preview_views)
+    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && (inputs.pages_preflight || inputs.pages_details || inputs.disable_auto_production || inputs.isolate_preview_views || inputs.freeze_auto_preview)
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     concurrency:
@@ -83,6 +87,7 @@ jobs:
           PAGES_DETAILS: ${{ inputs.pages_details }}
           DISABLE_AUTO_PRODUCTION: ${{ inputs.disable_auto_production }}
           ISOLATE_PREVIEW_VIEWS: ${{ inputs.isolate_preview_views }}
+          FREEZE_AUTO_PREVIEW: ${{ inputs.freeze_auto_preview }}
           EXPECTED_PRODUCTION: ${{ inputs.expected_production }}
           CUTOVER_RECEIPT: ${{ runner.temp }}/pages-cutover-${{ github.run_id }}-${{ github.run_attempt }}.json
         run: |
@@ -96,8 +101,9 @@ jobs:
               : item)).digest('hex');
           const disable = process.env.DISABLE_AUTO_PRODUCTION === 'true';
           const isolate = process.env.ISOLATE_PREVIEW_VIEWS === 'true';
-          const mutate = disable || isolate;
-          assert([process.env.PAGES_PREFLIGHT, process.env.PAGES_DETAILS, process.env.DISABLE_AUTO_PRODUCTION, process.env.ISOLATE_PREVIEW_VIEWS].filter(value => value === 'true').length === 1, 'Select exactly one control operation');
+          const freeze = process.env.FREEZE_AUTO_PREVIEW === 'true';
+          const mutate = disable || isolate || freeze;
+          assert([process.env.PAGES_PREFLIGHT, process.env.PAGES_DETAILS, process.env.DISABLE_AUTO_PRODUCTION, process.env.ISOLATE_PREVIEW_VIEWS, process.env.FREEZE_AUTO_PREVIEW].filter(value => value === 'true').length === 1, 'Select exactly one control operation');
           const account = 'e84b55c82d29ff76b789af0aea3d9121';
           const project = '0sec-ai-homepage';
           const endpoint = `https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${project}`;
@@ -169,6 +175,10 @@ jobs:
             key === 'env_vars'
               ? value == null || (typeof value === 'object' && !Array.isArray(value) && Object.values(value).every(binding => binding?.type === 'plain_text' && typeof binding.value === 'string'))
               : previewSettings.has(key) || value == null || (typeof value === 'object' && Object.keys(value).length === 0));
+          if (freeze) {
+            assert(config.production_deployments_enabled === false && config.preview_deployment_setting === 'all', 'Expected automatic production off and Git previews all');
+            assert(previewSafe, 'Preview bindings must remain isolated before freezing Git builds');
+          }
           if (isolate) {
             assert(config.production_deployments_enabled === false, 'Automatic production must remain disabled');
             assert(preview && typeof preview === 'object' && !Array.isArray(preview), 'Missing preview configuration');
@@ -270,20 +280,41 @@ jobs:
             const fresh = (await get()).result;
             assert(fresh.id === current.id && fresh.canonical_deployment?.id === canonical.id && fingerprint(fresh.source) === fingerprint(current.source), 'Pages state changed during inventory');
             assert(fingerprint(fresh.deployment_configs) === fingerprint(current.deployment_configs), 'Deployment configuration changed during inventory');
+            if (freeze) {
+              const authorization = (await get('/upload-token')).result;
+              assert(typeof authorization?.jwt === 'string' && authorization.jwt.length > 0, 'Direct-upload authorization route unavailable');
+            }
             const receipt = {
               schema_version: 1, state: 'prepared', captured_at: new Date().toISOString(),
-              operation: isolate ? 'isolate_preview_views' : 'disable_auto_production',
+              operation: isolate ? 'isolate_preview_views' : freeze ? 'freeze_auto_preview' : 'disable_auto_production',
               account, project, project_id: current.id, repository_id: '1202833352',
               run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT,
               workflow_sha: process.env.GITHUB_SHA,
               production_before: canonical.id, automatic_before: config.production_deployments_enabled,
+              automatic_preview_before: config.preview_deployment_setting,
+              direct_upload_route_before: freeze ? true : undefined,
               source_before_fingerprint: fingerprint(fresh.source),
               preview_before_fingerprint: fingerprint(fresh.deployment_configs?.preview ?? null),
               preview_before: isolate ? fresh.deployment_configs.preview : undefined,
               production_config_before_fingerprint: fingerprint(fresh.deployment_configs?.production ?? null),
-              rollback: isolate
-                ? { setting: 'deployment_configs.preview.kv_namespaces', value: preview.kv_namespaces ?? {} }
-                : { setting: 'source.config.production_deployments_enabled', value: config.production_deployments_enabled },
+              rollback: freeze
+                ? {
+                    setting: 'source.config.preview_deployment_setting', from: 'none', to: 'all',
+                    patch: { source: fresh.source },
+                    required_current: {
+                      project_id: current.id, canonical_deployment: canonical.id,
+                      source_fingerprint: fingerprint({ ...fresh.source, config: { ...fresh.source.config, preview_deployment_setting: 'none' } }),
+                      preview_fingerprint: fingerprint(fresh.deployment_configs.preview),
+                      production_configuration_fingerprint: fingerprint(fresh.deployment_configs.production),
+                      production_deployments_enabled: false, preview_deployment_setting: 'none',
+                      in_flight_deployments: 0,
+                    },
+                    requires_fresh_guarded_preflight: true, requires_explicit_authorization: true,
+                    not_routine_cleanup: true, risk: 'Reopens legacy-branch production VIEWS inheritance',
+                  }
+                : isolate
+                  ? { setting: 'deployment_configs.preview.kv_namespaces', value: preview.kv_namespaces ?? {} }
+                  : { setting: 'source.config.production_deployments_enabled', value: config.production_deployments_enabled },
               verification_required_after_interruption: true,
             };
             writeFileSync(process.env.CUTOVER_RECEIPT, JSON.stringify(receipt, null, 2), { flag: 'wx', mode: 0o600 });
@@ -303,7 +334,7 @@ jobs:
           }, null, 2));
           NODE
       - name: Persist credential-free rollback configuration before mutation
-        if: inputs.disable_auto_production || inputs.isolate_preview_views
+        if: inputs.disable_auto_production || inputs.isolate_preview_views || inputs.freeze_auto_preview
         uses: actions/upload-artifact@v7
         with:
           name: pages-cutover-prepared-${{ github.run_id }}-${{ github.run_attempt }}
@@ -311,10 +342,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Apply only the prepared homepage control change
-        if: inputs.disable_auto_production || inputs.isolate_preview_views
+        if: inputs.disable_auto_production || inputs.isolate_preview_views || inputs.freeze_auto_preview
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ISOLATE_PREVIEW_VIEWS: ${{ inputs.isolate_preview_views }}
+          FREEZE_AUTO_PREVIEW: ${{ inputs.freeze_auto_preview }}
           EXPECTED_PRODUCTION: ${{ inputs.expected_production }}
           CUTOVER_RECEIPT: ${{ runner.temp }}/pages-cutover-${{ github.run_id }}-${{ github.run_attempt }}.json
         run: |
@@ -327,7 +359,8 @@ jobs:
           const endpoint = `https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${project}`;
           const receipt = JSON.parse(readFileSync(process.env.CUTOVER_RECEIPT, 'utf8'));
           const isolate = process.env.ISOLATE_PREVIEW_VIEWS === 'true';
-          const expectedOperation = isolate ? 'isolate_preview_views' : 'disable_auto_production';
+          const freeze = process.env.FREEZE_AUTO_PREVIEW === 'true';
+          const expectedOperation = isolate ? 'isolate_preview_views' : freeze ? 'freeze_auto_preview' : 'disable_auto_production';
           const fingerprint = value => createHash('sha256').update(JSON.stringify(value, (_, item) =>
             item && typeof item === 'object' && !Array.isArray(item)
               ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
@@ -354,6 +387,7 @@ jobs:
             assert(receipt.automatic_before === false && receipt.rollback?.setting === 'deployment_configs.preview.kv_namespaces', 'Invalid isolation receipt');
             assert(fingerprint(receipt.preview_before) === receipt.preview_before_fingerprint, 'Invalid preview recovery snapshot');
           }
+          if (freeze) assert(receipt.automatic_before === false && receipt.automatic_preview_before === 'all' && receipt.rollback?.setting === 'source.config.preview_deployment_setting', 'Invalid Git preview freeze receipt');
           async function api(suffix = '', method = 'GET', body) {
             assert(process.env.CLOUDFLARE_API_TOKEN, 'Missing credential');
             const response = await fetch(endpoint + suffix, {
@@ -372,13 +406,9 @@ jobs:
             assert(value.source.config.owner === '0sec-labs' && String(value.source.config.repo_id) === '1202833352' && value.source.config.production_branch === 'main', 'Wrong source identity');
             assert(value.canonical_deployment?.id === receipt.production_before && value.canonical_deployment.latest_stage?.name === 'deploy' && value.canonical_deployment.latest_stage.status === 'success', 'Production selection changed');
           }
-          let attempted = false;
-          try {
-            const before = (await api()).result;
-            verifyIdentity(before);
-            assert(fingerprint(before.source) === receipt.source_before_fingerprint, 'Source settings changed after preparation');
+          async function verifyInventory() {
             const seen = new Set();
-            const inventoryPath = page => `/deployments?per_page=25&page=${page}${isolate ? '' : '&env=production'}`;
+            const inventoryPath = page => `/deployments?per_page=25&page=${page}${isolate || freeze ? '' : '&env=production'}`;
             const firstPage = await api(inventoryPath(1));
             const bounds = firstPage.result_info;
             assert(Number.isSafeInteger(bounds?.total_count) && bounds.total_count > 0 && Number.isSafeInteger(bounds.total_pages) && bounds.total_pages === Math.ceil(bounds.total_count / 25) && bounds.total_pages <= 1000, 'Invalid deployment inventory bounds');
@@ -386,7 +416,7 @@ jobs:
               assert(Array.isArray(body.result) && body.result_info?.page === page && body.result_info.per_page === 25 && body.result_info.total_count === bounds.total_count && body.result_info.total_pages === bounds.total_pages, 'Deployment inventory bounds changed');
               assert(body.result.length === Math.min(25, bounds.total_count - (page - 1) * 25), 'Incomplete deployment page');
               for (const item of body.result) {
-                assert(typeof item.id === 'string' && item.project_name === project && (isolate ? ['preview', 'production'].includes(item.environment) : item.environment === 'production') && !seen.has(item.id), 'Unstable deployment inventory');
+                assert(typeof item.id === 'string' && item.project_name === project && (isolate || freeze ? ['preview', 'production'].includes(item.environment) : item.environment === 'production') && !seen.has(item.id), 'Unstable deployment inventory');
                 seen.add(item.id);
                 assert(item.is_skipped === true || ['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'), 'In-flight deployment');
               }
@@ -400,14 +430,22 @@ jobs:
             const inventoryHead = body => fingerprint(body.result.map(item => [item.id, item.environment, item.is_skipped, item.latest_stage]));
             const finalPage = await api(inventoryPath(1));
             assert(finalPage.result_info?.total_count === bounds.total_count && finalPage.result_info.total_pages === bounds.total_pages && Array.isArray(finalPage.result) && inventoryHead(finalPage) === inventoryHead(firstPage), 'Deployment inventory changed during inspection');
+            return { deployment_count: seen.size, head_fingerprint: inventoryHead(finalPage), in_flight_deployments: 0 };
+          }
+          let attempted = false;
+          try {
+            const before = (await api()).result;
+            verifyIdentity(before);
+            assert(fingerprint(before.source) === receipt.source_before_fingerprint, 'Source settings changed after preparation');
+            const inventoryBefore = await verifyInventory();
             const fresh = (await api()).result;
             verifyIdentity(fresh);
             assert(fingerprint(fresh.source) === receipt.source_before_fingerprint, 'Source settings changed before write');
             assert(fingerprint(fresh.deployment_configs?.preview ?? null) === receipt.preview_before_fingerprint, 'Preview bindings changed before write');
             assert(fingerprint(fresh.deployment_configs?.production ?? null) === receipt.production_config_before_fingerprint, 'Production configuration changed before write');
-            const source = { ...fresh.source, config: { ...fresh.source.config, production_deployments_enabled: false } };
+            const source = { ...fresh.source, config: { ...fresh.source.config, ...(freeze ? { preview_deployment_setting: 'none' } : { production_deployments_enabled: false }) } };
             const views = fresh.deployment_configs?.preview?.kv_namespaces?.VIEWS;
-            const shouldMutate = isolate ? views != null : receipt.automatic_before;
+            const shouldMutate = isolate ? views != null : freeze || receipt.automatic_before;
             if (shouldMutate) {
               receipt.state = 'mutation_started';
               receipt.mutation_may_have_occurred = true;
@@ -419,6 +457,7 @@ jobs:
                 ? { deployment_configs: { preview: { kv_namespaces: { VIEWS: null } } } }
                 : { source });
             }
+            const inventoryAfter = freeze ? await verifyInventory() : undefined;
             const after = (await api()).result;
             verifyIdentity(after);
             assert(fingerprint(after.source) === (isolate ? receipt.source_before_fingerprint : fingerprint(source)), 'Unexpected source settings after write');
@@ -431,13 +470,23 @@ jobs:
             } else {
               assert(fingerprint(after.deployment_configs?.preview ?? null) === receipt.preview_before_fingerprint, 'Preview bindings changed');
             }
+            if (freeze) {
+              assert(after.source.config.preview_deployment_setting === 'none', 'Automatic Git previews still enabled');
+              const authorization = (await api('/upload-token')).result;
+              assert(typeof authorization?.jwt === 'string' && authorization.jwt.length > 0, 'Direct-upload authorization route unavailable');
+            }
             Object.assign(receipt, {
               state: 'verified', verified_at: new Date().toISOString(),
               production_after: after.canonical_deployment.id, automatic_after: false,
+              automatic_preview_after: after.source.config.preview_deployment_setting,
+              direct_upload_route_after: freeze ? true : undefined,
+              deployment_upload_executed: false,
+              inventory_before: inventoryBefore, inventory_after: inventoryAfter,
               source_after_fingerprint: fingerprint(after.source),
               preview_after_fingerprint: fingerprint(after.deployment_configs?.preview ?? null),
               preview_after: isolate ? after.deployment_configs.preview : undefined,
               production_configuration_unchanged: true,
+              production_config_after_fingerprint: fingerprint(after.deployment_configs?.production ?? null),
               preview_binding_removed: isolate,
               namespace_data_mutated: false,
               mutation_performed: attempted,
@@ -451,7 +500,7 @@ jobs:
           }
           NODE
       - name: Retain the final credential-free operation receipt
-        if: always() && (inputs.disable_auto_production || inputs.isolate_preview_views) && steps.inspect.outcome == 'success'
+        if: always() && (inputs.disable_auto_production || inputs.isolate_preview_views || inputs.freeze_auto_preview) && steps.inspect.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: pages-cutover-final-${{ github.run_id }}-${{ github.run_attempt }}
