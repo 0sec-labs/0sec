@@ -223,10 +223,13 @@ jobs:
           }
           const seen = new Set();
           const inFlight = [];
-          let complete = false;
-          for (let page = 1; page <= 1000; page++) {
-            const body = await get(`/deployments?per_page=25&page=${page}${disable ? '&env=production' : ''}`);
-            assert(Array.isArray(body.result), 'Malformed deployment inventory');
+          const inventoryPath = page => `/deployments?per_page=25&page=${page}${disable ? '&env=production' : ''}`;
+          const firstPage = await get(inventoryPath(1));
+          const bounds = firstPage.result_info;
+          assert(Number.isSafeInteger(bounds?.total_count) && bounds.total_count > 0 && Number.isSafeInteger(bounds.total_pages) && bounds.total_pages === Math.ceil(bounds.total_count / 25) && bounds.total_pages <= 1000, 'Invalid deployment inventory bounds');
+          const inspectPage = (body, page) => {
+            assert(Array.isArray(body.result) && body.result_info?.page === page && body.result_info.per_page === 25 && body.result_info.total_count === bounds.total_count && body.result_info.total_pages === bounds.total_pages, 'Deployment inventory bounds changed');
+            assert(body.result.length === Math.min(25, bounds.total_count - (page - 1) * 25), 'Incomplete deployment page');
             for (const item of body.result) {
               if (!(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id))) {
                 console.log(JSON.stringify({ inventory_guard: {
@@ -243,9 +246,16 @@ jobs:
               seen.add(item.id);
               if ((isolate || item.environment === 'production') && !(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) inFlight.push(item.id);
             }
-            if (body.result.length === 0 || (Number.isSafeInteger(body.result_info?.total_pages) && body.result_info.total_pages > 0 && page >= body.result_info.total_pages)) { complete = true; break; }
+          };
+          inspectPage(firstPage, 1);
+          for (let page = 2; page <= bounds.total_pages; page += 8) {
+            const pages = await Promise.all(Array.from({ length: Math.min(8, bounds.total_pages - page + 1) }, (_, offset) => get(inventoryPath(page + offset))));
+            pages.forEach((body, offset) => inspectPage(body, page + offset));
           }
-          assert(complete, 'Deployment inventory exceeds inspection bound');
+          assert(seen.size === bounds.total_count, 'Incomplete deployment inventory');
+          const inventoryHead = body => fingerprint(body.result.map(item => [item.id, item.environment, item.latest_stage]));
+          const finalPage = await get(inventoryPath(1));
+          assert(finalPage.result_info?.total_count === bounds.total_count && finalPage.result_info.total_pages === bounds.total_pages && Array.isArray(finalPage.result) && inventoryHead(finalPage) === inventoryHead(firstPage), 'Deployment inventory changed during inspection');
           if (mutate) {
             assert(inFlight.length === 0, 'In-flight deployment');
             const fresh = (await get()).result;
@@ -346,19 +356,29 @@ jobs:
             const before = (await api()).result;
             verifyIdentity(before);
             assert(fingerprint(before.source) === receipt.source_before_fingerprint, 'Source settings changed after preparation');
-            let complete = false;
             const seen = new Set();
-            for (let page = 1; page <= 1000; page++) {
-              const body = await api(`/deployments?per_page=25&page=${page}${isolate ? '' : '&env=production'}`);
-              assert(Array.isArray(body.result), 'Malformed deployment inventory');
+            const inventoryPath = page => `/deployments?per_page=25&page=${page}${isolate ? '' : '&env=production'}`;
+            const firstPage = await api(inventoryPath(1));
+            const bounds = firstPage.result_info;
+            assert(Number.isSafeInteger(bounds?.total_count) && bounds.total_count > 0 && Number.isSafeInteger(bounds.total_pages) && bounds.total_pages === Math.ceil(bounds.total_count / 25) && bounds.total_pages <= 1000, 'Invalid deployment inventory bounds');
+            const inspectPage = (body, page) => {
+              assert(Array.isArray(body.result) && body.result_info?.page === page && body.result_info.per_page === 25 && body.result_info.total_count === bounds.total_count && body.result_info.total_pages === bounds.total_pages, 'Deployment inventory bounds changed');
+              assert(body.result.length === Math.min(25, bounds.total_count - (page - 1) * 25), 'Incomplete deployment page');
               for (const item of body.result) {
                 assert(typeof item.id === 'string' && item.project_name === project && (isolate ? ['preview', 'production'].includes(item.environment) : item.environment === 'production') && !seen.has(item.id), 'Unstable deployment inventory');
                 seen.add(item.id);
                 assert(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'), 'In-flight deployment');
               }
-              if (body.result.length === 0 || (Number.isSafeInteger(body.result_info?.total_pages) && body.result_info.total_pages > 0 && page >= body.result_info.total_pages)) { complete = true; break; }
+            };
+            inspectPage(firstPage, 1);
+            for (let page = 2; page <= bounds.total_pages; page += 8) {
+              const pages = await Promise.all(Array.from({ length: Math.min(8, bounds.total_pages - page + 1) }, (_, offset) => api(inventoryPath(page + offset))));
+              pages.forEach((body, offset) => inspectPage(body, page + offset));
             }
-            assert(complete, 'Deployment inventory exceeds inspection bound');
+            assert(seen.size === bounds.total_count, 'Incomplete deployment inventory');
+            const inventoryHead = body => fingerprint(body.result.map(item => [item.id, item.environment, item.latest_stage]));
+            const finalPage = await api(inventoryPath(1));
+            assert(finalPage.result_info?.total_count === bounds.total_count && finalPage.result_info.total_pages === bounds.total_pages && Array.isArray(finalPage.result) && inventoryHead(finalPage) === inventoryHead(firstPage), 'Deployment inventory changed during inspection');
             const fresh = (await api()).result;
             verifyIdentity(fresh);
             assert(fingerprint(fresh.source) === receipt.source_before_fingerprint, 'Source settings changed before write');
