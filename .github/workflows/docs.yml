@@ -94,7 +94,7 @@ jobs:
             source_branch: config?.production_branch ?? null,
             mutation_performed: false,
           }, null, 2));
-          assert(config?.owner === '0sec-labs' && config.repo_name === '0cloud' && config.production_branch === 'main', 'Unexpected source repository or branch');
+          assert(config?.owner === '0sec-labs' && String(config.repo_id) === '1202833352' && typeof config.repo_name === 'string' && config.production_branch === 'main', 'Unexpected source repository or branch');
           assert(Object.keys(current.source).every(key => key === 'type' || key === 'config'), 'Unknown source field');
           assert(Object.keys(config).every(key => sourceKeys.has(key)), 'Unknown source configuration field');
           assert(typeof config.production_deployments_enabled === 'boolean', 'Missing automatic-production setting');
