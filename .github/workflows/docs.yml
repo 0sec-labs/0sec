@@ -197,6 +197,17 @@ jobs:
             const body = await get(`/deployments?per_page=25&page=${page}${disable ? '&env=production' : ''}`);
             assert(Array.isArray(body.result), 'Malformed deployment inventory');
             for (const item of body.result) {
+              if (!(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id))) {
+                console.log(JSON.stringify({ inventory_guard: {
+                  page, seen_count: seen.size,
+                  response_page: Number.isSafeInteger(body.result_info?.page) ? body.result_info.page : null,
+                  total_pages: Number.isSafeInteger(body.result_info?.total_pages) ? body.result_info.total_pages : null,
+                  id: uuid.test(item.id) ? item.id : null,
+                  project_matches: item.project_name === project,
+                  environment_matches: ['preview', 'production'].includes(item.environment),
+                  duplicate: seen.has(item.id),
+                } }));
+              }
               assert(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id), 'Unstable deployment inventory');
               seen.add(item.id);
               if ((isolate || item.environment === 'production') && !(['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) inFlight.push(item.id);
