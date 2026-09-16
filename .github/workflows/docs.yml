@@ -203,12 +203,20 @@ jobs:
                 ? Object.fromEntries(Object.entries(value).map(([name, binding]) => [name, binding?.type ?? null]))
                 : undefined,
             }));
+            const firstPage = await get('/deployments?per_page=25&page=1');
+            assert(Array.isArray(firstPage.result), 'Malformed deployment inventory');
             console.log(JSON.stringify({
               captured_at: new Date().toISOString(), account, project,
               canonical_deployment: canonical.id,
               automatic_production: config.production_deployments_enabled,
               preview_binding_types: bindingTypes,
               deployment_details: details,
+              inventory_page: {
+                returned: firstPage.result.length,
+                ...Object.fromEntries(['page', 'per_page', 'total_pages', 'total_count', 'count']
+                  .filter(key => Number.isSafeInteger(firstPage.result_info?.[key]))
+                  .map(key => [key, firstPage.result_info[key]])),
+              },
               mutation_performed: false,
             }, null, 2));
             process.exit(0);
@@ -217,7 +225,7 @@ jobs:
           const inFlight = [];
           let complete = false;
           for (let page = 1; page <= 1000; page++) {
-            const body = await get(`/deployments?per_page=1000&page=${page}${disable ? '&env=production' : ''}`);
+            const body = await get(`/deployments?per_page=25&page=${page}${disable ? '&env=production' : ''}`);
             assert(Array.isArray(body.result), 'Malformed deployment inventory');
             for (const item of body.result) {
               if (!(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id))) {
@@ -341,7 +349,7 @@ jobs:
             let complete = false;
             const seen = new Set();
             for (let page = 1; page <= 1000; page++) {
-              const body = await api(`/deployments?per_page=1000&page=${page}${isolate ? '' : '&env=production'}`);
+              const body = await api(`/deployments?per_page=25&page=${page}${isolate ? '' : '&env=production'}`);
               assert(Array.isArray(body.result), 'Malformed deployment inventory');
               for (const item of body.result) {
                 assert(typeof item.id === 'string' && item.project_name === project && (isolate ? ['preview', 'production'].includes(item.environment) : item.environment === 'production') && !seen.has(item.id), 'Unstable deployment inventory');
