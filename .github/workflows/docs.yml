@@ -17,13 +17,17 @@ on:
         description: Read-only homepage Pages gate inspection; skips docs build and deployment
         type: boolean
         default: false
+      pages_details:
+        description: Inspect the six recorded unfinished deployments and preview binding types only
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-    if: ${{ !inputs.pages_preflight }}
+    if: ${{ !inputs.pages_preflight && !inputs.pages_details }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -49,7 +53,7 @@ jobs:
         run: npx --yes wrangler@4 pages deploy docs/dist --project-name=0sec-docs --branch=main
 
   pages-preflight:
-    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && inputs.pages_preflight
+    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && (inputs.pages_preflight || inputs.pages_details)
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 5
     steps:
@@ -59,6 +63,7 @@ jobs:
       - name: Read the fixed homepage Pages target without mutation
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PAGES_DETAILS: ${{ inputs.pages_details }}
         run: |
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
@@ -106,6 +111,38 @@ jobs:
             key === 'env_vars'
               ? value && typeof value === 'object' && !Array.isArray(value) && Object.values(value).every(binding => binding?.type === 'plain_text' && typeof binding.value === 'string')
               : previewSettings.has(key) || value == null || (typeof value === 'object' && Object.keys(value).length === 0));
+          if (process.env.PAGES_DETAILS === 'true') {
+            const ids = [
+              'bd52c7a3-9954-4070-b8a0-2e701fb72267', '2d135b4c-fe09-4a9d-86c9-a77a5e37e013',
+              '56d917a5-f23e-4f9a-8826-04246f00d7c8', 'ae7b1aa3-9ff4-4372-9464-9575434fe63f',
+              '3f8781a3-c9dd-4d3a-8290-430b31ba969c', 'bb477deb-b441-443c-8032-cfabb910fb2e',
+            ];
+            const details = await Promise.all(ids.map(async id => {
+              const value = (await get(`/deployments/${id}`)).result;
+              assert(value.id === id && value.project_name === project && value.environment === 'production', 'Deployment identity mismatch');
+              return {
+                id, created_on: value.created_on,
+                latest_stage: { name: value.latest_stage?.name, status: value.latest_stage?.status },
+                stages: value.stages?.map(stage => ({ name: stage.name, status: stage.status })),
+              };
+            }));
+            const bindingTypes = Object.entries(preview ?? {}).filter(([key]) => !previewSettings.has(key)).map(([key, value]) => ({
+              kind: key,
+              names: value && typeof value === 'object' ? Object.keys(value) : [],
+              types: key === 'env_vars' && value && typeof value === 'object'
+                ? Object.fromEntries(Object.entries(value).map(([name, binding]) => [name, binding?.type ?? null]))
+                : undefined,
+            }));
+            console.log(JSON.stringify({
+              captured_at: new Date().toISOString(), account, project,
+              canonical_deployment: canonical.id,
+              automatic_production: config.production_deployments_enabled,
+              preview_binding_types: bindingTypes,
+              deployment_details: details,
+              mutation_performed: false,
+            }, null, 2));
+            process.exit(0);
+          }
           const seen = new Set();
           const inFlight = [];
           let complete = false;
