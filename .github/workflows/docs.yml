@@ -167,7 +167,7 @@ jobs:
           const preview = current.deployment_configs?.preview;
           const previewSafe = preview && typeof preview === 'object' && !Array.isArray(preview) && Object.entries(preview).every(([key, value]) =>
             key === 'env_vars'
-              ? value && typeof value === 'object' && !Array.isArray(value) && Object.values(value).every(binding => binding?.type === 'plain_text' && typeof binding.value === 'string')
+              ? value == null || (typeof value === 'object' && !Array.isArray(value) && Object.values(value).every(binding => binding?.type === 'plain_text' && typeof binding.value === 'string'))
               : previewSettings.has(key) || value == null || (typeof value === 'object' && Object.keys(value).length === 0));
           if (isolate) {
             assert(config.production_deployments_enabled === false, 'Automatic production must remain disabled');
@@ -279,6 +279,7 @@ jobs:
               production_before: canonical.id, automatic_before: config.production_deployments_enabled,
               source_before_fingerprint: fingerprint(fresh.source),
               preview_before_fingerprint: fingerprint(fresh.deployment_configs?.preview ?? null),
+              preview_before: isolate ? fresh.deployment_configs.preview : undefined,
               production_config_before_fingerprint: fingerprint(fresh.deployment_configs?.production ?? null),
               rollback: isolate
                 ? { setting: 'deployment_configs.preview.kv_namespaces', value: preview.kv_namespaces ?? {} }
@@ -334,6 +335,10 @@ jobs:
           const withoutKv = value => {
             const result = { ...value };
             delete result.kv_namespaces;
+            // Binding PATCHes clear the stale Wrangler hash and normalize an
+            // empty environment map to null; neither changes runtime settings.
+            delete result.wrangler_config_hash;
+            result.env_vars ??= {};
             return result;
           };
           const save = () => {
@@ -345,7 +350,10 @@ jobs:
           assert(receipt.run_id === process.env.GITHUB_RUN_ID && receipt.run_attempt === process.env.GITHUB_RUN_ATTEMPT && receipt.workflow_sha === process.env.GITHUB_SHA, 'Wrong workflow receipt');
           assert(receipt.production_before === process.env.EXPECTED_PRODUCTION && typeof receipt.automatic_before === 'boolean', 'Wrong approved selection');
           assert(Date.now() - Date.parse(receipt.captured_at) >= 0 && Date.now() - Date.parse(receipt.captured_at) < 15 * 60_000, 'Stale prepared receipt');
-          if (isolate) assert(receipt.automatic_before === false && receipt.rollback?.setting === 'deployment_configs.preview.kv_namespaces', 'Invalid isolation receipt');
+          if (isolate) {
+            assert(receipt.automatic_before === false && receipt.rollback?.setting === 'deployment_configs.preview.kv_namespaces', 'Invalid isolation receipt');
+            assert(fingerprint(receipt.preview_before) === receipt.preview_before_fingerprint, 'Invalid preview recovery snapshot');
+          }
           async function api(suffix = '', method = 'GET', body) {
             assert(process.env.CLOUDFLARE_API_TOKEN, 'Missing credential');
             const response = await fetch(endpoint + suffix, {
@@ -418,6 +426,7 @@ jobs:
             assert(fingerprint(after.deployment_configs?.production ?? null) === receipt.production_config_before_fingerprint, 'Production configuration changed');
             if (isolate) {
               assert(fingerprint(withoutKv(after.deployment_configs?.preview)) === fingerprint(withoutKv(fresh.deployment_configs?.preview)), 'Unrelated preview settings changed');
+              assert(after.deployment_configs?.preview?.wrangler_config_hash == null || after.deployment_configs.preview.wrangler_config_hash === fresh.deployment_configs?.preview?.wrangler_config_hash, 'Unexpected Wrangler configuration hash');
               assert(Object.keys(after.deployment_configs?.preview?.kv_namespaces ?? {}).length === 0, 'Preview KV binding remains');
             } else {
               assert(fingerprint(after.deployment_configs?.preview ?? null) === receipt.preview_before_fingerprint, 'Preview bindings changed');
@@ -427,6 +436,7 @@ jobs:
               production_after: after.canonical_deployment.id, automatic_after: false,
               source_after_fingerprint: fingerprint(after.source),
               preview_after_fingerprint: fingerprint(after.deployment_configs?.preview ?? null),
+              preview_after: isolate ? after.deployment_configs.preview : undefined,
               production_configuration_unchanged: true,
               preview_binding_removed: isolate,
               namespace_data_mutated: false,
