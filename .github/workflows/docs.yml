@@ -86,6 +86,14 @@ jobs:
           assert(current.production_branch === 'main' && current.source?.type === 'github', 'Unexpected project source');
           assert(current.domains?.includes('0.security'), 'Canonical domain not attached');
           const config = current.source.config;
+          console.log(JSON.stringify({
+            authenticated: true, account, project,
+            source_owner: config?.owner ?? null,
+            source_repository: config?.repo_name ?? null,
+            source_repository_id: config?.repo_id ?? null,
+            source_branch: config?.production_branch ?? null,
+            mutation_performed: false,
+          }, null, 2));
           assert(config?.owner === '0sec-labs' && config.repo_name === '0cloud' && config.production_branch === 'main', 'Unexpected source repository or branch');
           assert(Object.keys(current.source).every(key => key === 'type' || key === 'config'), 'Unknown source field');
           assert(Object.keys(config).every(key => sourceKeys.has(key)), 'Unknown source configuration field');
