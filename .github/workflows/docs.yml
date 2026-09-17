@@ -1,4 +1,5 @@
 name: "0sec: Docs"
+run-name: ${{ inputs.turnstile_request || github.event.head_commit.message || github.workflow }}
 
 on:
   push:
@@ -37,13 +38,21 @@ on:
         description: Freshly reviewed homepage production deployment UUID
         type: string
         default: ""
+      turnstile_request:
+        description: Attended widget-only request; exact approved dispatch name required
+        type: string
+        default: ""
+      approved_control_sha:
+        description: Exact reviewed held-branch commit SHA for the widget-only request
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-    if: ${{ !inputs.pages_preflight && !inputs.pages_details && !inputs.disable_auto_production && !inputs.isolate_preview_views && !inputs.freeze_auto_preview }}
+    if: ${{ !inputs.pages_preflight && !inputs.pages_details && !inputs.disable_auto_production && !inputs.isolate_preview_views && !inputs.freeze_auto_preview && !inputs.turnstile_request }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -69,7 +78,7 @@ jobs:
         run: npx --yes wrangler@4 pages deploy docs/dist --project-name=0sec-docs --branch=main
 
   pages-preflight:
-    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && (inputs.pages_preflight || inputs.pages_details || inputs.disable_auto_production || inputs.isolate_preview_views || inputs.freeze_auto_preview)
+    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && !inputs.turnstile_request && (inputs.pages_preflight || inputs.pages_details || inputs.disable_auto_production || inputs.isolate_preview_views || inputs.freeze_auto_preview)
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     concurrency:
@@ -527,5 +536,92 @@ jobs:
         with:
           name: pages-cutover-final-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/pages-cutover-${{ github.run_id }}-${{ github.run_attempt }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  turnstile-domain:
+    if: github.repository == '0sec-labs/0sec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chore/pages-preflight-20260916' && inputs.turnstile_request != ''
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    concurrency:
+      group: homepage-pages-control
+      cancel-in-progress: false
+    env:
+      EXPECTED_PRODUCTION: ${{ inputs.expected_production }}
+      WIDGET_SCRIPT: ${{ github.workspace }}/widget-control-${{ github.run_id }}-${{ github.run_attempt }}/.github/scripts/website-turnstile-domain.mjs
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Guard the single named first-attempt dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTROL_REQUEST: ${{ inputs.turnstile_request }}
+          APPROVED_CONTROL_SHA: ${{ inputs.approved_control_sha }}
+          OTHER_CONTROLS: ${{ toJSON(inputs) }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          const request = 'turnstile-add-0security-20260917';
+          assert(process.env.GITHUB_REPOSITORY === '0sec-labs/0sec' && process.env.GITHUB_REPOSITORY_ID === '1339271188', 'Wrong executing repository');
+          assert(process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && process.env.GITHUB_REF === 'refs/heads/chore/pages-preflight-20260916', 'Wrong control route');
+          assert(process.env.GITHUB_RUN_ATTEMPT === '1', 'Reruns are forbidden');
+          assert(process.env.CONTROL_REQUEST === request, 'Wrong named dispatch');
+          assert(/^[a-f0-9]{40}$/.test(process.env.APPROVED_CONTROL_SHA) && process.env.GITHUB_SHA === process.env.APPROVED_CONTROL_SHA && process.env.GITHUB_WORKFLOW_SHA === process.env.APPROVED_CONTROL_SHA, 'Unapproved workflow source');
+          assert(process.env.EXPECTED_PRODUCTION === 'f427385c-fd7e-42f0-a8a6-543e0f0ddedd', 'Unapproved production selection');
+          const inputs = JSON.parse(process.env.OTHER_CONTROLS);
+          assert(['pages_preflight', 'pages_details', 'disable_auto_production', 'isolate_preview_views', 'freeze_auto_preview'].every(key => inputs[key] === false), 'Do not combine control operations');
+          assert(process.env.GH_TOKEN, 'Missing workflow inventory credential');
+          const url = new URL('https://api.github.com/repos/0sec-labs/0sec/actions/workflows/docs.yml/runs');
+          url.search = new URLSearchParams({ event: 'workflow_dispatch', created: '>=2026-09-17', per_page: '100' });
+          const response = await fetch(url, {
+            method: 'GET', redirect: 'error', signal: AbortSignal.timeout(30_000),
+            headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+          });
+          assert(response.ok, `Workflow inventory HTTP ${response.status}`);
+          const body = await response.json();
+          assert(Number.isInteger(body.total_count) && body.total_count <= 100 && Array.isArray(body.workflow_runs) && body.workflow_runs.length === body.total_count, 'Incomplete workflow inventory; stop for review');
+          const matches = body.workflow_runs.filter(run => run.display_title === request);
+          assert(matches.length === 1, 'Named dispatch must occur exactly once');
+          const current = matches[0];
+          assert(String(current.id) === process.env.GITHUB_RUN_ID && current.run_attempt === 1 && current.head_sha === process.env.GITHUB_SHA && current.head_branch === 'chore/pages-preflight-20260916' && current.event === 'workflow_dispatch' && current.path === '.github/workflows/docs.yml', 'Named dispatch identity mismatch');
+          console.log(JSON.stringify({ request, run_id: process.env.GITHUB_RUN_ID, run_attempt: 1, workflow_sha: process.env.GITHUB_SHA, mutation_performed: false }));
+          NODE
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: widget-control-${{ github.run_id }}-${{ github.run_attempt }}
+          persist-credentials: false
+      - name: Prepare the exact reviewed widget-only change
+        id: prepare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          printf '%s  %s\n' 'a4c84619e84201ad9050031218e22cf4a281a70a76407645e49756fff5e590e5' "$WIDGET_SCRIPT" | sha256sum --check --status
+          node "$WIDGET_SCRIPT" prepare
+      - name: Retain the sanitized before-state and rollback before PUT
+        uses: actions/upload-artifact@v7
+        with:
+          name: turnstile-domain-prepared-${{ github.run_id }}-1
+          path: ${{ runner.temp }}/turnstile-domain-${{ github.run_id }}-1.json
+          if-no-files-found: error
+          retention-days: 30
+      # One attended writer window is required: Cloudflare has no documented
+      # conditional-update guard against an external edit between GET and PUT.
+      - name: Apply once and reconcile the outcome with GETs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          printf '%s  %s\n' 'a4c84619e84201ad9050031218e22cf4a281a70a76407645e49756fff5e590e5' "$WIDGET_SCRIPT" | sha256sum --check --status
+          node "$WIDGET_SCRIPT" apply
+      - name: Retain the final outcome even when apply fails
+        if: always() && steps.prepare.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: turnstile-domain-final-${{ github.run_id }}-1
+          path: ${{ runner.temp }}/turnstile-domain-${{ github.run_id }}-1.json
           if-no-files-found: error
           retention-days: 30
