@@ -143,9 +143,11 @@ jobs:
           const canonical = current.canonical_deployment;
           assert(uuid.test(canonical?.id) && canonical.project_name === project && canonical.environment === 'production', 'Invalid canonical deployment');
           assert(canonical.latest_stage?.name === 'deploy' && canonical.latest_stage.status === 'success', 'Canonical deployment not successful');
+          const validSiteKey = value => typeof value === 'string' && /^0x[A-Za-z0-9_-]{20,}$/.test(value);
+          const historicalPublicKeys = process.env.PAGES_PREFLIGHT === 'true' ? new Map() : null;
+          const successfulProductionPages = historicalPublicKeys ? [] : null;
           if (process.env.PAGES_PREFLIGHT === 'true') {
             const binding = current.deployment_configs?.production?.env_vars?.PUBLIC_TURNSTILE_SITE_KEY;
-            const validSiteKey = value => typeof value === 'string' && /^0x[A-Za-z0-9_-]{20,}$/.test(value);
             console.log(JSON.stringify({
               production_public_turnstile_site_key: binding?.type === 'plain_text' && validSiteKey(binding.value) ? binding.value : null,
             }));
@@ -163,6 +165,10 @@ jobs:
                 production_public_turnstile_widgets: body.result
                   .filter(widget => widget.domains?.includes('0.security') && validSiteKey(widget.sitekey))
                   .map(widget => ({ sitekey: widget.sitekey, domain: '0.security' })),
+                related_public_turnstile_widgets: body.result
+                  .filter(widget => validSiteKey(widget.sitekey) && Array.isArray(widget.domains) && widget.domains.some(domain =>
+                    ['0.security', '0sec.ai', 'pwnkit.com', '0sec-ai-homepage.pages.dev'].some(root => domain === root || domain.endsWith(`.${root}`))))
+                  .map(widget => ({ sitekey: widget.sitekey, domains: widget.domains })),
               }));
             }
           }
@@ -260,6 +266,18 @@ jobs:
               }
               assert(uuid.test(item.id) && item.project_name === project && ['preview', 'production'].includes(item.environment) && !seen.has(item.id), 'Unstable deployment inventory');
               seen.add(item.id);
+              if (historicalPublicKeys && item.environment === 'production' && item.is_skipped !== true && item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success') {
+                const binding = item.env_vars?.PUBLIC_TURNSTILE_SITE_KEY;
+                if (binding?.type === 'plain_text' && validSiteKey(binding.value) && !historicalPublicKeys.has(binding.value)) {
+                  historicalPublicKeys.set(binding.value, { sitekey: binding.value, deployment_id: item.id, created_on: item.created_on });
+                }
+                if (successfulProductionPages.length < 25 && typeof item.url === 'string') {
+                  const url = new URL(item.url);
+                  if (url.protocol === 'https:' && url.hostname.endsWith(`.${project}.pages.dev`)) {
+                    successfulProductionPages.push({ deployment_id: item.id, created_on: item.created_on, url: url.origin });
+                  }
+                }
+              }
               if ((!disable || item.environment === 'production') && !(item.is_skipped === true || ['failure', 'canceled'].includes(item.latest_stage?.status) || (item.latest_stage?.name === 'queued' && item.latest_stage.status === 'skipped') || (item.latest_stage?.name === 'deploy' && item.latest_stage.status === 'success'))) {
                 inFlight.push({ id: item.id, environment: item.environment, created_on: item.created_on, latest_stage: { name: item.latest_stage?.name, status: item.latest_stage?.status } });
               }
@@ -274,6 +292,10 @@ jobs:
           const inventoryHead = body => fingerprint(body.result.map(item => [item.id, item.environment, item.is_skipped, item.latest_stage]));
           const finalPage = await get(inventoryPath(1));
           assert(finalPage.result_info?.total_count === bounds.total_count && finalPage.result_info.total_pages === bounds.total_pages && Array.isArray(finalPage.result) && inventoryHead(finalPage) === inventoryHead(firstPage), 'Deployment inventory changed during inspection');
+          if (historicalPublicKeys) console.log(JSON.stringify({
+            historical_public_turnstile_keys: [...historicalPublicKeys.values()],
+            recent_successful_production_pages: successfulProductionPages,
+          }));
           if (inFlight.length > 0) console.log(JSON.stringify({ in_flight_deployments: inFlight }));
           if (mutate) {
             assert(inFlight.length === 0, 'In-flight deployment');
